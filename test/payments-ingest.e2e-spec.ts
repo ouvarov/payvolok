@@ -17,16 +17,25 @@ import { DRIZZLE, type Database } from '@/database/drizzle';
 import {
   paymentEvents,
   payments,
+  type NewPayment,
   type Payment,
   type PaymentEvent,
 } from '@/database/schemas/payments.schema';
 import { decideTransition } from '@/payments/payment-state-machine';
 import {
   PaymentMismatchError,
+  PaymentProviderRefMismatchError,
   PaymentsService,
   type IngestPaymentInput,
 } from '@/payments/payments.service';
+import { PAYMENT_STATUS_BY_EVENT_TYPE } from '@/payments/provider-event-status';
+import { FakeProvider } from '@/providers/fake/fake.provider';
 import type { ProviderCode } from '@/providers/provider.constants';
+import type {
+  ProviderEvent,
+  ProviderPaymentEvent,
+} from '@/providers/provider-events';
+import { ProviderRegistry } from '@/providers/provider.registry';
 
 import { applyMigrations, MIGRATIONS_FOLDER } from './apply-migrations';
 
@@ -56,6 +65,7 @@ const describeOnRealPostgres = isRealPostgres ? describe : describe.skip;
 const ingestInputWith = (
   overrides: Partial<IngestPaymentInput> = {},
 ): IngestPaymentInput => ({
+  reference: null,
   provider: 'fake',
   providerPaymentId: randomUUID(),
   status: 'succeeded',
@@ -67,6 +77,9 @@ const ingestInputWith = (
   webhookEventId: null,
   ...overrides,
 });
+
+const isPaymentEvent = (event: ProviderEvent): event is ProviderPaymentEvent =>
+  event.type in PAYMENT_STATUS_BY_EVENT_TYPE;
 
 const databaseCauseOf = async (
   query: () => PromiseLike<unknown>,
@@ -129,6 +142,35 @@ describe('Payments ingest', () => {
       .from(paymentEvents)
       .where(eq(paymentEvents.paymentId, paymentId))
       .orderBy(asc(paymentEvents.createdAt), asc(paymentEvents.id));
+
+  const insertNullRefPayment = async (
+    overrides: Partial<NewPayment> = {},
+  ): Promise<Payment> => {
+    const [payment] = await db
+      .insert(payments)
+      .values({
+        provider: 'fake',
+        providerPaymentId: null,
+        purpose: 'one_off',
+        origin: 'api',
+        status: 'created',
+        amountMinor: 1000,
+        currency: 'USD',
+        ...overrides,
+      })
+      .returning();
+
+    return payment;
+  };
+
+  const storedPaymentOf = async (paymentId: string): Promise<Payment> => {
+    const [payment] = await db
+      .select()
+      .from(payments)
+      .where(eq(payments.id, paymentId));
+
+    return payment;
+  };
 
   const insertPaymentSql = (
     overrides: Partial<
@@ -470,6 +512,247 @@ describe('Payments ingest', () => {
     });
   });
 
+  describe('provider event statuses', () => {
+    it('ends at succeeded after a failed attempt', async () => {
+      const input = ingestInputWith({
+        status: PAYMENT_STATUS_BY_EVENT_TYPE['payment.attempt_failed'],
+      });
+      const { payment } = await paymentsService.ingestPayment(input);
+
+      const { outcome, payment: finalPayment } =
+        await paymentsService.ingestPayment({
+          ...input,
+          status: PAYMENT_STATUS_BY_EVENT_TYPE['payment.succeeded'],
+        });
+
+      expect(payment.status).toBe('pending');
+      expect(outcome).toBe('applied');
+      expect(finalPayment.status).toBe('succeeded');
+    });
+
+    it('stays failed with a conflict event when succeeded follows failed', async () => {
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      const input = ingestInputWith({
+        status: PAYMENT_STATUS_BY_EVENT_TYPE['payment.failed'],
+      });
+      const { payment } = await paymentsService.ingestPayment(input);
+
+      const { outcome, payment: finalPayment } =
+        await paymentsService.ingestPayment({
+          ...input,
+          status: PAYMENT_STATUS_BY_EVENT_TYPE['payment.succeeded'],
+        });
+
+      expect(outcome).toBe('conflict');
+      expect(finalPayment.status).toBe('failed');
+      const events = await eventTimelineOf(payment.id);
+      expect(events[events.length - 1]).toMatchObject({
+        fromStatus: 'failed',
+        toStatus: 'succeeded',
+        outcome: 'conflict',
+      });
+    });
+  });
+
+  describe('ingest by reference', () => {
+    it('links a null-ref row when the webhook arrives first', async () => {
+      const row = await insertNullRefPayment();
+      const providerPaymentId = randomUUID();
+
+      const { outcome, payment } = await paymentsService.ingestPayment(
+        ingestInputWith({ reference: row.id, providerPaymentId }),
+      );
+
+      expect(outcome).toBe('applied');
+      expect(payment).toMatchObject({
+        id: row.id,
+        providerPaymentId,
+        status: 'succeeded',
+      });
+      expect(await storedPaymentOf(row.id)).toMatchObject({
+        providerPaymentId,
+        status: 'succeeded',
+      });
+      expect(await paymentRowsOf(providerPaymentId)).toHaveLength(1);
+      const events = await eventTimelineOf(row.id);
+      expect(
+        events.map(({ fromStatus, toStatus }) => [fromStatus, toStatus]),
+      ).toEqual([['created', 'succeeded']]);
+    });
+
+    it('runs the real fake flow from createPayment to a succeeded payment', async () => {
+      const fakeProvider = app.get(FakeProvider);
+      const row = await insertNullRefPayment();
+      const { providerPaymentId } = await fakeProvider.createPayment({
+        reference: row.id,
+        amountMinor: row.amountMinor,
+        currency: row.currency,
+        description: 'e2e',
+        returnUrl: 'https://example.test/return',
+        webhookUrl: 'https://example.test/webhook',
+      });
+
+      for (const webhook of fakeProvider.buildPaymentWebhooks(
+        providerPaymentId,
+        new Date(),
+      )) {
+        expect(await fakeProvider.verifyWebhook(webhook)).toBe(true);
+
+        for (const event of fakeProvider.parseWebhook(webhook)) {
+          if (!isPaymentEvent(event)) throw new Error(`Got ${event.type}`);
+
+          await paymentsService.ingestPayment(
+            ingestInputWith({
+              reference: event.reference,
+              providerPaymentId: event.providerPaymentId,
+              status: PAYMENT_STATUS_BY_EVENT_TYPE[event.type],
+              amountMinor: event.amountMinor,
+              currency: event.currency,
+            }),
+          );
+        }
+      }
+
+      expect(await paymentRowsOf(providerPaymentId)).toHaveLength(1);
+      expect(await storedPaymentOf(row.id)).toMatchObject({
+        providerPaymentId,
+        status: 'succeeded',
+      });
+      const events = await eventTimelineOf(row.id);
+      expect(
+        events.map(({ fromStatus, toStatus }) => [fromStatus, toStatus]),
+      ).toEqual([
+        ['created', 'pending'],
+        ['pending', 'succeeded'],
+      ]);
+    });
+
+    it('persists the id even when the status decision is duplicate', async () => {
+      const row = await insertNullRefPayment({ status: 'pending' });
+      const providerPaymentId = randomUUID();
+
+      const { outcome, payment } = await paymentsService.ingestPayment(
+        ingestInputWith({
+          reference: row.id,
+          providerPaymentId,
+          status: 'pending',
+        }),
+      );
+
+      expect(outcome).toBe('duplicate');
+      expect(payment.providerPaymentId).toBe(providerPaymentId);
+      expect((await storedPaymentOf(row.id)).providerPaymentId).toBe(
+        providerPaymentId,
+      );
+      expect(await eventTimelineOf(row.id)).toHaveLength(0);
+    });
+
+    it(
+      'resolves parallel ingests of one reference into one applied and no second event',
+      async () => {
+        const row = await insertNullRefPayment();
+        const input = ingestInputWith({ reference: row.id });
+
+        const results = await Promise.all(
+          Array.from({ length: PARALLEL_INGESTS }, () =>
+            paymentsService.ingestPayment(input),
+          ),
+        );
+
+        const outcomes = results.map(({ outcome }) => outcome).sort();
+        expect(outcomes).toEqual([
+          'applied',
+          ...Array.from({ length: PARALLEL_INGESTS - 1 }, () => 'duplicate'),
+        ]);
+        expect(await paymentRowsOf(input.providerPaymentId)).toHaveLength(1);
+        expect(await eventTimelineOf(row.id)).toHaveLength(1);
+      },
+      SLOW_TEST_TIMEOUT_MS,
+    );
+
+    it('rolls the link back when the amount differs', async () => {
+      const row = await insertNullRefPayment();
+
+      await expect(
+        paymentsService.ingestPayment(
+          ingestInputWith({ reference: row.id, amountMinor: 2000 }),
+        ),
+      ).rejects.toBeInstanceOf(PaymentMismatchError);
+
+      expect(await storedPaymentOf(row.id)).toMatchObject({
+        providerPaymentId: null,
+        status: 'created',
+      });
+      expect(await eventTimelineOf(row.id)).toHaveLength(0);
+    });
+
+    it('rejects a different id on a linked row and writes nothing', async () => {
+      const storedId = randomUUID();
+      const row = await insertNullRefPayment({ providerPaymentId: storedId });
+
+      await expect(
+        paymentsService.ingestPayment(ingestInputWith({ reference: row.id })),
+      ).rejects.toBeInstanceOf(PaymentProviderRefMismatchError);
+
+      expect(await storedPaymentOf(row.id)).toMatchObject({
+        providerPaymentId: storedId,
+        status: 'created',
+      });
+      expect(await eventTimelineOf(row.id)).toHaveLength(0);
+    });
+
+    it('raises a unique violation and rolls back when another row owns the id', async () => {
+      const ownedId = randomUUID();
+      const owner = await insertNullRefPayment({ providerPaymentId: ownedId });
+      const row = await insertNullRefPayment();
+
+      const cause = await databaseCauseOf(() =>
+        paymentsService.ingestPayment(
+          ingestInputWith({ reference: row.id, providerPaymentId: ownedId }),
+        ),
+      );
+
+      expect(cause.code).toBe('23505');
+      expect(await storedPaymentOf(row.id)).toMatchObject({
+        providerPaymentId: null,
+        status: 'created',
+      });
+      expect(await storedPaymentOf(owner.id)).toMatchObject({
+        providerPaymentId: ownedId,
+        status: 'created',
+      });
+      expect(await eventTimelineOf(row.id)).toHaveLength(0);
+      expect(await eventTimelineOf(owner.id)).toHaveLength(0);
+    });
+
+    it.each([
+      ['a non-uuid reference', () => 'attempt-1'],
+      ['an unknown uuid', () => randomUUID()],
+    ])('falls through to the provider ref for %s', async (_case, reference) => {
+      const input = ingestInputWith({ reference: reference() });
+
+      const { outcome, payment } = await paymentsService.ingestPayment(input);
+
+      expect(outcome).toBe('created');
+      expect(payment.providerPaymentId).toBe(input.providerPaymentId);
+      expect(await paymentRowsOf(input.providerPaymentId)).toHaveLength(1);
+    });
+
+    it('falls through and leaves the row alone for another provider', async () => {
+      const otherRow = await insertNullRefPayment({
+        provider: OTHER_PROVIDER,
+      });
+      const input = ingestInputWith({ reference: otherRow.id });
+
+      const { outcome, payment } = await paymentsService.ingestPayment(input);
+
+      expect(outcome).toBe('created');
+      expect(payment.id).not.toBe(otherRow.id);
+      expect(await storedPaymentOf(otherRow.id)).toEqual(otherRow);
+      expect(await eventTimelineOf(otherRow.id)).toHaveLength(0);
+    });
+  });
+
   describe('database constraints', () => {
     it.each([
       ['status', { status: 'bogus' }],
@@ -548,6 +831,10 @@ describe('Payments ingest', () => {
 
       expect(paymentsService).toBeInstanceOf(PaymentsService);
       expect(routePaths).toEqual(['/health/live', '/health/ready']);
+    });
+
+    it('registers the injected fake provider', () => {
+      expect(app.get(ProviderRegistry).get('fake')).toBe(app.get(FakeProvider));
     });
   });
 

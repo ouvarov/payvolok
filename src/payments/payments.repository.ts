@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 
 import {
   DRIZZLE,
@@ -57,6 +57,36 @@ export class PaymentsRepository {
         ),
       )
       .for('update');
+
+    return payment ?? null;
+  }
+
+  async findByIdAndProviderForUpdate(
+    tx: DatabaseTransaction,
+    paymentId: string,
+    provider: ProviderCode,
+  ): Promise<Payment | null> {
+    const [payment] = await tx
+      .select()
+      .from(payments)
+      .where(and(eq(payments.id, paymentId), eq(payments.provider, provider)))
+      .for('update');
+
+    return payment ?? null;
+  }
+
+  async setProviderPaymentId(
+    tx: DatabaseTransaction,
+    paymentId: string,
+    providerPaymentId: string,
+  ): Promise<Payment | null> {
+    const [payment] = await tx
+      .update(payments)
+      .set({ providerPaymentId, updatedAt: sql`clock_timestamp()` })
+      .where(
+        and(eq(payments.id, paymentId), isNull(payments.providerPaymentId)),
+      )
+      .returning();
 
     return payment ?? null;
   }
