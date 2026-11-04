@@ -98,6 +98,7 @@ type ProviderErrorKind = 'rejected' | 'unavailable' | 'misconfigured';
 type ProviderErrorDetails = {
   providerCode: ProviderCode;
   kind: ProviderErrorKind;
+  cause?: unknown;
 };
 
 export class ProviderError extends Error {
@@ -105,7 +106,7 @@ export class ProviderError extends Error {
   readonly kind: ProviderErrorKind;
 
   constructor(message: string, details: ProviderErrorDetails) {
-    super(message);
+    super(message, details);
     this.name = 'ProviderError';
     this.providerCode = details.providerCode;
     this.kind = details.kind;
