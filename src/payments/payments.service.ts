@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 
 import type { DatabaseTransaction } from '@/database/drizzle';
 import type { Payment } from '@/database/schemas/payments.schema';
+import type { ProviderCode } from '@/providers/provider.constants';
 
 import type {
   PaymentOrigin,
@@ -12,7 +13,7 @@ import { decideTransition } from './payment-state-machine';
 import { PaymentsRepository } from './payments.repository';
 
 type IngestPaymentInput = {
-  provider: string;
+  provider: ProviderCode;
   providerPaymentId: string;
   status: PaymentStatus;
   amountMinor: number;

@@ -13,6 +13,7 @@ import {
   type NewPaymentEvent,
   type Payment,
 } from '@/database/schemas/payments.schema';
+import type { ProviderCode } from '@/providers/provider.constants';
 
 import type { PaymentStatus } from './payment.constants';
 
@@ -43,7 +44,7 @@ export class PaymentsRepository {
 
   async findByProviderRefForUpdate(
     tx: DatabaseTransaction,
-    provider: string,
+    provider: ProviderCode,
     providerPaymentId: string,
   ): Promise<Payment | null> {
     const [payment] = await tx

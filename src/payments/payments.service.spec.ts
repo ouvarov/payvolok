@@ -32,6 +32,16 @@ const repositoryWith = (
   }) as unknown as PaymentsRepository;
 
 describe('PaymentsService', () => {
+  it('accepts only registered provider codes at compile time', () => {
+    const inputWithUnregisteredProvider: IngestPaymentInput = {
+      ...INPUT,
+      // @ts-expect-error 'stripe' is not a ProviderCode
+      provider: 'stripe',
+    };
+
+    expect(inputWithUnregisteredProvider.provider).toBe('stripe');
+  });
+
   it.each([1.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN])(
     'rejects amountMinor %s without opening a transaction',
     async (amountMinor) => {

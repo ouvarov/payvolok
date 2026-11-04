@@ -16,6 +16,7 @@ import {
   PAYMENT_PURPOSES,
   PAYMENT_STATUSES,
 } from '../../payments/payment.constants';
+import { PROVIDER_CODES } from '../../providers/provider.constants';
 
 const quotedList = (values: readonly string[]): SQL =>
   sql.raw(values.map((value) => `'${value}'`).join(', '));
@@ -24,7 +25,7 @@ const payments = pgTable(
   'payments',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    provider: text('provider').notNull(),
+    provider: text('provider', { enum: PROVIDER_CODES }).notNull(),
     providerPaymentId: text('provider_payment_id'),
     purpose: text('purpose', { enum: PAYMENT_PURPOSES }).notNull(),
     origin: text('origin', { enum: PAYMENT_ORIGINS }).notNull(),

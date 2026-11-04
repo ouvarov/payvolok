@@ -26,6 +26,7 @@ import {
   PaymentsService,
   type IngestPaymentInput,
 } from '@/payments/payments.service';
+import type { ProviderCode } from '@/providers/provider.constants';
 
 import { applyMigrations, MIGRATIONS_FOLDER } from './apply-migrations';
 
@@ -45,6 +46,8 @@ const LOCK_WAIT_DEADLINE_MS = 8000;
 const OVERLONG_SLEEP_SECONDS = 11;
 const SLEEP_GUARD_MS = 20000;
 const SLOW_TEST_TIMEOUT_MS = 60000;
+
+const OTHER_PROVIDER = 'other' as string as ProviderCode;
 
 const databaseUrl = process.env.E2E_DATABASE_URL as string;
 const isRealPostgres = process.env.E2E_REAL_POSTGRES === 'true';
@@ -268,7 +271,7 @@ describe('Payments ingest', () => {
         ingestInputWith({ provider: 'fake', providerPaymentId }),
       );
       const second = await paymentsService.ingestPayment(
-        ingestInputWith({ provider: 'other', providerPaymentId }),
+        ingestInputWith({ provider: OTHER_PROVIDER, providerPaymentId }),
       );
 
       expect(second.outcome).toBe('created');
@@ -276,7 +279,7 @@ describe('Payments ingest', () => {
     });
 
     it('lets two rows with a null provider_payment_id coexist under one provider', async () => {
-      const provider = `null-ref-${randomUUID()}`;
+      const provider = `null-ref-${randomUUID()}` as ProviderCode;
       const nullRefRow = {
         provider,
         providerPaymentId: null,
