@@ -5,6 +5,7 @@ import postgres from 'postgres';
 
 import type { Env } from '@/config/env.schema';
 
+import { DatabaseService } from './database.service';
 import { DRIZZLE } from './drizzle';
 
 const DATABASE_POOL = Symbol('DATABASE_POOL');
@@ -28,8 +29,9 @@ const SHUTDOWN_TIMEOUT_SECONDS = 5;
       useFactory: (sqlClient: postgres.Sql) => drizzle(sqlClient),
       inject: [DATABASE_POOL],
     },
+    DatabaseService,
   ],
-  exports: [DRIZZLE],
+  exports: [DRIZZLE, DatabaseService],
 })
 export class DatabaseModule implements OnApplicationShutdown {
   constructor(

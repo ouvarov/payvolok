@@ -1,16 +1,15 @@
 import {
   Inject,
   Injectable,
+  Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { sql } from 'drizzle-orm';
 
-import { DRIZZLE, type Database } from '@/database/drizzle';
+import { DatabaseService } from '@/database/database.service';
 
 const READINESS_TIMEOUT_MS = 2000;
 
-type Liveness = { status: 'ok' };
-type Readiness = { status: 'ok' };
+type HealthStatus = { status: 'ok' };
 
 const rejectAfter = (timeoutMs: number) => {
   let timer: NodeJS.Timeout | undefined;
@@ -22,18 +21,26 @@ const rejectAfter = (timeoutMs: number) => {
 
 @Injectable()
 export class HealthService {
-  constructor(@Inject(DRIZZLE) private readonly db: Database) {}
+  private readonly logger = new Logger(HealthService.name);
 
-  getLiveness(): Liveness {
+  constructor(
+    @Inject(DatabaseService)
+    private readonly database: Pick<DatabaseService, 'ping'>,
+  ) {}
+
+  getLiveness(): HealthStatus {
     return { status: 'ok' };
   }
 
-  async getReadiness(): Promise<Readiness> {
+  async getReadiness(): Promise<HealthStatus> {
     const timeout = rejectAfter(READINESS_TIMEOUT_MS);
 
     try {
-      await Promise.race([this.db.execute(sql`select 1`), timeout.promise]);
-    } catch {
+      await Promise.race([this.database.ping(), timeout.promise]);
+    } catch (error) {
+      this.logger.warn(
+        `Readiness check failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
       throw new ServiceUnavailableException({ status: 'unavailable' });
     } finally {
       timeout.cancel();
@@ -42,3 +49,5 @@ export class HealthService {
     return { status: 'ok' };
   }
 }
+
+export type { HealthStatus };
