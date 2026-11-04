@@ -46,8 +46,8 @@ const FAKE_CAPABILITIES: ProviderCapabilities = {
   catalog: false,
 };
 
-const nonRetryableError = (message: string): ProviderError =>
-  new ProviderError(message, { providerCode: 'fake', isRetryable: false });
+const rejectedError = (message: string): ProviderError =>
+  new ProviderError(message, { providerCode: 'fake', kind: 'rejected' });
 
 const eventIdOf = (
   resourceId: string,
@@ -130,7 +130,7 @@ export class FakeProvider implements PaymentProvider {
 
     if (!identity.success) {
       return Promise.reject(
-        nonRetryableError('Payment amount or currency is invalid'),
+        rejectedError('Payment amount or currency is invalid'),
       );
     }
 
@@ -145,20 +145,20 @@ export class FakeProvider implements PaymentProvider {
     const payment = decodeFakePaymentId(input.providerPaymentId);
 
     if (!payment) {
-      return Promise.reject(nonRetryableError('Payment id is not recognised'));
+      return Promise.reject(rejectedError('Payment id is not recognised'));
     }
     if (paymentScenarioFor(payment.amountMinor).finalStatus !== 'succeeded') {
-      return Promise.reject(nonRetryableError('Payment did not succeed'));
+      return Promise.reject(rejectedError('Payment did not succeed'));
     }
     if (input.currency !== payment.currency) {
-      return Promise.reject(nonRetryableError('Refund currency differs'));
+      return Promise.reject(rejectedError('Refund currency differs'));
     }
     if (
       !Number.isSafeInteger(input.amountMinor) ||
       input.amountMinor <= 0 ||
       input.amountMinor > payment.amountMinor
     ) {
-      return Promise.reject(nonRetryableError('Refund amount is out of range'));
+      return Promise.reject(rejectedError('Refund amount is out of range'));
     }
 
     return Promise.resolve({
@@ -223,7 +223,7 @@ export class FakeProvider implements PaymentProvider {
     startedAt: Date,
   ): WebhookRequest[] {
     const payment = decodeFakePaymentId(providerPaymentId);
-    if (!payment) throw nonRetryableError('Payment id is not recognised');
+    if (!payment) throw rejectedError('Payment id is not recognised');
 
     return this.buildScenarioWebhooks(
       providerPaymentId,
@@ -248,7 +248,7 @@ export class FakeProvider implements PaymentProvider {
     const refund = decodeFakeRefundId(providerRefundId);
     const payment = refund && decodeFakePaymentId(refund.providerPaymentId);
     if (!refund || !payment) {
-      throw nonRetryableError('Refund id is not recognised');
+      throw rejectedError('Refund id is not recognised');
     }
 
     return this.buildScenarioWebhooks(

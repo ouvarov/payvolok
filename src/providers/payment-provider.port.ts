@@ -93,20 +93,26 @@ type PaymentProvider = {
   parseWebhook(request: WebhookRequest): ProviderEvents;
 };
 
+type ProviderErrorKind = 'rejected' | 'unavailable' | 'misconfigured';
+
 type ProviderErrorDetails = {
   providerCode: ProviderCode;
-  isRetryable: boolean;
+  kind: ProviderErrorKind;
 };
 
 export class ProviderError extends Error {
   readonly providerCode: ProviderCode;
-  readonly isRetryable: boolean;
+  readonly kind: ProviderErrorKind;
 
   constructor(message: string, details: ProviderErrorDetails) {
     super(message);
     this.name = 'ProviderError';
     this.providerCode = details.providerCode;
-    this.isRetryable = details.isRetryable;
+    this.kind = details.kind;
+  }
+
+  get isRetryable(): boolean {
+    return this.kind === 'unavailable';
   }
 }
 
@@ -119,6 +125,7 @@ export type {
   PaymentProvider,
   ProviderCapabilities,
   ProviderErrorDetails,
+  ProviderErrorKind,
   ProviderPaymentStatus,
   ProviderRefundStatus,
   RecurringModel,

@@ -76,7 +76,11 @@ describe('FakeProvider', () => {
   it('rejects a payment amount that is not a safe integer', async () => {
     await expect(
       fakeProvider.createPayment(paymentInputWith(10.5)),
-    ).rejects.toMatchObject({ providerCode: 'fake', isRetryable: false });
+    ).rejects.toMatchObject({
+      providerCode: 'fake',
+      kind: 'rejected',
+      isRetryable: false,
+    });
   });
 
   describe('verifyWebhook', () => {
@@ -377,6 +381,7 @@ describe('FakeProvider', () => {
         expect(error).toBeInstanceOf(ProviderError);
         expect(error).toMatchObject({
           providerCode: 'fake',
+          kind: 'rejected',
           isRetryable: false,
         });
       },
