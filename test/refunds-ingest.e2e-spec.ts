@@ -877,13 +877,14 @@ describe('Refunds ingest', () => {
         const payment = await insertPayment();
         const input = refundInputFor(payment, {
           reference: isByReference ? payment.id : null,
+          status: 'pending',
         });
         const connection = await holdingClient.reserve();
 
         try {
           await connection.unsafe('begin');
-          // NO KEY UPDATE does not block the foreign key check of the refund
-          // insert, so only the service's own row lock can make it wait.
+          // NO KEY UPDATE lets the refund insert's foreign key check through and a
+          // pending refund never updates the payment, so only the lookup lock can wait.
           await connection`
             select id from payments where id = ${payment.id} for no key update
           `;
@@ -894,9 +895,9 @@ describe('Refunds ingest', () => {
           expect(ingest.isSettled).toBe(false);
 
           await connection.unsafe('commit');
-          const { payment: finalPayment } = await ingest.work;
+          const { refundOutcome } = await ingest.work;
 
-          expect(finalPayment.status).toBe('partially_refunded');
+          expect(refundOutcome).toBe('created');
         } finally {
           await connection.unsafe('rollback');
           connection.release();
