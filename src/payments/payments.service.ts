@@ -292,6 +292,7 @@ export class PaymentsService {
     );
   }
 
+  // The caller must already hold the row lock on existingPayment.
   async applyStatusInTransaction(
     tx: DatabaseTransaction,
     existingPayment: Payment,

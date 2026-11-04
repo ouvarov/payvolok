@@ -93,6 +93,11 @@ describe('RefundsService', () => {
       ['unsafe amount', { amountMinor: 2 ** 53 }],
       ['lowercase currency', { currency: 'usd' }],
       ['no id at all', { refundReference: null, providerRefundId: null }],
+      ['an empty provider id', { providerRefundId: '' }],
+      [
+        'an empty provider id beside a uuid reference',
+        { refundReference: REFUND_ID, providerRefundId: '' },
+      ],
       [
         'only a reference that can never be a row id',
         { refundReference: 'attempt-1', providerRefundId: null },
@@ -246,6 +251,27 @@ describe('RefundsService', () => {
 
       expect(paymentOutcome).toBe('unchanged');
       expect(payment).toBe(PAYMENT);
+      expect(applyStatusInTransaction).not.toHaveBeenCalled();
+    });
+
+    it('leaves the payment alone and still reports the total when the row did not change', async () => {
+      const applyStatusInTransaction = jest.fn();
+
+      const result = await serviceWith({
+        payments: { applyStatusInTransaction },
+        refunds: {
+          findByProviderRef: jest
+            .fn()
+            .mockResolvedValue(refundWith({ status: 'succeeded' })),
+          sumSucceededMinor: jest.fn().mockResolvedValue(1300),
+        },
+      }).ingestRefund(INPUT);
+
+      expect(result).toMatchObject({
+        refundOutcome: 'duplicate',
+        paymentOutcome: 'unchanged',
+        refundedTotalMinor: 1300,
+      });
       expect(applyStatusInTransaction).not.toHaveBeenCalled();
     });
 

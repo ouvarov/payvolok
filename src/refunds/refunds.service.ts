@@ -95,6 +95,9 @@ const assertValidRefundEvent = (input: IngestRefundInput): void => {
   if (!CURRENCY_PATTERN.test(input.currency)) {
     throw new RefundEventInvalidError('currency');
   }
+  if (input.providerRefundId === '') {
+    throw new RefundEventInvalidError('empty providerRefundId');
+  }
   // A non-uuid reference can never be a refunds.id, so alone it gives no key to
   // dedupe on and every redelivery would count the money again.
   if (
@@ -119,11 +122,6 @@ const mismatchProblemOf = (
   ) {
     return `refund ${refund.id} stored ${refund.amountMinor} ${refund.currency}, received ${input.amountMinor} ${input.currency}`;
   }
-
-  const refundId = refundIdOf(input.refundReference);
-  if (refundId !== null && refundId !== refund.id) {
-    return `refund ${refund.id} received reference ${refundId}`;
-  }
   if (
     input.providerRefundId !== null &&
     refund.providerRefundId !== null &&
@@ -134,6 +132,9 @@ const mismatchProblemOf = (
 
   return null;
 };
+
+const didRefundRowChange = (refundOutcome: RefundOutcome): boolean =>
+  refundOutcome === 'created' || refundOutcome === 'applied';
 
 @Injectable()
 export class RefundsService {
@@ -196,10 +197,9 @@ export class RefundsService {
       tx,
       payment.id,
     );
-    const targetStatus = paymentStatusAfterRefunds(
-      refundedTotalMinor,
-      payment.amountMinor,
-    );
+    const targetStatus = didRefundRowChange(refundOutcome)
+      ? paymentStatusAfterRefunds(refundedTotalMinor, payment.amountMinor)
+      : null;
     const paymentResult: Pick<
       IngestRefundResult,
       'payment' | 'paymentOutcome'
@@ -238,6 +238,7 @@ export class RefundsService {
 
     const problem = mismatchProblemOf(existingRefund, payment, input);
     if (problem) throw new RefundMismatchError(payment.id, problem);
+    await this.assertReferenceNotOwnedElsewhere(tx, existingRefund, input);
 
     const linkedRefund = await this.linkProviderRefundId(
       tx,
@@ -257,6 +258,24 @@ export class RefundsService {
     if (!updatedRefund) throw new Error('Refund row disappeared during ingest');
 
     return { refund: updatedRefund, refundOutcome: 'applied' };
+  }
+
+  // A reference no row owns is ignored: the provider id already identified the refund.
+  private async assertReferenceNotOwnedElsewhere(
+    tx: DatabaseTransaction,
+    refund: Refund,
+    input: IngestRefundInput,
+  ): Promise<void> {
+    const refundId = refundIdOf(input.refundReference);
+    if (refundId === null || refundId === refund.id) return;
+
+    const owner = await this.refundsRepository.findById(tx, refundId);
+    if (!owner) return;
+
+    throw new RefundMismatchError(
+      refund.paymentId,
+      `refund ${refund.id} received reference of refund ${owner.id}`,
+    );
   }
 
   private async findRefund(
@@ -362,7 +381,10 @@ export class RefundsService {
         `Payment ${payment.id} conflict: refund ${refund.id} on a ${payment.status} payment`,
       );
     }
-    if (result.refundedTotalMinor > payment.amountMinor) {
+    if (
+      didRefundRowChange(refundOutcome) &&
+      result.refundedTotalMinor > payment.amountMinor
+    ) {
       this.logger.warn(
         `Payment ${payment.id} over-refunded: ${result.refundedTotalMinor} of ${payment.amountMinor} ${payment.currency}`,
       );

@@ -244,13 +244,14 @@ describe('Refunds ingest', () => {
       );
       expect(warn).not.toHaveBeenCalled();
 
+      const overRefund = refundInputFor(payment, { amountMinor: 300 });
       const { refundedTotalMinor, payment: finalPayment } =
-        await refundsService.ingestRefund(
-          refundInputFor(payment, { amountMinor: 300 }),
-        );
+        await refundsService.ingestRefund(overRefund);
+      const repeat = await refundsService.ingestRefund(overRefund);
 
       expect(refundedTotalMinor).toBe(1300);
       expect(finalPayment.status).toBe('refunded');
+      expect(repeat.refundedTotalMinor).toBe(1300);
       expect(await refundRowsOf(payment.id)).toHaveLength(2);
       expect(warn).toHaveBeenCalledTimes(1);
       expect(warn).toHaveBeenCalledWith(
@@ -473,6 +474,31 @@ describe('Refunds ingest', () => {
         );
       },
     );
+
+    it.each(['failed', 'expired'] as const)(
+      'writes no second conflict and no second warning on a repeat on %s',
+      async (status) => {
+        const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+        const payment = await insertPayment({ status });
+        const input = refundInputFor(payment, { webhookEventId: randomUUID() });
+        await refundsService.ingestRefund(input);
+
+        const repeat = await refundsService.ingestRefund({
+          ...input,
+          webhookEventId: randomUUID(),
+        });
+
+        expect(repeat).toMatchObject({
+          refundOutcome: 'duplicate',
+          paymentOutcome: 'unchanged',
+          refundedTotalMinor: 300,
+        });
+        expect((await storedPaymentOf(payment.id)).status).toBe(status);
+        expect(await refundRowsOf(payment.id)).toHaveLength(1);
+        expect(await eventTimelineOf(payment.id)).toHaveLength(1);
+        expect(warn).toHaveBeenCalledTimes(1);
+      },
+    );
   });
 
   describe('identity', () => {
@@ -488,7 +514,7 @@ describe('Refunds ingest', () => {
       expect(first.refundOutcome).toBe('created');
       expect(first.refund.origin).toBe('provider');
       expect(repeat.refundOutcome).toBe('duplicate');
-      expect(repeat.paymentOutcome).toBe('duplicate');
+      expect(repeat.paymentOutcome).toBe('unchanged');
       expect(repeat.refundedTotalMinor).toBe(300);
       expect(await refundRowsOf(payment.id)).toEqual([first.refund]);
       expect(await storedPaymentOf(payment.id)).toEqual(paymentAfterFirst);
@@ -553,20 +579,24 @@ describe('Refunds ingest', () => {
       });
     });
 
-    it('throws the owned error when another payment owns the provider payment id', async () => {
+    it('throws the owned error on every attempt when another payment owns the provider payment id', async () => {
       const owner = await insertPayment();
       const row = await insertPayment({ providerPaymentId: null });
+      const input = refundInputFor(owner, { reference: row.id });
 
-      await expect(
-        refundsService.ingestRefund(
-          refundInputFor(owner, { reference: row.id }),
-        ),
-      ).rejects.toBeInstanceOf(PaymentProviderRefOwnedError);
+      await expect(refundsService.ingestRefund(input)).rejects.toBeInstanceOf(
+        PaymentProviderRefOwnedError,
+      );
+      await expect(refundsService.ingestRefund(input)).rejects.toBeInstanceOf(
+        PaymentProviderRefOwnedError,
+      );
 
       expect(await storedPaymentOf(row.id)).toEqual(row);
       expect(await storedPaymentOf(owner.id)).toEqual(owner);
       expect(await refundRowsOf(row.id)).toHaveLength(0);
       expect(await refundRowsOf(owner.id)).toHaveLength(0);
+      expect(await eventTimelineOf(row.id)).toHaveLength(0);
+      expect(await eventTimelineOf(owner.id)).toHaveLength(0);
     });
 
     it('rejects the same id with a different amount and rolls back', async () => {
@@ -668,19 +698,45 @@ describe('Refunds ingest', () => {
       expect(await refundRowsOf(payment.id)).toEqual([refund]);
     });
 
-    it('rejects a different reference on a row found by provider id', async () => {
+    it('converges when the reference first appears on a later event and counts the money once', async () => {
       const payment = await insertPayment();
-      const input = refundInputFor(payment);
+      const input = refundInputFor(payment, { status: 'pending' });
+      const { refund } = await refundsService.ingestRefund(input);
+
+      const succeeded = await refundsService.ingestRefund({
+        ...input,
+        refundReference: randomUUID(),
+        status: 'succeeded',
+      });
+
+      expect(succeeded.refundOutcome).toBe('applied');
+      expect(succeeded.refundedTotalMinor).toBe(300);
+      expect(succeeded.payment.status).toBe('partially_refunded');
+      const rows = await refundRowsOf(payment.id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ id: refund.id, status: 'succeeded' });
+    });
+
+    it('rejects a reference that another refund row owns on a row found by provider id', async () => {
+      const payment = await insertPayment();
+      const otherPayment = await insertPayment();
+      const otherRefundId = randomUUID();
+      await refundsService.ingestRefund(
+        refundInputFor(otherPayment, { refundReference: otherRefundId }),
+      );
+      const input = refundInputFor(payment, { status: 'pending' });
       const { refund } = await refundsService.ingestRefund(input);
 
       await expect(
         refundsService.ingestRefund({
           ...input,
-          refundReference: randomUUID(),
+          refundReference: otherRefundId,
+          status: 'succeeded',
         }),
       ).rejects.toBeInstanceOf(RefundMismatchError);
 
       expect(await refundRowsOf(payment.id)).toEqual([refund]);
+      expect(await storedPaymentOf(payment.id)).toEqual(payment);
     });
   });
 

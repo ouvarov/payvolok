@@ -242,6 +242,29 @@ describe('FakeProvider', () => {
       });
     });
 
+    it('turns a refund item with an empty provider refund id into unknown', () => {
+      const [event] = fakeProvider.parseWebhook(
+        fakeProvider.buildWebhook(
+          wireBodyWith([
+            {
+              type: 'refund.succeeded',
+              providerPaymentId: 'provider-1',
+              reference: null,
+              refundReference: 'refund-1',
+              providerRefundId: '',
+              amountMinor: 100,
+              currency: 'USD',
+            },
+          ]),
+        ),
+      );
+
+      expect(event).toMatchObject({
+        type: 'unknown',
+        rawType: 'refund.succeeded',
+      });
+    });
+
     it('turns an item with no type into unknown with a null rawType', () => {
       const [event] = fakeProvider.parseWebhook(
         fakeProvider.buildWebhook(wireBodyWith([42])),
