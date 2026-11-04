@@ -23,8 +23,10 @@ import {
 } from '@/database/schemas/payments.schema';
 import { decideTransition } from '@/payments/payment-state-machine';
 import {
+  PaymentEventInvalidError,
   PaymentMismatchError,
   PaymentProviderRefMismatchError,
+  PaymentProviderRefOwnedError,
   PaymentsService,
   type IngestPaymentInput,
 } from '@/payments/payments.service';
@@ -247,11 +249,12 @@ describe('Payments ingest', () => {
             `select tablename as name from pg_tables where schemaname = 'public' order by tablename`,
           );
 
-          expect(firstRunRows.rows).toHaveLength(4);
+          expect(firstRunRows.rows).toHaveLength(5);
           expect(secondRunRows.rows).toEqual(firstRunRows.rows);
           expect(tables.rows.map(({ name }) => name)).toEqual([
             'payment_events',
             'payments',
+            'refunds',
           ]);
         } finally {
           await emptyDatabase.close();
@@ -268,7 +271,7 @@ describe('Payments ingest', () => {
 
         await applyMigrations(databaseUrl);
 
-        expect(rowsBefore).toHaveLength(4);
+        expect(rowsBefore).toHaveLength(5);
         expect(await db.execute(migrationRowsSql)).toEqual(rowsBefore);
       },
       SLOW_TEST_TIMEOUT_MS,
@@ -471,6 +474,21 @@ describe('Payments ingest', () => {
         expect(await eventTimelineOf(payment.id)).toHaveLength(1);
       },
     );
+
+    it.each([
+      ['a lowercase currency', 'usd', { currency: 'usd' }],
+      ['an unsafe amount', '9007199254740992', { amountMinor: 2 ** 53 }],
+    ])('rejects %s and writes nothing', async (_case, rawValue, overrides) => {
+      const input = ingestInputWith(overrides);
+
+      const error: unknown = await paymentsService
+        .ingestPayment(input)
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(PaymentEventInvalidError);
+      expect((error as Error).message).not.toContain(rawValue);
+      expect(await paymentRowsOf(input.providerPaymentId)).toHaveLength(0);
+    });
 
     it('leaves no payment when the birth event insert fails', async () => {
       const input = ingestInputWith({ webhookEventId: 'not-a-uuid' });
@@ -743,18 +761,22 @@ describe('Payments ingest', () => {
       expect(await eventTimelineOf(row.id)).toHaveLength(0);
     });
 
-    it('raises a unique violation and rolls back when another row owns the id', async () => {
+    it('throws the owned error on every attempt and rolls back when another row owns the id', async () => {
       const ownedId = randomUUID();
       const owner = await insertNullRefPayment({ providerPaymentId: ownedId });
       const row = await insertNullRefPayment();
+      const input = ingestInputWith({
+        reference: row.id,
+        providerPaymentId: ownedId,
+      });
 
-      const cause = await databaseCauseOf(() =>
-        paymentsService.ingestPayment(
-          ingestInputWith({ reference: row.id, providerPaymentId: ownedId }),
-        ),
+      await expect(paymentsService.ingestPayment(input)).rejects.toBeInstanceOf(
+        PaymentProviderRefOwnedError,
+      );
+      await expect(paymentsService.ingestPayment(input)).rejects.toBeInstanceOf(
+        PaymentProviderRefOwnedError,
       );
 
-      expect(cause.code).toBe('23505');
       expect(await storedPaymentOf(row.id)).toMatchObject({
         providerPaymentId: null,
         status: 'created',
@@ -810,6 +832,12 @@ describe('Payments ingest', () => {
 
     it('accepts the valid row those rejections are measured against', async () => {
       await expect(insertPaymentSql()).resolves.toBeDefined();
+    });
+
+    it('accepts the provider origin', async () => {
+      await expect(
+        insertPaymentSql({ origin: 'provider' }),
+      ).resolves.toBeDefined();
     });
 
     it('rejects an update of payment_events as append-only', async () => {
