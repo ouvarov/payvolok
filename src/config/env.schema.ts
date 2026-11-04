@@ -5,7 +5,7 @@ const envSchema = z.object({
     .enum(['development', 'test', 'production'])
     .default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
-  DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
+  DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/, hostname: /.+/ }),
   DATABASE_POOL_MAX: z.coerce.number().int().positive().default(10),
 });
 

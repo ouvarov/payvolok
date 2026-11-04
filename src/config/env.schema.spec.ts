@@ -38,6 +38,23 @@ describe('validateEnv', () => {
     );
   });
 
+  it.each(['postgres:foo', 'postgres://', 'postgres:/host/db'])(
+    'rejects the malformed DATABASE_URL %s',
+    (databaseUrl) => {
+      expect(() => validateEnv({ DATABASE_URL: databaseUrl })).toThrow(
+        /DATABASE_URL/,
+      );
+    },
+  );
+
+  it('accepts the postgresql scheme', () => {
+    const databaseUrl = 'postgresql://user:pass@localhost:5432/db';
+
+    expect(validateEnv({ DATABASE_URL: databaseUrl }).DATABASE_URL).toBe(
+      databaseUrl,
+    );
+  });
+
   it('rejects an unknown NODE_ENV', () => {
     expect(() =>
       validateEnv({ DATABASE_URL: VALID_DATABASE_URL, NODE_ENV: 'staging' }),
