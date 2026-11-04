@@ -49,6 +49,8 @@ Any other Postgres works too: point `DATABASE_URL` at it.
 
 `npm run db:local` reads `LOCAL_POSTGRES_PORT` from `.env` (default 55432). For e2e against it, set `E2E_DATABASE_URL=postgres://postgres@127.0.0.1:55432/postgres` and run `npm run test:e2e -- --runInBand`. With the Docker Postgres, create the e2e database first: `docker compose exec db createdb -U payvolok payvolok_e2e`.
 
+The e2e tests apply migrations to `E2E_DATABASE_URL` themselves. Lock, concurrency and statement timeout tests need a real Postgres and are skipped unless `E2E_REAL_POSTGRES=true`, which CI sets. Leave it unset on PGlite. Point `E2E_DATABASE_URL` at a direct connection, not a pooler.
+
 ## Scripts
 
 | Script                                        | What it does                                                                                                                               |
