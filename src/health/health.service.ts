@@ -19,6 +19,15 @@ const rejectAfter = (timeoutMs: number) => {
   return { promise, cancel: () => clearTimeout(timer) };
 };
 
+const describeFailure = (error: unknown): string => {
+  const root =
+    error instanceof Error && error.cause instanceof Error
+      ? error.cause
+      : error;
+  if (!(root instanceof Error)) return String(root);
+  return root.message || ('code' in root ? String(root.code) : root.name);
+};
+
 @Injectable()
 export class HealthService {
   private readonly logger = new Logger(HealthService.name);
@@ -38,9 +47,7 @@ export class HealthService {
     try {
       await Promise.race([this.database.ping(), timeout.promise]);
     } catch (error) {
-      this.logger.warn(
-        `Readiness check failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      this.logger.warn(`Readiness check failed: ${describeFailure(error)}`);
       throw new ServiceUnavailableException({ status: 'unavailable' });
     } finally {
       timeout.cancel();
