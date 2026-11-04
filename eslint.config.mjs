@@ -6,7 +6,7 @@ import tseslint from 'typescript-eslint';
 export default tseslint.config(
   { ignores: ['dist', 'coverage', 'node_modules', '*.config.*'] },
   {
-    files: ['**/*.js'],
+    files: ['**/*.{js,mjs}'],
     extends: [js.configs.recommended],
     languageOptions: { globals: globals.node },
   },
@@ -37,7 +37,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['src/database/migrate.ts', 'src/main.ts'],
+    files: ['src/database/migrate.ts'],
     rules: { 'no-console': 'off' },
   },
   prettier,
