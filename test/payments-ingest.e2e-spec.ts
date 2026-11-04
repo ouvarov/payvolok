@@ -629,6 +629,39 @@ describe('Payments ingest', () => {
       ]);
     });
 
+    it('persists the id and keeps the status on a conflict with a terminal row', async () => {
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      const row = await insertNullRefPayment({ status: 'expired' });
+      const providerPaymentId = randomUUID();
+
+      const { outcome, payment } = await paymentsService.ingestPayment(
+        ingestInputWith({
+          reference: row.id,
+          providerPaymentId,
+          status: 'succeeded',
+        }),
+      );
+
+      expect(outcome).toBe('conflict');
+      expect(payment).toMatchObject({
+        id: row.id,
+        providerPaymentId,
+        status: 'expired',
+      });
+      expect(await storedPaymentOf(row.id)).toMatchObject({
+        providerPaymentId,
+        status: 'expired',
+      });
+      const events = await eventTimelineOf(row.id);
+      expect(
+        events.map(({ fromStatus, toStatus, outcome: eventOutcome }) => [
+          fromStatus,
+          toStatus,
+          eventOutcome,
+        ]),
+      ).toEqual([['expired', 'succeeded', 'conflict']]);
+    });
+
     it('persists the id even when the status decision is duplicate', async () => {
       const row = await insertNullRefPayment({ status: 'pending' });
       const providerPaymentId = randomUUID();
