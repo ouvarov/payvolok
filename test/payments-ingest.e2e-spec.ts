@@ -46,6 +46,7 @@ const GENERATE_SCRATCH_FOLDER = '.tmp';
 
 const PGLITE_POOL_MAX = 1;
 const REAL_POSTGRES_POOL_MAX = 5;
+const POOL_WARMUP_SLEEP_SECONDS = 0.1;
 const PARALLEL_INGESTS = 20;
 const RACE_REPEATS = 10;
 const CONNECT_TIMEOUT_SECONDS = 10;
@@ -61,6 +62,9 @@ const OTHER_PROVIDER = 'other' as string as ProviderCode;
 const databaseUrl = process.env.E2E_DATABASE_URL as string;
 const isRealPostgres = process.env.E2E_REAL_POSTGRES === 'true';
 const describeOnRealPostgres = isRealPostgres ? describe : describe.skip;
+const databasePoolMax = isRealPostgres
+  ? REAL_POSTGRES_POOL_MAX
+  : PGLITE_POOL_MAX;
 
 const ingestInputWith = (
   overrides: Partial<IngestPaymentInput> = {},
@@ -200,9 +204,7 @@ describe('Payments ingest', () => {
         get: (key: 'DATABASE_URL' | 'DATABASE_POOL_MAX') =>
           ({
             DATABASE_URL: databaseUrl,
-            DATABASE_POOL_MAX: isRealPostgres
-              ? REAL_POSTGRES_POOL_MAX
-              : PGLITE_POOL_MAX,
+            DATABASE_POOL_MAX: databasePoolMax,
           })[key],
       })
       .compile();
@@ -652,6 +654,13 @@ describe('Payments ingest', () => {
       async () => {
         const row = await insertNullRefPayment();
         const input = ingestInputWith({ reference: row.id });
+        // On a cold pool the first transaction commits before other connections
+        // open, so the ingests would run one after another and prove nothing.
+        await Promise.all(
+          Array.from({ length: databasePoolMax }, () =>
+            db.execute(sql`select pg_sleep(${POOL_WARMUP_SLEEP_SECONDS})`),
+          ),
+        );
 
         const results = await Promise.all(
           Array.from({ length: PARALLEL_INGESTS }, () =>
@@ -959,6 +968,40 @@ describe('Payments ingest', () => {
         expect(await paymentRowsOf(input.providerPaymentId)).toHaveLength(1);
       } finally {
         await held.release();
+      }
+    });
+
+    it('waits on a row lock and decides against the row linked meanwhile', async () => {
+      const row = await insertNullRefPayment();
+      const input = ingestInputWith({ reference: row.id });
+      const connection = await holdingClient.reserve();
+
+      try {
+        await connection.unsafe('begin');
+        await connection`
+          update payments
+          set provider_payment_id = ${input.providerPaymentId}, status = 'succeeded'
+          where id = ${row.id}
+        `;
+        const [{ pid }] = await connection<{ pid: number }[]>`
+          select pg_backend_pid() as pid
+        `;
+        const ingest = trackSettled(paymentsService.ingestPayment(input));
+
+        expect(await waitUntilBlockedBy(pid)).toBe(true);
+        expect(ingest.isSettled).toBe(false);
+
+        await connection.unsafe('commit');
+        const { outcome, payment } = await ingest.work;
+
+        expect(outcome).toBe('duplicate');
+        expect(payment).toMatchObject({
+          providerPaymentId: input.providerPaymentId,
+          status: 'succeeded',
+        });
+      } finally {
+        await connection.unsafe('rollback');
+        connection.release();
       }
     });
 
