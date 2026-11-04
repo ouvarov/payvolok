@@ -1,0 +1,13 @@
+/dist
+/node_modules
+/coverage
+*.log
+.DS_Store
+.idea
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.env*
+!.env.example
+.tmp
+*.tsbuildinfo
