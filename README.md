@@ -66,6 +66,8 @@ The e2e tests apply migrations to `E2E_DATABASE_URL` themselves. Lock, concurren
 | `npm run db:migrate` / `db:migrate:prod`      | Apply migrations from sources / from the build                                                                                             |
 | `npm run db:local`                            | In-memory Postgres for development and e2e                                                                                                 |
 
+The role's 10 s `statement_timeout` also applies to migrations: a long statement in a migration needs `SET LOCAL statement_timeout = 0` before it.
+
 Git hooks (simple-git-hooks): pre-commit runs lint-staged, pre-push runs `check` and the unit tests. CI runs the same checks plus e2e and a Docker boot.
 
 ## Health routes
