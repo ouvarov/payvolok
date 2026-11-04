@@ -1,0 +1,271 @@
+import type { DatabaseTransaction } from '@/database/drizzle';
+import type { Payment } from '@/database/schemas/payments.schema';
+import type { Refund } from '@/database/schemas/refunds.schema';
+import {
+  IngestRejectedError,
+  type PaymentsService,
+} from '@/payments/payments.service';
+
+import type { RefundsRepository } from './refunds.repository';
+import {
+  RefundEventInvalidError,
+  RefundMismatchError,
+  RefundPaymentNotFoundError,
+  RefundsService,
+  type IngestRefundInput,
+} from './refunds.service';
+
+const TX = {} as DatabaseTransaction;
+
+const REFUND_ID = '0d7a3f4e-2b1c-4e5f-8a6b-9c0d1e2f3a4b';
+
+const INPUT: IngestRefundInput = {
+  reference: null,
+  provider: 'fake',
+  providerPaymentId: 'provider-1',
+  refundReference: null,
+  providerRefundId: 'provider-refund-1',
+  status: 'succeeded',
+  amountMinor: 300,
+  currency: 'USD',
+  reason: 'test',
+  webhookEventId: null,
+};
+
+const PAYMENT = {
+  id: 'payment-1',
+  status: 'succeeded',
+  amountMinor: 1000,
+  currency: 'USD',
+} as Payment;
+
+const refundWith = (overrides: Partial<Refund> = {}): Refund => ({
+  id: REFUND_ID,
+  paymentId: PAYMENT.id,
+  provider: 'fake',
+  providerRefundId: INPUT.providerRefundId,
+  origin: 'provider',
+  status: 'pending',
+  amountMinor: 300,
+  currency: 'USD',
+  createdAt: new Date(0),
+  updatedAt: new Date(0),
+  ...overrides,
+});
+
+const serviceWith = ({
+  payments = {},
+  refunds = {},
+}: {
+  payments?: Partial<Record<keyof PaymentsService, jest.Mock>>;
+  refunds?: Partial<Record<keyof RefundsRepository, jest.Mock>>;
+}): RefundsService =>
+  new RefundsService(
+    {
+      runIngestTransaction: jest.fn(
+        (_received: unknown, work: (tx: DatabaseTransaction) => unknown) =>
+          Promise.resolve(work(TX)),
+      ),
+      lockPaymentForRefund: jest.fn().mockResolvedValue(PAYMENT),
+      applyStatusInTransaction: jest
+        .fn()
+        .mockResolvedValue({ payment: PAYMENT, outcome: 'applied' }),
+      ...payments,
+    } as unknown as PaymentsService,
+    {
+      insertIfAbsent: jest.fn().mockResolvedValue(refundWith()),
+      findById: jest.fn().mockResolvedValue(null),
+      findByIdAndPayment: jest.fn().mockResolvedValue(null),
+      findByProviderRef: jest.fn().mockResolvedValue(null),
+      setProviderRefundId: jest.fn().mockResolvedValue(null),
+      updateStatus: jest.fn().mockResolvedValue(null),
+      sumSucceededMinor: jest.fn().mockResolvedValue(300),
+      ...refunds,
+    },
+  );
+
+describe('RefundsService', () => {
+  describe('input validation', () => {
+    it.each([
+      ['zero amount', { amountMinor: 0 }],
+      ['negative amount', { amountMinor: -300 }],
+      ['fractional amount', { amountMinor: 1.5 }],
+      ['unsafe amount', { amountMinor: 2 ** 53 }],
+      ['lowercase currency', { currency: 'usd' }],
+      ['no id at all', { refundReference: null, providerRefundId: null }],
+      [
+        'only a reference that can never be a row id',
+        { refundReference: 'attempt-1', providerRefundId: null },
+      ],
+    ])('rejects %s without opening a transaction', async (_case, overrides) => {
+      const runIngestTransaction = jest.fn();
+      const refundsService = serviceWith({
+        payments: { runIngestTransaction },
+      });
+
+      await expect(
+        refundsService.ingestRefund({ ...INPUT, ...overrides }),
+      ).rejects.toBeInstanceOf(RefundEventInvalidError);
+      expect(runIngestTransaction).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['only a uuid reference', REFUND_ID, null],
+      ['a non-uuid reference and a provider id', 'attempt-1', 'provider-id'],
+    ])('accepts %s', async (_case, refundReference, providerRefundId) => {
+      const { refundOutcome } = await serviceWith({}).ingestRefund({
+        ...INPUT,
+        refundReference,
+        providerRefundId,
+      });
+
+      expect(refundOutcome).toBe('created');
+    });
+  });
+
+  describe('retry classification', () => {
+    it('leaves a missing payment retryable', async () => {
+      const error: unknown = await serviceWith({
+        payments: { lockPaymentForRefund: jest.fn().mockResolvedValue(null) },
+      })
+        .ingestRefund(INPUT)
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(RefundPaymentNotFoundError);
+      expect(error).not.toBeInstanceOf(IngestRejectedError);
+    });
+
+    it('classifies invalid events and mismatches as rejected', () => {
+      expect(new RefundEventInvalidError('currency')).toBeInstanceOf(
+        IngestRejectedError,
+      );
+      expect(new RefundMismatchError(null, 'currency')).toBeInstanceOf(
+        IngestRejectedError,
+      );
+    });
+  });
+
+  describe('insert', () => {
+    it('uses the reference as the row id so a redelivery finds the row', async () => {
+      const insertIfAbsent = jest.fn().mockResolvedValue(refundWith());
+
+      await serviceWith({ refunds: { insertIfAbsent } }).ingestRefund({
+        ...INPUT,
+        refundReference: REFUND_ID.toUpperCase(),
+        providerRefundId: null,
+      });
+
+      expect(insertIfAbsent).toHaveBeenCalledWith(
+        TX,
+        expect.objectContaining({ id: REFUND_ID, origin: 'provider' }),
+      );
+    });
+
+    it('lets the database pick the id without a usable reference', async () => {
+      const insertIfAbsent = jest.fn().mockResolvedValue(refundWith());
+
+      await serviceWith({ refunds: { insertIfAbsent } }).ingestRefund({
+        ...INPUT,
+        refundReference: 'attempt-1',
+      });
+
+      expect(insertIfAbsent).toHaveBeenCalledWith(
+        TX,
+        expect.not.objectContaining({ id: expect.anything() as unknown }),
+      );
+    });
+
+    it('re-reads the owner and throws a mismatch on a conflict', async () => {
+      const owner = refundWith({ paymentId: 'payment-2' });
+      const findByProviderRef = jest
+        .fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(owner);
+
+      const error: unknown = await serviceWith({
+        refunds: {
+          findByProviderRef,
+          insertIfAbsent: jest.fn().mockResolvedValue(null),
+        },
+      })
+        .ingestRefund(INPUT)
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(RefundMismatchError);
+      expect((error as Error).message).toContain('payment-2');
+    });
+
+    it('rejects when the conflicting row is gone on the re-read', async () => {
+      await expect(
+        serviceWith({
+          refunds: { insertIfAbsent: jest.fn().mockResolvedValue(null) },
+        }).ingestRefund(INPUT),
+      ).rejects.toThrow('Refund row disappeared during ingest');
+    });
+  });
+
+  describe('unique violation mapping', () => {
+    const violationOf = (constraintName: string): Error =>
+      new Error('Failed query', {
+        cause: { code: '23505', constraint_name: constraintName },
+      });
+
+    const ingestFailingWith = (failure: Error): Promise<unknown> =>
+      serviceWith({
+        payments: {
+          runIngestTransaction: jest.fn().mockRejectedValue(failure),
+        },
+      })
+        .ingestRefund(INPUT)
+        .catch((caught: unknown) => caught);
+
+    it('maps the provider refund ref constraint to a mismatch', async () => {
+      const failure = violationOf('refunds_provider_provider_refund_id_unique');
+
+      const error = await ingestFailingWith(failure);
+
+      expect(error).toBeInstanceOf(RefundMismatchError);
+      expect(error).toMatchObject({ cause: failure });
+    });
+
+    it('leaves another constraint as it is', async () => {
+      const failure = violationOf('refunds_pkey');
+
+      expect(await ingestFailingWith(failure)).toBe(failure);
+    });
+  });
+
+  describe('payment status', () => {
+    it('leaves the payment alone while nothing has succeeded', async () => {
+      const applyStatusInTransaction = jest.fn();
+
+      const { paymentOutcome, payment } = await serviceWith({
+        payments: { applyStatusInTransaction },
+        refunds: { sumSucceededMinor: jest.fn().mockResolvedValue(0) },
+      }).ingestRefund({ ...INPUT, status: 'pending' });
+
+      expect(paymentOutcome).toBe('unchanged');
+      expect(payment).toBe(PAYMENT);
+      expect(applyStatusInTransaction).not.toHaveBeenCalled();
+    });
+
+    it('derives the target from the sum, not from the event amount', async () => {
+      const applyStatusInTransaction = jest
+        .fn()
+        .mockResolvedValue({ payment: PAYMENT, outcome: 'applied' });
+
+      await serviceWith({
+        payments: { applyStatusInTransaction },
+        refunds: { sumSucceededMinor: jest.fn().mockResolvedValue(1000) },
+      }).ingestRefund({ ...INPUT, webhookEventId: 'event-1' });
+
+      expect(applyStatusInTransaction).toHaveBeenCalledWith(
+        TX,
+        PAYMENT,
+        'refunded',
+        INPUT.reason,
+        'event-1',
+      );
+    });
+  });
+});
