@@ -72,9 +72,11 @@ const paymentEvents = pgTable(
     outcome: text('outcome', { enum: PAYMENT_EVENT_OUTCOMES }).notNull(),
     reason: text('reason').notNull(),
     webhookEventId: uuid('webhook_event_id'),
+    // Not now(): that is the transaction start, which can precede a concurrent
+    // transaction that won the row lock first and so misorder the timeline.
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
-      .defaultNow(),
+      .default(sql`clock_timestamp()`),
   },
   (table) => [
     unique('payment_events_webhook_event_id_payment_id_to_status_unique').on(

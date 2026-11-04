@@ -200,7 +200,7 @@ describe('Payments ingest', () => {
             `select tablename as name from pg_tables where schemaname = 'public' order by tablename`,
           );
 
-          expect(firstRunRows.rows).toHaveLength(3);
+          expect(firstRunRows.rows).toHaveLength(4);
           expect(secondRunRows.rows).toEqual(firstRunRows.rows);
           expect(tables.rows.map(({ name }) => name)).toEqual([
             'payment_events',
@@ -221,7 +221,7 @@ describe('Payments ingest', () => {
 
         await applyMigrations(databaseUrl);
 
-        expect(rowsBefore).toHaveLength(3);
+        expect(rowsBefore).toHaveLength(4);
         expect(await db.execute(migrationRowsSql)).toEqual(rowsBefore);
       },
       SLOW_TEST_TIMEOUT_MS,
@@ -703,6 +703,11 @@ describe('Payments ingest', () => {
               fromStatus ? [decideTransition(fromStatus, toStatus)] : [],
           );
           expect(new Set(transitions)).toEqual(new Set(['apply']));
+
+          expect(appliedEvents[0].fromStatus).toBeNull();
+          appliedEvents.slice(1).forEach(({ fromStatus }, index) => {
+            expect(fromStatus).toBe(appliedEvents[index].toStatus);
+          });
         }
       },
       SLOW_TEST_TIMEOUT_MS,
