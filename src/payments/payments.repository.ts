@@ -67,7 +67,7 @@ export class PaymentsRepository {
   ): Promise<Payment | null> {
     const [payment] = await tx
       .update(payments)
-      .set({ status, updatedAt: sql`now()` })
+      .set({ status, updatedAt: sql`clock_timestamp()` })
       .where(eq(payments.id, paymentId))
       .returning();
 

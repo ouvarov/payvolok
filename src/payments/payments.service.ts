@@ -29,9 +29,25 @@ type IngestPaymentResult = {
 };
 
 export class PaymentMismatchError extends Error {
-  constructor(readonly paymentId: string) {
-    super(`Payment ${paymentId} has a different amount or currency`);
+  readonly paymentId: string;
+  readonly storedAmountMinor: number;
+  readonly storedCurrency: string;
+  readonly receivedAmountMinor: number;
+  readonly receivedCurrency: string;
+
+  constructor(
+    stored: Pick<Payment, 'id' | 'amountMinor' | 'currency'>,
+    received: Pick<IngestPaymentInput, 'amountMinor' | 'currency'>,
+  ) {
+    super(
+      `Payment ${stored.id} mismatch: stored ${stored.amountMinor} ${stored.currency}, received ${received.amountMinor} ${received.currency}`,
+    );
     this.name = 'PaymentMismatchError';
+    this.paymentId = stored.id;
+    this.storedAmountMinor = stored.amountMinor;
+    this.storedCurrency = stored.currency;
+    this.receivedAmountMinor = received.amountMinor;
+    this.receivedCurrency = received.currency;
   }
 }
 
@@ -109,7 +125,7 @@ export class PaymentsService {
       existingPayment.amountMinor !== input.amountMinor ||
       existingPayment.currency !== input.currency
     ) {
-      throw new PaymentMismatchError(existingPayment.id);
+      throw new PaymentMismatchError(existingPayment, input);
     }
 
     const decision = decideTransition(existingPayment.status, input.status);

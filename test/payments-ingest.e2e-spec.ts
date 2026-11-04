@@ -354,49 +354,66 @@ describe('Payments ingest', () => {
     });
 
     it('builds an ordered timeline of applied events', async () => {
-      const input = ingestInputWith({ status: 'pending' });
+      const input = ingestInputWith({
+        status: 'pending',
+        reason: 'birth reason',
+      });
       const { payment } = await paymentsService.ingestPayment(input);
 
-      await paymentsService.ingestPayment({ ...input, status: 'succeeded' });
+      await paymentsService.ingestPayment({
+        ...input,
+        status: 'succeeded',
+        reason: 'capture reason',
+      });
       const refunded = await paymentsService.ingestPayment({
         ...input,
         status: 'refunded',
+        reason: 'refund reason',
       });
 
       expect(refunded.payment.status).toBe('refunded');
-      expect(refunded.payment.updatedAt.getTime()).toBeGreaterThanOrEqual(
+      expect(refunded.payment.updatedAt.getTime()).toBeGreaterThan(
         payment.updatedAt.getTime(),
       );
       const events = await eventTimelineOf(payment.id);
       expect(
-        events.map(({ fromStatus, toStatus, outcome }) => [
+        events.map(({ fromStatus, toStatus, outcome, reason }) => [
           fromStatus,
           toStatus,
           outcome,
+          reason,
         ]),
       ).toEqual([
-        [null, 'pending', 'applied'],
-        ['pending', 'succeeded', 'applied'],
-        ['succeeded', 'refunded', 'applied'],
+        [null, 'pending', 'applied', 'birth reason'],
+        ['pending', 'succeeded', 'applied', 'capture reason'],
+        ['succeeded', 'refunded', 'applied', 'refund reason'],
       ]);
     });
 
     it.each([
-      ['amountMinor', { amountMinor: 2000 }],
-      ['currency', { currency: 'EUR' }],
-    ])(
-      'rejects a different %s and writes nothing',
-      async (_field, mismatch) => {
+      ['amountMinor', 'succeeded', 2000, 'USD'],
+      ['currency', 'succeeded', 1000, 'EUR'],
+      ['amountMinor', 'pending', 2000, 'USD'],
+      ['currency', 'pending', 1000, 'EUR'],
+    ] as const)(
+      'rejects a different %s on an ingest of %s and writes nothing',
+      async (_field, status, amountMinor, currency) => {
         const input = ingestInputWith({ status: 'pending' });
         const { payment } = await paymentsService.ingestPayment(input);
 
-        await expect(
-          paymentsService.ingestPayment({
-            ...input,
-            ...mismatch,
-            status: 'succeeded',
-          }),
-        ).rejects.toBeInstanceOf(PaymentMismatchError);
+        const error: unknown = await paymentsService
+          .ingestPayment({ ...input, status, amountMinor, currency })
+          .catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(PaymentMismatchError);
+        expect(error).toMatchObject({
+          message: `Payment ${payment.id} mismatch: stored 1000 USD, received ${amountMinor} ${currency}`,
+          paymentId: payment.id,
+          storedAmountMinor: 1000,
+          storedCurrency: 'USD',
+          receivedAmountMinor: amountMinor,
+          receivedCurrency: currency,
+        });
 
         const [storedPayment] = await paymentRowsOf(input.providerPaymentId);
         expect(storedPayment).toMatchObject({
