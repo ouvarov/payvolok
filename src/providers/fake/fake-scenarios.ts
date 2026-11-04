@@ -111,8 +111,9 @@ const fakeRefundIdentitySchema = z.strictObject({
 type FakePaymentIdentity = z.infer<typeof fakePaymentIdentitySchema>;
 type FakeRefundIdentity = z.infer<typeof fakeRefundIdentitySchema>;
 
-const encodeFakeId = (identity: FakePaymentIdentity | FakeRefundIdentity) =>
-  Buffer.from(JSON.stringify(identity)).toString('base64url');
+const encodeFakeId = (
+  identity: FakePaymentIdentity | FakeRefundIdentity,
+): string => Buffer.from(JSON.stringify(identity)).toString('base64url');
 
 const parseJsonOrNull = (rawJson: Buffer): unknown => {
   try {

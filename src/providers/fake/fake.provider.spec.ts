@@ -365,6 +365,7 @@ describe('FakeProvider', () => {
       ['a currency mismatch', null, 1000, 400, 'EUR'],
       ['an amount above the payment', null, 1000, 1001, 'USD'],
       ['a zero amount', null, 1000, 0, 'USD'],
+      ['a fractional amount', null, 1000, 400.5, 'USD'],
     ])(
       'rejects as non-retryable for %s',
       async (_case, fixedId, paymentAmount, refundAmount, currency) => {
