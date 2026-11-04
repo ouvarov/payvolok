@@ -2,13 +2,16 @@ import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
 
 import type { DatabaseTransaction } from '@/database/drizzle';
+import { isUniqueViolationOf } from '@/database/postgres-errors';
 import type { Payment } from '@/database/schemas/payments.schema';
 import type { ProviderCode } from '@/providers/provider.constants';
 
-import type {
-  PaymentOrigin,
-  PaymentPurpose,
-  PaymentStatus,
+import {
+  CURRENCY_PATTERN,
+  PAYMENTS_PROVIDER_REF_UNIQUE,
+  type PaymentOrigin,
+  type PaymentPurpose,
+  type PaymentStatus,
 } from './payment.constants';
 import { decideTransition } from './payment-state-machine';
 import { PaymentsRepository } from './payments.repository';
@@ -33,7 +36,29 @@ type IngestPaymentResult = {
   outcome: 'created' | 'applied' | 'duplicate' | 'stale' | 'conflict';
 };
 
-export class PaymentMismatchError extends Error {
+type PaymentLookup = Pick<
+  IngestPaymentInput,
+  'reference' | 'provider' | 'providerPaymentId'
+>;
+
+export class IngestRejectedError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'IngestRejectedError';
+  }
+}
+
+export class PaymentEventInvalidError extends IngestRejectedError {
+  readonly field: 'amountMinor' | 'currency';
+
+  constructor(field: 'amountMinor' | 'currency') {
+    super(`Payment event has an invalid ${field}`);
+    this.name = 'PaymentEventInvalidError';
+    this.field = field;
+  }
+}
+
+export class PaymentMismatchError extends IngestRejectedError {
   readonly paymentId: string;
   readonly storedAmountMinor: number;
   readonly storedCurrency: string;
@@ -56,7 +81,7 @@ export class PaymentMismatchError extends Error {
   }
 }
 
-export class PaymentProviderRefMismatchError extends Error {
+export class PaymentProviderRefMismatchError extends IngestRejectedError {
   readonly paymentId: string;
   readonly storedProviderPaymentId: string | null;
   readonly receivedProviderPaymentId: string;
@@ -75,6 +100,32 @@ export class PaymentProviderRefMismatchError extends Error {
   }
 }
 
+export class PaymentProviderRefOwnedError extends IngestRejectedError {
+  readonly reference: string | null;
+  readonly providerPaymentId: string;
+
+  constructor(received: PaymentLookup, options?: ErrorOptions) {
+    super(
+      `Payment ${received.reference} cannot take provider ref ${received.providerPaymentId}: another payment owns it`,
+      options,
+    );
+    this.name = 'PaymentProviderRefOwnedError';
+    this.reference = received.reference;
+    this.providerPaymentId = received.providerPaymentId;
+  }
+}
+
+const assertValidPaymentEvent = (
+  input: Pick<IngestPaymentInput, 'amountMinor' | 'currency'>,
+): void => {
+  if (!Number.isSafeInteger(input.amountMinor) || input.amountMinor < 0) {
+    throw new PaymentEventInvalidError('amountMinor');
+  }
+  if (!CURRENCY_PATTERN.test(input.currency)) {
+    throw new PaymentEventInvalidError('currency');
+  }
+};
+
 @Injectable()
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
@@ -82,11 +133,9 @@ export class PaymentsService {
   constructor(private readonly paymentsRepository: PaymentsRepository) {}
 
   async ingestPayment(input: IngestPaymentInput): Promise<IngestPaymentResult> {
-    if (!Number.isSafeInteger(input.amountMinor)) {
-      throw new RangeError('amountMinor must be a safe integer');
-    }
+    assertValidPaymentEvent(input);
 
-    const result = await this.paymentsRepository.withTransaction((tx) =>
+    const result = await this.runIngestTransaction(input, (tx) =>
       this.ingestInTransaction(tx, input),
     );
 
@@ -97,6 +146,37 @@ export class PaymentsService {
     }
 
     return result;
+  }
+
+  async runIngestTransaction<T>(
+    received: PaymentLookup,
+    work: (tx: DatabaseTransaction) => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await this.paymentsRepository.withTransaction(work);
+    } catch (error) {
+      if (isUniqueViolationOf(error, PAYMENTS_PROVIDER_REF_UNIQUE)) {
+        throw new PaymentProviderRefOwnedError(received, { cause: error });
+      }
+
+      throw error;
+    }
+  }
+
+  async lockPaymentForRefund(
+    tx: DatabaseTransaction,
+    lookup: PaymentLookup,
+  ): Promise<Payment | null> {
+    const referencedPayment = await this.findReferencedPayment(tx, lookup);
+    if (referencedPayment) {
+      return this.linkProviderPaymentId(tx, referencedPayment, lookup);
+    }
+
+    return this.paymentsRepository.findByProviderRefForUpdate(
+      tx,
+      lookup.provider,
+      lookup.providerPaymentId,
+    );
   }
 
   private async ingestInTransaction(
@@ -153,7 +233,7 @@ export class PaymentsService {
 
   private async findReferencedPayment(
     tx: DatabaseTransaction,
-    input: IngestPaymentInput,
+    input: PaymentLookup,
   ): Promise<Payment | null> {
     if (input.reference === null) return null;
 
@@ -170,7 +250,7 @@ export class PaymentsService {
   private async linkProviderPaymentId(
     tx: DatabaseTransaction,
     payment: Payment,
-    input: IngestPaymentInput,
+    input: PaymentLookup,
   ): Promise<Payment> {
     if (payment.providerPaymentId === input.providerPaymentId) return payment;
 
@@ -203,7 +283,24 @@ export class PaymentsService {
       throw new PaymentMismatchError(existingPayment, input);
     }
 
-    const decision = decideTransition(existingPayment.status, input.status);
+    return this.applyStatusInTransaction(
+      tx,
+      existingPayment,
+      input.status,
+      input.reason,
+      input.webhookEventId,
+    );
+  }
+
+  // The caller must already hold the row lock on existingPayment.
+  async applyStatusInTransaction(
+    tx: DatabaseTransaction,
+    existingPayment: Payment,
+    targetStatus: PaymentStatus,
+    reason: string,
+    webhookEventId: string | null,
+  ): Promise<IngestPaymentResult> {
+    const decision = decideTransition(existingPayment.status, targetStatus);
 
     if (decision === 'duplicate') {
       return { payment: existingPayment, outcome: 'duplicate' };
@@ -214,7 +311,7 @@ export class PaymentsService {
         ? await this.paymentsRepository.updateStatus(
             tx,
             existingPayment.id,
-            input.status,
+            targetStatus,
           )
         : existingPayment;
 
@@ -227,14 +324,14 @@ export class PaymentsService {
     await this.paymentsRepository.insertEvent(tx, {
       paymentId: existingPayment.id,
       fromStatus: existingPayment.status,
-      toStatus: input.status,
+      toStatus: targetStatus,
       outcome,
-      reason: input.reason,
-      webhookEventId: input.webhookEventId,
+      reason,
+      webhookEventId,
     });
 
     return { payment: currentPayment, outcome };
   }
 }
 
-export type { IngestPaymentInput, IngestPaymentResult };
+export type { IngestPaymentInput, IngestPaymentResult, PaymentLookup };

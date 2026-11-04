@@ -160,7 +160,7 @@ const fakeWireRefundEventSchema = z.object({
   providerPaymentId: z.string().min(1),
   reference: z.string().nullable(),
   refundReference: z.string().nullable(),
-  providerRefundId: z.string().nullable(),
+  providerRefundId: z.string().min(1).nullable(),
   amountMinor: amountMinorSchema,
   currency: currencySchema,
 });

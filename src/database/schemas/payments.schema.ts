@@ -1,4 +1,4 @@
-import { sql, type SQL } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import {
   bigint,
   check,
@@ -15,11 +15,11 @@ import {
   PAYMENT_ORIGINS,
   PAYMENT_PURPOSES,
   PAYMENT_STATUSES,
+  PAYMENTS_PROVIDER_REF_UNIQUE,
 } from '../../payments/payment.constants';
 import { PROVIDER_CODES } from '../../providers/provider.constants';
 
-const quotedList = (values: readonly string[]): SQL =>
-  sql.raw(values.map((value) => `'${value}'`).join(', '));
+import { quotedList } from './schema-helpers';
 
 const payments = pgTable(
   'payments',
@@ -40,7 +40,7 @@ const payments = pgTable(
       .defaultNow(),
   },
   (table) => [
-    unique('payments_provider_provider_payment_id_unique').on(
+    unique(PAYMENTS_PROVIDER_REF_UNIQUE).on(
       table.provider,
       table.providerPaymentId,
     ),
