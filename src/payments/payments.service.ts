@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { z } from 'zod';
 
 import type { DatabaseTransaction } from '@/database/drizzle';
 import type { Payment } from '@/database/schemas/payments.schema';
+import type { ProviderCode } from '@/providers/provider.constants';
 
 import type {
   PaymentOrigin,
@@ -11,8 +13,11 @@ import type {
 import { decideTransition } from './payment-state-machine';
 import { PaymentsRepository } from './payments.repository';
 
+const paymentReferenceSchema = z.uuid();
+
 type IngestPaymentInput = {
-  provider: string;
+  reference: string | null;
+  provider: ProviderCode;
   providerPaymentId: string;
   status: PaymentStatus;
   amountMinor: number;
@@ -51,6 +56,25 @@ export class PaymentMismatchError extends Error {
   }
 }
 
+export class PaymentProviderRefMismatchError extends Error {
+  readonly paymentId: string;
+  readonly storedProviderPaymentId: string | null;
+  readonly receivedProviderPaymentId: string;
+
+  constructor(
+    stored: Pick<Payment, 'id' | 'providerPaymentId'>,
+    received: Pick<IngestPaymentInput, 'providerPaymentId'>,
+  ) {
+    super(
+      `Payment ${stored.id} provider ref mismatch: stored ${stored.providerPaymentId}, received ${received.providerPaymentId}`,
+    );
+    this.name = 'PaymentProviderRefMismatchError';
+    this.paymentId = stored.id;
+    this.storedProviderPaymentId = stored.providerPaymentId;
+    this.receivedProviderPaymentId = received.providerPaymentId;
+  }
+}
+
 @Injectable()
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
@@ -79,6 +103,17 @@ export class PaymentsService {
     tx: DatabaseTransaction,
     input: IngestPaymentInput,
   ): Promise<IngestPaymentResult> {
+    const referencedPayment = await this.findReferencedPayment(tx, input);
+    if (referencedPayment) {
+      const linkedPayment = await this.linkProviderPaymentId(
+        tx,
+        referencedPayment,
+        input,
+      );
+
+      return this.applyToExisting(tx, linkedPayment, input);
+    }
+
     const createdPayment = await this.paymentsRepository.insertIfAbsent(tx, {
       provider: input.provider,
       providerPaymentId: input.providerPaymentId,
@@ -114,6 +149,46 @@ export class PaymentsService {
     }
 
     return this.applyToExisting(tx, existingPayment, input);
+  }
+
+  private async findReferencedPayment(
+    tx: DatabaseTransaction,
+    input: IngestPaymentInput,
+  ): Promise<Payment | null> {
+    if (input.reference === null) return null;
+
+    const reference = paymentReferenceSchema.safeParse(input.reference);
+    if (!reference.success) return null;
+
+    return this.paymentsRepository.findByIdAndProviderForUpdate(
+      tx,
+      reference.data,
+      input.provider,
+    );
+  }
+
+  private async linkProviderPaymentId(
+    tx: DatabaseTransaction,
+    payment: Payment,
+    input: IngestPaymentInput,
+  ): Promise<Payment> {
+    if (payment.providerPaymentId === input.providerPaymentId) return payment;
+
+    if (payment.providerPaymentId !== null) {
+      throw new PaymentProviderRefMismatchError(payment, input);
+    }
+
+    const linkedPayment = await this.paymentsRepository.setProviderPaymentId(
+      tx,
+      payment.id,
+      input.providerPaymentId,
+    );
+
+    if (!linkedPayment) {
+      throw new Error('Payment row disappeared during ingest');
+    }
+
+    return linkedPayment;
   }
 
   private async applyToExisting(
