@@ -47,20 +47,22 @@ npm run start:dev
 
 Any other Postgres works too: point `DATABASE_URL` at it.
 
+`npm run db:local` reads `LOCAL_POSTGRES_PORT` from `.env` (default 55432). For e2e against it, set `E2E_DATABASE_URL=postgres://postgres@127.0.0.1:55432/postgres` and run `npm run test:e2e -- --runInBand`. With the Docker Postgres, create the e2e database first: `docker compose exec db createdb -U payvolok payvolok_e2e`.
+
 ## Scripts
 
-| Script                                        | What it does                                                                |
-| --------------------------------------------- | --------------------------------------------------------------------------- |
-| `npm run build`                               | Compile to `dist/`                                                          |
-| `npm run start:dev`                           | Run with file watching                                                      |
-| `npm run start:prod`                          | Run the compiled build                                                      |
-| `npm run lint` / `format:check` / `typecheck` | ESLint, Prettier check, `tsc --noEmit`                                      |
-| `npm run check`                               | typecheck, lint and format check                                            |
-| `npm test`                                    | Unit tests                                                                  |
-| `npm run test:e2e`                            | End-to-end tests; needs `E2E_DATABASE_URL` pointing at a throwaway database |
-| `npm run db:generate`                         | Generate a Drizzle migration from the schema                                |
-| `npm run db:migrate` / `db:migrate:prod`      | Apply migrations from sources / from the build                              |
-| `npm run db:local`                            | In-memory Postgres for development and e2e                                  |
+| Script                                        | What it does                                                                                                                               |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `npm run build`                               | Compile to `dist/`                                                                                                                         |
+| `npm run start:dev`                           | Run with file watching                                                                                                                     |
+| `npm run start:prod`                          | Run the compiled build                                                                                                                     |
+| `npm run lint` / `format:check` / `typecheck` | ESLint, Prettier check, `tsc --noEmit`                                                                                                     |
+| `npm run check`                               | typecheck, lint and format check                                                                                                           |
+| `npm test`                                    | Unit tests                                                                                                                                 |
+| `npm run test:e2e`                            | End-to-end tests; read `E2E_DATABASE_URL` from `.env`, which must name an existing throwaway database other than the one in `DATABASE_URL` |
+| `npm run db:generate`                         | Generate a Drizzle migration from the schema                                                                                               |
+| `npm run db:migrate` / `db:migrate:prod`      | Apply migrations from sources / from the build                                                                                             |
+| `npm run db:local`                            | In-memory Postgres for development and e2e                                                                                                 |
 
 Git hooks (simple-git-hooks): pre-commit runs lint-staged, pre-push runs `check` and the unit tests. CI runs the same checks plus e2e and a Docker boot.
 

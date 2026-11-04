@@ -19,9 +19,9 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node --env-file-if-exists=.env -r ts-node/register/transpile-only src/database/migrate.ts",
     "db:migrate:prod": "node dist/database/migrate.js",
-    "db:local": "node scripts/local-postgres.mjs",
+    "db:local": "node --env-file-if-exists=.env scripts/local-postgres.mjs",
     "test": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js",
-    "test:e2e": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --config ./test/jest-e2e.json"
+    "test:e2e": "node --env-file-if-exists=.env --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --config ./test/jest-e2e.json"
   },
   "simple-git-hooks": {
     "pre-commit": "npx lint-staged",
