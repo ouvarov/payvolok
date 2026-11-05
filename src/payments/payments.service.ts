@@ -15,6 +15,7 @@ import {
 } from './payment.constants';
 import { decideTransition } from './payment-state-machine';
 import { PaymentsRepository } from './payments.repository';
+import type { IngestablePaymentStatus } from './provider-event-status';
 
 const paymentReferenceSchema = z.uuid();
 
@@ -22,7 +23,7 @@ type IngestPaymentInput = {
   reference: string | null;
   provider: ProviderCode;
   providerPaymentId: string;
-  status: PaymentStatus;
+  status: IngestablePaymentStatus;
   amountMinor: number;
   currency: string;
   purpose: PaymentPurpose;

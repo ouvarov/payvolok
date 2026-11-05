@@ -38,6 +38,10 @@ import type {
   ProviderPaymentEvent,
 } from '@/providers/provider-events';
 import { ProviderRegistry } from '@/providers/provider.registry';
+import {
+  RefundsService,
+  type IngestRefundInput,
+} from '@/refunds/refunds.service';
 
 import { applyMigrations, MIGRATIONS_FOLDER } from './apply-migrations';
 
@@ -82,6 +86,23 @@ const ingestInputWith = (
   reason: 'e2e',
   webhookEventId: null,
   ...overrides,
+});
+
+const fullRefundInputOf = (
+  input: IngestPaymentInput,
+  reason: string,
+): IngestRefundInput => ({
+  reference: null,
+  provider: input.provider,
+  providerPaymentId: input.providerPaymentId,
+  refundReference: null,
+  providerRefundId: randomUUID(),
+  refundIdentity: 'provider',
+  status: 'succeeded',
+  amountMinor: input.amountMinor,
+  currency: input.currency,
+  reason,
+  webhookEventId: null,
 });
 
 const isPaymentEvent = (event: ProviderEvent): event is ProviderPaymentEvent =>
@@ -130,6 +151,7 @@ describe('Payments ingest', () => {
   let app: INestApplication;
   let db: Database;
   let paymentsService: PaymentsService;
+  let refundsService: RefundsService;
 
   const paymentRowsOf = (
     providerPaymentId: string,
@@ -197,6 +219,16 @@ describe('Payments ingest', () => {
       )
     `);
 
+  // On a cold pool the first transaction commits before other connections
+  // open, so the ingests would run one after another and prove nothing.
+  const warmPool = async (): Promise<void> => {
+    await Promise.all(
+      Array.from({ length: databasePoolMax }, () =>
+        db.execute(sql`select pg_sleep(${POOL_WARMUP_SLEEP_SECONDS})`),
+      ),
+    );
+  };
+
   beforeAll(async () => {
     await applyMigrations(databaseUrl);
 
@@ -215,6 +247,7 @@ describe('Payments ingest', () => {
     await app.init();
     db = app.get<Database>(DRIZZLE);
     paymentsService = app.get(PaymentsService);
+    refundsService = app.get(RefundsService);
   }, SLOW_TEST_TIMEOUT_MS);
 
   afterAll(async () => {
@@ -415,11 +448,9 @@ describe('Payments ingest', () => {
         status: 'succeeded',
         reason: 'capture reason',
       });
-      const refunded = await paymentsService.ingestPayment({
-        ...input,
-        status: 'refunded',
-        reason: 'refund reason',
-      });
+      const refunded = await refundsService.ingestRefund(
+        fullRefundInputOf(input, 'refund reason'),
+      );
 
       expect(refunded.payment.status).toBe('refunded');
       expect(refunded.payment.updatedAt.getTime()).toBeGreaterThan(
@@ -705,13 +736,7 @@ describe('Payments ingest', () => {
       async () => {
         const row = await insertNullRefPayment();
         const input = ingestInputWith({ reference: row.id });
-        // On a cold pool the first transaction commits before other connections
-        // open, so the ingests would run one after another and prove nothing.
-        await Promise.all(
-          Array.from({ length: databasePoolMax }, () =>
-            db.execute(sql`select pg_sleep(${POOL_WARMUP_SLEEP_SECONDS})`),
-          ),
-        );
+        await warmPool();
 
         const results = await Promise.all(
           Array.from({ length: PARALLEL_INGESTS }, () =>
@@ -1092,15 +1117,17 @@ describe('Payments ingest', () => {
     );
 
     it(
-      'always ends at refunded when succeeded and refunded race',
+      'always ends at refunded when succeeded and a full refund race',
       async () => {
+        await warmPool();
+
         for (let repeat = 0; repeat < RACE_REPEATS; repeat += 1) {
           const input = ingestInputWith({ status: 'pending' });
           const { payment } = await paymentsService.ingestPayment(input);
 
           await Promise.all([
             paymentsService.ingestPayment({ ...input, status: 'succeeded' }),
-            paymentsService.ingestPayment({ ...input, status: 'refunded' }),
+            refundsService.ingestRefund(fullRefundInputOf(input, 'e2e refund')),
           ]);
 
           const [storedPayment] = await paymentRowsOf(input.providerPaymentId);

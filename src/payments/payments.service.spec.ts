@@ -1,5 +1,6 @@
 import type { DatabaseTransaction } from '@/database/drizzle';
 import type { Payment } from '@/database/schemas/payments.schema';
+import type { ProviderPaymentStatus } from '@/providers/payment-provider.port';
 
 import type { PaymentsRepository } from './payments.repository';
 import {
@@ -68,6 +69,22 @@ describe('PaymentsService', () => {
     };
 
     expect(inputWithUnregisteredProvider.provider).toBe('stripe');
+  });
+
+  it('takes only the statuses a payment event can report at compile time', () => {
+    const providerStatus = 'refunded' as ProviderPaymentStatus;
+    const inputs: IngestPaymentInput[] = [
+      // @ts-expect-error refund states come only from refund rows
+      { ...INPUT, status: 'refunded' },
+      // @ts-expect-error refund states come only from refund rows
+      { ...INPUT, status: 'partially_refunded' },
+      // @ts-expect-error created is our own row before the provider call
+      { ...INPUT, status: 'created' },
+      // @ts-expect-error a provider status may be a refund state
+      { ...INPUT, status: providerStatus },
+    ];
+
+    expect(inputs).toHaveLength(4);
   });
 
   it.each([
