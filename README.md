@@ -1,20 +1,23 @@
 # PayVolok
 
-One API over many payment providers: payments, refunds, webhooks and status reconciliation in a single format, whatever each provider's rules are.
+Planned as one API over many payment providers: payments, refunds, webhooks and status reconciliation in a single format, whatever each provider's rules are.
 
 A _volok_ (portage) is the place on the old Varangian route where boats were hauled overland from one river to the next. Payment providers are separate rivers too, with their own APIs, signatures and statuses. PayVolok carries a payment across and returns the result in one shape.
 
 Pet project at an early stage. Sandbox only, no real money: it only talks to provider sandboxes and never takes real payments.
 
+## Status
+
+What exists: the payment and refund ingest core, the fake provider and the health routes. Everything else is planned, including the payment API, the webhook route, the worker, reconciliation and real providers.
+
 ## Stack
 
-NestJS 12, TypeScript, Postgres 18, Drizzle ORM, zod for environment validation, Jest and supertest for tests. Node 24 or newer.
+NestJS 12, TypeScript, Postgres 18, Drizzle ORM, zod for environment validation, Jest and supertest for tests. Node 24.9 or newer.
 
 The repository root is the API. A web frontend will live in `web/` later.
 
 ## Planned
 
-- **API:** NestJS, TypeScript, Postgres, Drizzle.
 - **Admin panel:** password protected; view everything and set up subscriptions.
 - **Open test page:** try a sandbox checkout without logging in.
 - **Providers:** Monobank first, then Paddle, then the rest one at a time.
@@ -49,7 +52,7 @@ Any other Postgres works too: point `DATABASE_URL` at it.
 
 `npm run db:local` reads `LOCAL_POSTGRES_PORT` from `.env` (default 55432). For e2e against it, set `E2E_DATABASE_URL=postgres://postgres@127.0.0.1:55432/postgres` and run `npm run test:e2e -- --runInBand`. With the Docker Postgres, create the e2e database first: `docker compose exec db createdb -U payvolok payvolok_e2e`.
 
-The e2e tests apply migrations to `E2E_DATABASE_URL` themselves. Lock, concurrency and statement timeout tests need a real Postgres and are skipped unless `E2E_REAL_POSTGRES=true`, which CI sets. Leave it unset on PGlite. Point `E2E_DATABASE_URL` at a direct connection, not a pooler.
+The e2e tests apply migrations to `E2E_DATABASE_URL` once, before the Jest workers start, so a fresh database needs no `db:migrate`. PGlite still needs `--runInBand`. Lock, concurrency and statement timeout tests need a real Postgres and are skipped unless `E2E_REAL_POSTGRES=true`, which CI sets. Leave it unset on PGlite. Point `E2E_DATABASE_URL` at a direct connection, not a pooler.
 
 ## Scripts
 
@@ -77,4 +80,6 @@ Git hooks (simple-git-hooks): pre-commit runs lint-staged, pre-push runs `check`
 
 ## Fake provider
 
-`fake` is a stateless provider for development and chaos tests. The last two digits of `amountMinor` choose the scenario: `01` fails, `02` succeeds after a failed attempt, `03` fails after a failed attempt, `04` expires, `05` stays pending, anything else succeeds. On a refund amount, `01` fails, `05` stays pending, anything else succeeds.
+`fake` is a provider for development and chaos tests. It keeps no data. The last two digits of `amountMinor` choose the scenario: `01` fails, `02` succeeds after a failed attempt, `03` fails after a failed attempt, `04` expires, `05` stays pending, anything else succeeds. On a refund amount, `01` fails, `05` stays pending, anything else succeeds.
+
+It signs webhooks with `FAKE_WEBHOOK_SECRET`, at least 32 characters, so several instances verify each other. When it is unset, each process makes a random secret at boot.
