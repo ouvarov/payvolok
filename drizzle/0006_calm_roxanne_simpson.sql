@@ -1,0 +1,1 @@
+CREATE INDEX "webhook_events_replay_of_idx" ON "webhook_events" USING btree ("replay_of") WHERE "webhook_events"."replay_of" IS NOT NULL;

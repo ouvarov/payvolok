@@ -59,6 +59,9 @@ const webhookEvents = pgTable(
     uniqueIndex('webhook_events_provider_dedup_key_unique')
       .on(table.provider, table.dedupKey)
       .where(sql`${table.replayOf} IS NULL`),
+    index('webhook_events_replay_of_idx')
+      .on(table.replayOf)
+      .where(sql`${table.replayOf} IS NOT NULL`),
     index('webhook_events_next_attempt_at_id_idx')
       .on(table.nextAttemptAt, table.id)
       .where(sql`${table.status} = 'received'`),

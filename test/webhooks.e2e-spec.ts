@@ -838,6 +838,17 @@ describe('Webhooks route', () => {
       ).resolves.toBeDefined();
     });
 
+    it('indexes replay_of only where it is set', async () => {
+      const [{ indexdef }] = await db.execute<{ indexdef: string }>(sql`
+        select indexdef
+        from pg_indexes
+        where tablename = 'webhook_events'
+          and indexname = 'webhook_events_replay_of_idx'
+      `);
+
+      expect(indexdef).toMatch(/\(replay_of\) WHERE \(replay_of IS NOT NULL\)/);
+    });
+
     it('lets a replay without a body share the key of the original', async () => {
       const original = receivedRow();
       const [{ id }] = await db
