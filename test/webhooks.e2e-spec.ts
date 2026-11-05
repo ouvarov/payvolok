@@ -73,6 +73,9 @@ const nonJsonBody = (): Buffer =>
 const invalidKeyOf = (rawBody: Buffer): string =>
   `invalid:${createHash('sha256').update(rawBody).digest('hex')}`;
 
+// Otherwise superagent JSON-encodes a Buffer sent under a JSON or form type.
+const sendBytesAsTheyAre = (rawBody: unknown): string => rawBody as string;
+
 describe('Webhooks route', () => {
   let app: INestApplication;
   let db: Database;
@@ -90,6 +93,7 @@ describe('Webhooks route', () => {
     request(serverOf(target))
       .post(`/webhooks/${providerCode}`)
       .set(SIGNATURE_HEADER, signature)
+      .serialize(sendBytesAsTheyAre)
       .send(rawBody);
 
   const deliver = (rawBody: Buffer, providerCode?: string) =>
@@ -117,6 +121,7 @@ describe('Webhooks route', () => {
 
   beforeAll(async () => {
     app = await createE2eApp();
+    await app.listen(0);
     db = app.get<Database>(DRIZZLE);
     fakeProvider = app.get(FakeProvider);
   }, SLOW_TEST_TIMEOUT_MS);
@@ -258,12 +263,7 @@ describe('Webhooks route', () => {
       async (_case, contentType) => {
         const rawBody = nonJsonBody();
 
-        await request(serverOf(app))
-          .post('/webhooks/fake')
-          .set(SIGNATURE_HEADER, signatureOf(rawBody))
-          .set('Content-Type', contentType)
-          .send(rawBody)
-          .expect(200);
+        await deliver(rawBody).set('Content-Type', contentType).expect(200);
 
         const [row] = await rowsWithKey(dedupKeyFromBody(rawBody));
         expect(row.rawBody?.equals(rawBody)).toBe(true);
@@ -426,6 +426,7 @@ describe('Webhooks route', () => {
         const freshApp = await createE2eApp();
 
         try {
+          await freshApp.listen(0);
           const freshProvider = freshApp.get(FakeProvider);
           const bodies = Array.from(
             { length: INVALID_ROWS_CAP + 1 },
