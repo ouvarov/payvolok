@@ -18,7 +18,13 @@ const fakeProviderWith = async (secret?: string): Promise<FakeProvider> => {
         module: ConfigStubModule,
         global: true,
         providers: [
-          { provide: ConfigService, useValue: { get: () => secret } },
+          {
+            provide: ConfigService,
+            useValue: {
+              get: (key: string) =>
+                key === 'FAKE_WEBHOOK_SECRET' ? secret : undefined,
+            },
+          },
         ],
         exports: [ConfigService],
       },
