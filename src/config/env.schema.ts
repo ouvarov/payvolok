@@ -7,6 +7,7 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/, hostname: /.+/ }),
   DATABASE_POOL_MAX: z.coerce.number().int().positive().default(10),
+  FAKE_WEBHOOK_SECRET: z.string().min(32).optional(),
 });
 
 type Env = z.infer<typeof envSchema>;

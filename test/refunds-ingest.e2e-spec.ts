@@ -29,8 +29,6 @@ import {
   type IngestRefundInput,
 } from '@/refunds/refunds.service';
 
-import { applyMigrations } from './apply-migrations';
-
 const PGLITE_POOL_MAX = 1;
 const REAL_POSTGRES_POOL_MAX = 5;
 const POOL_WARMUP_SLEEP_SECONDS = 0.1;
@@ -59,6 +57,7 @@ const refundInputFor = (
   providerPaymentId: payment.providerPaymentId as string,
   refundReference: null,
   providerRefundId: randomUUID(),
+  refundIdentity: 'provider',
   status: 'succeeded',
   amountMinor: 300,
   currency: 'USD',
@@ -158,8 +157,6 @@ describe('Refunds ingest', () => {
   };
 
   beforeAll(async () => {
-    await applyMigrations(databaseUrl);
-
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(ConfigService)
       .useValue({
@@ -257,6 +254,22 @@ describe('Refunds ingest', () => {
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining(`Payment ${payment.id} over-refunded`),
       );
+    });
+
+    it('repeats no over-refund warning for a later pending refund', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      const payment = await insertPayment();
+      await refundsService.ingestRefund(
+        refundInputFor(payment, { amountMinor: 1300 }),
+      );
+      expect(warn).toHaveBeenCalledTimes(1);
+
+      const pending = await refundsService.ingestRefund(
+        refundInputFor(payment, { status: 'pending', amountMinor: 100 }),
+      );
+
+      expect(pending.paymentOutcome).toBe('unchanged');
+      expect(warn).toHaveBeenCalledTimes(1);
     });
 
     it('keeps the origin of the payment row', async () => {
@@ -435,7 +448,6 @@ describe('Refunds ingest', () => {
             amountMinor: 1000,
             currency: 'USD',
             purpose: 'one_off',
-            origin: 'provider',
             reason: 'late',
             webhookEventId: null,
           });
@@ -472,6 +484,96 @@ describe('Refunds ingest', () => {
         expect(warn).toHaveBeenCalledWith(
           expect.stringContaining(`Payment ${payment.id} conflict`),
         );
+      },
+    );
+
+    it('adds no event and no warning for a pending refund going to failed on a failed payment with a sum', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      const payment = await insertPayment({ status: 'failed' });
+      const { paymentOutcome } = await refundsService.ingestRefund(
+        refundInputFor(payment),
+      );
+      expect(paymentOutcome).toBe('conflict');
+      expect(await eventTimelineOf(payment.id)).toHaveLength(1);
+      expect(warn).toHaveBeenCalledTimes(1);
+      const input = refundInputFor(payment, {
+        status: 'pending',
+        amountMinor: 100,
+      });
+
+      const pending = await refundsService.ingestRefund(input);
+      const failed = await refundsService.ingestRefund({
+        ...input,
+        status: 'failed',
+      });
+
+      expect(pending).toMatchObject({
+        refundOutcome: 'created',
+        paymentOutcome: 'unchanged',
+      });
+      expect(failed).toMatchObject({
+        refundOutcome: 'applied',
+        paymentOutcome: 'unchanged',
+      });
+      expect(await eventTimelineOf(payment.id)).toHaveLength(1);
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the money counted and warns when failed follows succeeded', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      const payment = await insertPayment();
+      const input = refundInputFor(payment);
+      const { refund } = await refundsService.ingestRefund(input);
+
+      const reversal = await refundsService.ingestRefund({
+        ...input,
+        status: 'failed',
+      });
+
+      expect(reversal).toMatchObject({
+        refundOutcome: 'conflict',
+        paymentOutcome: 'unchanged',
+        refundedTotalMinor: 300,
+      });
+      expect((await storedPaymentOf(payment.id)).status).toBe(
+        'partially_refunded',
+      );
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining(`Refund ${refund.id} conflict`),
+      );
+    });
+
+    it.each(['failed', 'expired'] as const)(
+      'writes a conflict row and no refund when a payment succeeded event follows %s',
+      async (status) => {
+        const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+        const payment = await insertPayment({ status });
+
+        const { outcome, payment: finalPayment } =
+          await paymentsService.ingestPayment({
+            reference: null,
+            provider: 'fake',
+            providerPaymentId: payment.providerPaymentId as string,
+            status: 'succeeded',
+            amountMinor: 1000,
+            currency: 'USD',
+            purpose: 'one_off',
+            reason: 'late',
+            webhookEventId: null,
+          });
+
+        expect(outcome).toBe('conflict');
+        expect(finalPayment.status).toBe(status);
+        const events = await eventTimelineOf(payment.id);
+        expect(
+          events.map(({ fromStatus, toStatus, outcome: eventOutcome }) => [
+            fromStatus,
+            toStatus,
+            eventOutcome,
+          ]),
+        ).toEqual([[status, 'succeeded', 'conflict']]);
+        expect(await refundRowsOf(payment.id)).toHaveLength(0);
+        expect(warn).toHaveBeenCalledTimes(1);
       },
     );
 
@@ -525,6 +627,7 @@ describe('Refunds ingest', () => {
       const payment = await insertPayment();
       const refundReference = randomUUID();
       const input = refundInputFor(payment, {
+        refundIdentity: 'reference',
         refundReference,
         providerRefundId: null,
       });
@@ -543,6 +646,7 @@ describe('Refunds ingest', () => {
       const refundReference = randomUUID();
       const providerRefundId = randomUUID();
       const input = refundInputFor(payment, {
+        refundIdentity: 'reference',
         refundReference,
         providerRefundId: null,
         status: 'pending',
@@ -659,6 +763,7 @@ describe('Refunds ingest', () => {
       await refundsService.ingestRefund(owned);
       const refundReference = randomUUID();
       const input = refundInputFor(payment, {
+        refundIdentity: 'reference',
         refundReference,
         providerRefundId: null,
         status: 'pending',
@@ -737,6 +842,128 @@ describe('Refunds ingest', () => {
 
       expect(await refundRowsOf(payment.id)).toEqual([refund]);
       expect(await storedPaymentOf(payment.id)).toEqual(payment);
+    });
+  });
+
+  describe('refund identity', () => {
+    const succeededTotalOf = async (paymentId: string): Promise<number> =>
+      (await refundRowsOf(paymentId))
+        .filter(({ status }) => status === 'succeeded')
+        .reduce((total, { amountMinor }) => total + amountMinor, 0);
+
+    it('under provider rejects a reference-only event and creates one row from the provider id', async () => {
+      const payment = await insertPayment();
+      const refundIdentity = 'provider';
+
+      await expect(
+        refundsService.ingestRefund(
+          refundInputFor(payment, {
+            refundIdentity,
+            refundReference: randomUUID(),
+            providerRefundId: null,
+          }),
+        ),
+      ).rejects.toBeInstanceOf(RefundEventInvalidError);
+      const { refundedTotalMinor, payment: finalPayment } =
+        await refundsService.ingestRefund(
+          refundInputFor(payment, { refundIdentity }),
+        );
+
+      expect(refundedTotalMinor).toBe(300);
+      expect(finalPayment.status).toBe('partially_refunded');
+      expect(await refundRowsOf(payment.id)).toHaveLength(1);
+      expect(await succeededTotalOf(payment.id)).toBe(300);
+    });
+
+    it('under reference creates the row from the reference and rejects a provider-id-only event', async () => {
+      const payment = await insertPayment();
+      const refundIdentity = 'reference';
+      const refundReference = randomUUID();
+
+      const { refund } = await refundsService.ingestRefund(
+        refundInputFor(payment, {
+          refundIdentity,
+          refundReference,
+          providerRefundId: null,
+        }),
+      );
+      await expect(
+        refundsService.ingestRefund(
+          refundInputFor(payment, { refundIdentity }),
+        ),
+      ).rejects.toBeInstanceOf(RefundEventInvalidError);
+
+      expect(refund.id).toBe(refundReference);
+      expect(await refundRowsOf(payment.id)).toHaveLength(1);
+      expect(await succeededTotalOf(payment.id)).toBe(300);
+    });
+
+    it('under provider converges id then both, and rejects the reference-only step', async () => {
+      const payment = await insertPayment();
+      const refundIdentity = 'provider';
+      const refundReference = randomUUID();
+      const providerRefundId = randomUUID();
+
+      const first = await refundsService.ingestRefund(
+        refundInputFor(payment, { refundIdentity, providerRefundId }),
+      );
+      const second = await refundsService.ingestRefund(
+        refundInputFor(payment, {
+          refundIdentity,
+          refundReference,
+          providerRefundId,
+        }),
+      );
+      await expect(
+        refundsService.ingestRefund(
+          refundInputFor(payment, {
+            refundIdentity,
+            refundReference,
+            providerRefundId: null,
+          }),
+        ),
+      ).rejects.toBeInstanceOf(RefundEventInvalidError);
+
+      expect(first.refundOutcome).toBe('created');
+      expect(second.refundOutcome).toBe('duplicate');
+      expect(await refundRowsOf(payment.id)).toHaveLength(1);
+      expect(await succeededTotalOf(payment.id)).toBe(300);
+    });
+
+    it('under reference rejects the id-only step, creates from both, and converges on the reference', async () => {
+      const payment = await insertPayment();
+      const refundIdentity = 'reference';
+      const refundReference = randomUUID();
+      const providerRefundId = randomUUID();
+
+      await expect(
+        refundsService.ingestRefund(
+          refundInputFor(payment, { refundIdentity, providerRefundId }),
+        ),
+      ).rejects.toBeInstanceOf(RefundEventInvalidError);
+      const second = await refundsService.ingestRefund(
+        refundInputFor(payment, {
+          refundIdentity,
+          refundReference,
+          providerRefundId,
+        }),
+      );
+      const third = await refundsService.ingestRefund(
+        refundInputFor(payment, {
+          refundIdentity,
+          refundReference,
+          providerRefundId: null,
+        }),
+      );
+
+      expect(second.refundOutcome).toBe('created');
+      expect(second.refund).toMatchObject({
+        id: refundReference,
+        providerRefundId,
+      });
+      expect(third.refundOutcome).toBe('duplicate');
+      expect(await refundRowsOf(payment.id)).toHaveLength(1);
+      expect(await succeededTotalOf(payment.id)).toBe(300);
     });
   });
 

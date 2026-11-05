@@ -39,6 +39,7 @@ services:
       <<: *local-database
       NODE_ENV: development
       PORT: 3000
+      FAKE_WEBHOOK_SECRET:
     ports:
       - '3000:3000'
     depends_on:

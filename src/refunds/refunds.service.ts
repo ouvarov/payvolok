@@ -12,6 +12,7 @@ import {
   PaymentsService,
   type IngestPaymentResult,
 } from '@/payments/payments.service';
+import type { RefundIdentity } from '@/providers/payment-provider.port';
 import type { ProviderCode } from '@/providers/provider.constants';
 
 import {
@@ -32,6 +33,7 @@ type IngestRefundInput = {
   providerPaymentId: string;
   refundReference: string | null;
   providerRefundId: string | null;
+  refundIdentity: RefundIdentity;
   status: RefundStatus;
   amountMinor: number;
   currency: string;
@@ -88,6 +90,11 @@ const refundIdOf = (refundReference: string | null): string | null => {
   return parsed.success ? parsed.data.toLowerCase() : null;
 };
 
+const hasRefundIdentity = (input: IngestRefundInput): boolean =>
+  input.refundIdentity === 'provider'
+    ? input.providerRefundId !== null
+    : refundIdOf(input.refundReference) !== null;
+
 const assertValidRefundEvent = (input: IngestRefundInput): void => {
   if (!Number.isSafeInteger(input.amountMinor) || input.amountMinor <= 0) {
     throw new RefundEventInvalidError('amountMinor');
@@ -95,16 +102,17 @@ const assertValidRefundEvent = (input: IngestRefundInput): void => {
   if (!CURRENCY_PATTERN.test(input.currency)) {
     throw new RefundEventInvalidError('currency');
   }
+  if (input.providerPaymentId === '') {
+    throw new RefundEventInvalidError('empty providerPaymentId');
+  }
   if (input.providerRefundId === '') {
     throw new RefundEventInvalidError('empty providerRefundId');
   }
-  // A non-uuid reference can never be a refunds.id, so alone it gives no key to
-  // dedupe on and every redelivery would count the money again.
-  if (
-    refundIdOf(input.refundReference) === null &&
-    input.providerRefundId === null
-  ) {
-    throw new RefundEventInvalidError('no usable refund id');
+  // The id refundIdentity names is the only key every event of one refund carries;
+  // without it a later event could make a second row and count the money again.
+  // A non-uuid reference can never be a refunds.id, so it does not count as one.
+  if (!hasRefundIdentity(input)) {
+    throw new RefundEventInvalidError(`no ${input.refundIdentity} refund id`);
   }
 };
 
@@ -133,8 +141,12 @@ const mismatchProblemOf = (
   return null;
 };
 
-const didRefundRowChange = (refundOutcome: RefundOutcome): boolean =>
-  refundOutcome === 'created' || refundOutcome === 'applied';
+const didRefundBecomeSucceeded = (
+  refund: Refund,
+  refundOutcome: RefundOutcome,
+): boolean =>
+  refund.status === 'succeeded' &&
+  (refundOutcome === 'created' || refundOutcome === 'applied');
 
 @Injectable()
 export class RefundsService {
@@ -197,7 +209,7 @@ export class RefundsService {
       tx,
       payment.id,
     );
-    const targetStatus = didRefundRowChange(refundOutcome)
+    const targetStatus = didRefundBecomeSucceeded(refund, refundOutcome)
       ? paymentStatusAfterRefunds(refundedTotalMinor, payment.amountMinor)
       : null;
     const paymentResult: Pick<
@@ -382,7 +394,7 @@ export class RefundsService {
       );
     }
     if (
-      didRefundRowChange(refundOutcome) &&
+      didRefundBecomeSucceeded(refund, refundOutcome) &&
       result.refundedTotalMinor > payment.amountMinor
     ) {
       this.logger.warn(

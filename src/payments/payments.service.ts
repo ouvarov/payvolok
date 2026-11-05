@@ -9,12 +9,12 @@ import type { ProviderCode } from '@/providers/provider.constants';
 import {
   CURRENCY_PATTERN,
   PAYMENTS_PROVIDER_REF_UNIQUE,
-  type PaymentOrigin,
   type PaymentPurpose,
   type PaymentStatus,
 } from './payment.constants';
 import { decideTransition } from './payment-state-machine';
 import { PaymentsRepository } from './payments.repository';
+import type { IngestablePaymentStatus } from './provider-event-status';
 
 const paymentReferenceSchema = z.uuid();
 
@@ -22,11 +22,10 @@ type IngestPaymentInput = {
   reference: string | null;
   provider: ProviderCode;
   providerPaymentId: string;
-  status: PaymentStatus;
+  status: IngestablePaymentStatus;
   amountMinor: number;
   currency: string;
   purpose: PaymentPurpose;
-  origin: PaymentOrigin;
   reason: string;
   webhookEventId: string | null;
 };
@@ -49,9 +48,9 @@ export class IngestRejectedError extends Error {
 }
 
 export class PaymentEventInvalidError extends IngestRejectedError {
-  readonly field: 'amountMinor' | 'currency';
+  readonly field: 'amountMinor' | 'currency' | 'providerPaymentId';
 
-  constructor(field: 'amountMinor' | 'currency') {
+  constructor(field: 'amountMinor' | 'currency' | 'providerPaymentId') {
     super(`Payment event has an invalid ${field}`);
     this.name = 'PaymentEventInvalidError';
     this.field = field;
@@ -115,14 +114,35 @@ export class PaymentProviderRefOwnedError extends IngestRejectedError {
   }
 }
 
+// Not an IngestRejectedError: our row may not be committed yet, so the worker retries.
+export class PaymentNotFoundError extends Error {
+  readonly reference: string | null;
+  readonly providerPaymentId: string;
+
+  constructor(received: PaymentLookup) {
+    super(
+      `No payment for reference ${received.reference} or provider ref ${received.providerPaymentId} yet`,
+    );
+    this.name = 'PaymentNotFoundError';
+    this.reference = received.reference;
+    this.providerPaymentId = received.providerPaymentId;
+  }
+}
+
 const assertValidPaymentEvent = (
-  input: Pick<IngestPaymentInput, 'amountMinor' | 'currency'>,
+  input: Pick<
+    IngestPaymentInput,
+    'amountMinor' | 'currency' | 'providerPaymentId'
+  >,
 ): void => {
   if (!Number.isSafeInteger(input.amountMinor) || input.amountMinor < 0) {
     throw new PaymentEventInvalidError('amountMinor');
   }
   if (!CURRENCY_PATTERN.test(input.currency)) {
     throw new PaymentEventInvalidError('currency');
+  }
+  if (input.providerPaymentId === '') {
+    throw new PaymentEventInvalidError('providerPaymentId');
   }
 };
 
@@ -194,28 +214,11 @@ export class PaymentsService {
       return this.applyToExisting(tx, linkedPayment, input);
     }
 
-    const createdPayment = await this.paymentsRepository.insertIfAbsent(tx, {
-      provider: input.provider,
-      providerPaymentId: input.providerPaymentId,
-      purpose: input.purpose,
-      origin: input.origin,
-      status: input.status,
-      amountMinor: input.amountMinor,
-      currency: input.currency,
-    });
-
-    if (createdPayment) {
-      await this.paymentsRepository.insertEvent(tx, {
-        paymentId: createdPayment.id,
-        fromStatus: null,
-        toStatus: input.status,
-        outcome: 'applied',
-        reason: input.reason,
-        webhookEventId: input.webhookEventId,
-      });
-
-      return { payment: createdPayment, outcome: 'created' };
-    }
+    const createdPayment =
+      input.purpose === 'subscription_renewal'
+        ? await this.birthPayment(tx, input)
+        : null;
+    if (createdPayment) return { payment: createdPayment, outcome: 'created' };
 
     const existingPayment =
       await this.paymentsRepository.findByProviderRefForUpdate(
@@ -223,12 +226,36 @@ export class PaymentsService {
         input.provider,
         input.providerPaymentId,
       );
-
-    if (!existingPayment) {
-      throw new Error('Payment row disappeared during ingest');
-    }
+    if (!existingPayment) throw new PaymentNotFoundError(input);
 
     return this.applyToExisting(tx, existingPayment, input);
+  }
+
+  private async birthPayment(
+    tx: DatabaseTransaction,
+    input: IngestPaymentInput,
+  ): Promise<Payment | null> {
+    const createdPayment = await this.paymentsRepository.insertIfAbsent(tx, {
+      provider: input.provider,
+      providerPaymentId: input.providerPaymentId,
+      purpose: input.purpose,
+      origin: 'provider',
+      status: input.status,
+      amountMinor: input.amountMinor,
+      currency: input.currency,
+    });
+    if (!createdPayment) return null;
+
+    await this.paymentsRepository.insertEvent(tx, {
+      paymentId: createdPayment.id,
+      fromStatus: null,
+      toStatus: input.status,
+      outcome: 'applied',
+      reason: input.reason,
+      webhookEventId: input.webhookEventId,
+    });
+
+    return createdPayment;
   }
 
   private async findReferencedPayment(
