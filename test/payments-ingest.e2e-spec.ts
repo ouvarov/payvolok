@@ -19,6 +19,7 @@ import {
   type PaymentEvent,
 } from '@/database/schemas/payments.schema';
 import { decideTransition } from '@/payments/payment-state-machine';
+import { PaymentsRepository } from '@/payments/payments.repository';
 import {
   PaymentEventInvalidError,
   PaymentMismatchError,
@@ -48,6 +49,7 @@ import {
   databasePoolMax,
   databaseUrl,
   describeOnRealPostgres,
+  insertInboxEvent,
   trackSettled,
   waitUntilBlockedBy,
 } from './helpers';
@@ -257,12 +259,13 @@ describe('Payments ingest', () => {
             `select tablename as name from pg_tables where schemaname = 'public' order by tablename`,
           );
 
-          expect(firstRunRows.rows).toHaveLength(5);
+          expect(firstRunRows.rows).toHaveLength(6);
           expect(secondRunRows.rows).toEqual(firstRunRows.rows);
           expect(tables.rows.map(({ name }) => name)).toEqual([
             'payment_events',
             'payments',
             'refunds',
+            'webhook_events',
           ]);
         } finally {
           await emptyDatabase.close();
@@ -279,7 +282,7 @@ describe('Payments ingest', () => {
 
         await applyMigrations(databaseUrl);
 
-        expect(rowsBefore).toHaveLength(5);
+        expect(rowsBefore).toHaveLength(6);
         expect(await db.execute(migrationRowsSql)).toEqual(rowsBefore);
       },
       SLOW_TEST_TIMEOUT_MS,
@@ -369,7 +372,7 @@ describe('Payments ingest', () => {
       const staleInput = {
         ...input,
         status: 'pending',
-        webhookEventId: randomUUID(),
+        webhookEventId: await insertInboxEvent(db),
       } as const;
 
       const stale = await paymentsService.ingestPayment(staleInput);
@@ -527,8 +530,8 @@ describe('Payments ingest', () => {
       expect(await eventTimelineOf(paymentRows[0].id)).toHaveLength(1);
     });
 
-    it('accepts a random webhook_event_id with no inbox table', async () => {
-      const webhookEventId = randomUUID();
+    it('stores the webhook_event_id of a real inbox row', async () => {
+      const webhookEventId = await insertInboxEvent(db);
 
       const { payment } = await paymentsService.ingestPayment(
         renewalInputWith({ webhookEventId }),
@@ -898,7 +901,7 @@ describe('Payments ingest', () => {
     it('records a late event as stale once on a stored row', async () => {
       const input = ingestInputWith({
         status: 'pending',
-        webhookEventId: randomUUID(),
+        webhookEventId: await insertInboxEvent(db),
       });
       const row = await insertNullRefPayment({
         providerPaymentId: input.providerPaymentId,
@@ -1055,6 +1058,28 @@ describe('Payments ingest', () => {
       expect(cause.code).toBe('23503');
     });
 
+    it('raises 23505 when a payment event reuses an existing id', async () => {
+      const { payment } =
+        await paymentsService.ingestPayment(renewalInputWith());
+      const [birthEvent] = await eventTimelineOf(payment.id);
+
+      const cause = await databaseCauseOf(() =>
+        app.get(PaymentsRepository).withTransaction((tx) =>
+          app.get(PaymentsRepository).insertEvent(tx, {
+            id: birthEvent.id,
+            paymentId: payment.id,
+            fromStatus: 'succeeded',
+            toStatus: 'pending',
+            outcome: 'stale',
+            reason: 'reused id',
+          }),
+        ),
+      );
+
+      expect(cause.code).toBe('23505');
+      expect(await eventTimelineOf(payment.id)).toEqual([birthEvent]);
+    });
+
     it('stores the statement timeout on the role', async () => {
       const [{ role_config: roleConfig }] = await db.execute<{
         role_config: string;
@@ -1069,7 +1094,7 @@ describe('Payments ingest', () => {
   });
 
   describe('application wiring', () => {
-    it('boots with PaymentsModule and maps no new route', () => {
+    it('boots with PaymentsModule and adds no route of its own', () => {
       const httpInstance = app.getHttpAdapter().getInstance() as {
         router: { stack: { route?: { path: string } }[] };
       };
@@ -1079,7 +1104,11 @@ describe('Payments ingest', () => {
         .sort();
 
       expect(paymentsService).toBeInstanceOf(PaymentsService);
-      expect(routePaths).toEqual(['/health/live', '/health/ready']);
+      expect(routePaths).toEqual([
+        '/health/live',
+        '/health/ready',
+        '/webhooks/:provider',
+      ]);
     });
 
     it('registers the injected fake provider', () => {

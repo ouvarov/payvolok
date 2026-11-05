@@ -109,6 +109,15 @@ export class PaymentsRepository {
     tx: DatabaseTransaction,
     newEvent: NewPaymentEvent,
   ): Promise<void> {
-    await tx.insert(paymentEvents).values(newEvent).onConflictDoNothing();
+    await tx
+      .insert(paymentEvents)
+      .values(newEvent)
+      .onConflictDoNothing({
+        target: [
+          paymentEvents.webhookEventId,
+          paymentEvents.paymentId,
+          paymentEvents.toStatus,
+        ],
+      });
   }
 }

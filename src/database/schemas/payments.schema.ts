@@ -20,6 +20,7 @@ import {
 import { PROVIDER_CODES } from '../../providers/provider.constants';
 
 import { quotedList } from './schema-helpers';
+import { webhookEvents } from './webhook-events.schema';
 
 const payments = pgTable(
   'payments',
@@ -34,10 +35,10 @@ const payments = pgTable(
     currency: text('currency').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
-      .defaultNow(),
+      .default(sql`clock_timestamp()`),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
-      .defaultNow(),
+      .default(sql`clock_timestamp()`),
   },
   (table) => [
     unique(PAYMENTS_PROVIDER_REF_UNIQUE).on(
@@ -72,7 +73,7 @@ const paymentEvents = pgTable(
     toStatus: text('to_status', { enum: PAYMENT_STATUSES }).notNull(),
     outcome: text('outcome', { enum: PAYMENT_EVENT_OUTCOMES }).notNull(),
     reason: text('reason').notNull(),
-    webhookEventId: uuid('webhook_event_id'),
+    webhookEventId: uuid('webhook_event_id').references(() => webhookEvents.id),
     // Not now(): that is the transaction start, which can precede a concurrent
     // transaction that won the row lock first and so misorder the timeline.
     createdAt: timestamp('created_at', { withTimezone: true })

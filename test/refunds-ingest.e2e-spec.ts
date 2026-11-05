@@ -32,6 +32,7 @@ import {
   databasePoolMax,
   databaseUrl,
   describeOnRealPostgres,
+  insertInboxEvent,
   trackSettled,
   waitUntilBlockedBy,
 } from './helpers';
@@ -555,12 +556,14 @@ describe('Refunds ingest', () => {
       async (status) => {
         const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
         const payment = await insertPayment({ status });
-        const input = refundInputFor(payment, { webhookEventId: randomUUID() });
+        const input = refundInputFor(payment, {
+          webhookEventId: await insertInboxEvent(db),
+        });
         await refundsService.ingestRefund(input);
 
         const repeat = await refundsService.ingestRefund({
           ...input,
-          webhookEventId: randomUUID(),
+          webhookEventId: await insertInboxEvent(db),
         });
 
         expect(repeat).toMatchObject({
@@ -981,7 +984,7 @@ describe('Refunds ingest', () => {
   });
 
   describe('application wiring', () => {
-    it('boots with RefundsModule and maps no new route', () => {
+    it('boots with RefundsModule and adds no route of its own', () => {
       const httpInstance = app.getHttpAdapter().getInstance() as {
         router: { stack: { route?: { path: string } }[] };
       };
@@ -991,7 +994,11 @@ describe('Refunds ingest', () => {
         .sort();
 
       expect(refundsService).toBeInstanceOf(RefundsService);
-      expect(routePaths).toEqual(['/health/live', '/health/ready']);
+      expect(routePaths).toEqual([
+        '/health/live',
+        '/health/ready',
+        '/webhooks/:provider',
+      ]);
     });
   });
 

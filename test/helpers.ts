@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 
 import type { INestApplication } from '@nestjs/common';
@@ -9,6 +10,7 @@ import { AppModule } from '@/app.module';
 import { configureApp } from '@/app.setup';
 import { validateEnv, type Env } from '@/config/env.schema';
 import type { Database } from '@/database/drizzle';
+import { webhookEvents } from '@/database/schemas/webhook-events.schema';
 
 const PGLITE_POOL_MAX = 1;
 const REAL_POSTGRES_POOL_MAX = 5;
@@ -25,6 +27,12 @@ const databasePoolMax = isRealPostgres
 type E2eAppOptions = {
   appDatabaseUrl?: string;
   appDatabasePoolMax?: number;
+};
+
+type DatabaseCause = {
+  code?: string;
+  message?: string;
+  constraint_name?: string;
 };
 
 const createE2eApp = async ({
@@ -52,13 +60,29 @@ const serverOf = (app: INestApplication): Server =>
 
 const databaseCauseOf = async (
   query: () => PromiseLike<unknown>,
-): Promise<{ code?: string; message?: string }> => {
+): Promise<DatabaseCause> => {
   const error = (await Promise.resolve(query()).then(
     () => ({}),
     (caught: unknown) => caught,
-  )) as { cause?: { code?: string; message?: string } };
+  )) as { cause?: DatabaseCause };
 
   return error.cause ?? {};
+};
+
+const insertInboxEvent = async (db: Database): Promise<string> => {
+  const [{ id }] = await db
+    .insert(webhookEvents)
+    .values({
+      provider: 'fake',
+      dedupKey: randomUUID(),
+      status: 'received',
+      signatureValid: true,
+      rawBody: Buffer.from('{}'),
+      nextAttemptAt: sql`clock_timestamp()`,
+    })
+    .returning({ id: webhookEvents.id });
+
+  return id;
 };
 
 const trackSettled = <T>(work: Promise<T>) => {
@@ -100,6 +124,7 @@ export {
   databasePoolMax,
   databaseUrl,
   describeOnRealPostgres,
+  insertInboxEvent,
   serverOf,
   trackSettled,
   waitUntilBlockedBy,

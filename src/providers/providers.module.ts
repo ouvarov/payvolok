@@ -27,6 +27,6 @@ const FAKE_WEBHOOK_SECRET_BYTES = 32;
     },
     ProviderRegistry,
   ],
-  exports: [FakeProvider, ProviderRegistry],
+  exports: [ProviderRegistry],
 })
 export class ProvidersModule {}
