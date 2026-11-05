@@ -11,6 +11,5 @@ import { WebhooksService } from './webhooks.service';
   imports: [DatabaseModule, ProvidersModule],
   controllers: [WebhooksController],
   providers: [WebhooksRepository, WebhooksService],
-  exports: [WebhooksService],
 })
 export class WebhooksModule {}
