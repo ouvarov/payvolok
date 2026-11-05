@@ -55,6 +55,55 @@ describe('validateEnv', () => {
     );
   });
 
+  describe('FAKE_WEBHOOK_SECRET', () => {
+    const SECRET_MIN_LENGTH = 32;
+
+    it('is valid when unset and leaves the key absent', () => {
+      expect(
+        validateEnv({ DATABASE_URL: VALID_DATABASE_URL }),
+      ).not.toHaveProperty('FAKE_WEBHOOK_SECRET');
+    });
+
+    it('accepts 32 characters', () => {
+      const secret = 's'.repeat(SECRET_MIN_LENGTH);
+
+      expect(
+        validateEnv({
+          DATABASE_URL: VALID_DATABASE_URL,
+          FAKE_WEBHOOK_SECRET: secret,
+        }).FAKE_WEBHOOK_SECRET,
+      ).toBe(secret);
+    });
+
+    it('rejects an empty value, naming the key', () => {
+      expect(() =>
+        validateEnv({
+          DATABASE_URL: VALID_DATABASE_URL,
+          FAKE_WEBHOOK_SECRET: '',
+        }),
+      ).toThrow(/FAKE_WEBHOOK_SECRET/);
+    });
+
+    it('rejects 31 characters, naming the key without echoing the value', () => {
+      const shortSecret = 's'.repeat(SECRET_MIN_LENGTH - 1);
+
+      const error: unknown = (() => {
+        try {
+          return validateEnv({
+            DATABASE_URL: VALID_DATABASE_URL,
+            FAKE_WEBHOOK_SECRET: shortSecret,
+          });
+        } catch (caught) {
+          return caught;
+        }
+      })();
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain('FAKE_WEBHOOK_SECRET');
+      expect((error as Error).message).not.toContain(shortSecret);
+    });
+  });
+
   it('rejects an unknown NODE_ENV', () => {
     expect(() =>
       validateEnv({ DATABASE_URL: VALID_DATABASE_URL, NODE_ENV: 'staging' }),
