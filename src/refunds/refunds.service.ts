@@ -108,10 +108,11 @@ const assertValidRefundEvent = (input: IngestRefundInput): void => {
   if (input.providerRefundId === '') {
     throw new RefundEventInvalidError('empty providerRefundId');
   }
-  // A non-uuid reference can never be a refunds.id, so alone it gives no key to
-  // dedupe on and every redelivery would count the money again.
+  // The id refundIdentity names is the only key every event of one refund carries;
+  // without it a later event could make a second row and count the money again.
+  // A non-uuid reference can never be a refunds.id, so it does not count as one.
   if (!hasRefundIdentity(input)) {
-    throw new RefundEventInvalidError('no usable refund id');
+    throw new RefundEventInvalidError(`no ${input.refundIdentity} refund id`);
   }
 };
 

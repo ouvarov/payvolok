@@ -133,14 +133,19 @@ describe('RefundsService', () => {
           payments: { runIngestTransaction },
         });
 
-        await expect(
-          refundsService.ingestRefund({
+        const error: unknown = await refundsService
+          .ingestRefund({
             ...INPUT,
             refundIdentity,
             refundReference,
             providerRefundId,
-          }),
-        ).rejects.toBeInstanceOf(RefundEventInvalidError);
+          })
+          .catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(RefundEventInvalidError);
+        expect((error as Error).message).toBe(
+          `Refund event is invalid: no ${refundIdentity} refund id`,
+        );
         expect(runIngestTransaction).not.toHaveBeenCalled();
       },
     );
