@@ -345,11 +345,11 @@ describe('Webhooks route', () => {
         status: 'ignored',
         signatureValid: false,
         rawBody: null,
-        headers: {},
         eventTypes: [],
         failureReason: null,
         nextAttemptAt: null,
       });
+      expect(rows[0].headers).toEqual({});
       expect(rows[0].finishedAt).toBeInstanceOf(Date);
     });
 
