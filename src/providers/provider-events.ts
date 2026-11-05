@@ -21,7 +21,7 @@ type ProviderPaymentEvent = ProviderEventBase & {
   failureReason: string | null;
 };
 
-// An adapter must give every event of one refund the same stable key.
+// dedupKey differs per step; the id the provider's refundIdentity names is on every event of one refund.
 type ProviderRefundEvent = ProviderEventBase & {
   type: 'refund.pending' | 'refund.succeeded' | 'refund.failed';
   providerPaymentId: string;

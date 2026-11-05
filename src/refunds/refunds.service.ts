@@ -12,6 +12,7 @@ import {
   PaymentsService,
   type IngestPaymentResult,
 } from '@/payments/payments.service';
+import type { RefundIdentity } from '@/providers/payment-provider.port';
 import type { ProviderCode } from '@/providers/provider.constants';
 
 import {
@@ -32,6 +33,7 @@ type IngestRefundInput = {
   providerPaymentId: string;
   refundReference: string | null;
   providerRefundId: string | null;
+  refundIdentity: RefundIdentity;
   status: RefundStatus;
   amountMinor: number;
   currency: string;
@@ -88,6 +90,11 @@ const refundIdOf = (refundReference: string | null): string | null => {
   return parsed.success ? parsed.data.toLowerCase() : null;
 };
 
+const hasRefundIdentity = (input: IngestRefundInput): boolean =>
+  input.refundIdentity === 'provider'
+    ? input.providerRefundId !== null
+    : refundIdOf(input.refundReference) !== null;
+
 const assertValidRefundEvent = (input: IngestRefundInput): void => {
   if (!Number.isSafeInteger(input.amountMinor) || input.amountMinor <= 0) {
     throw new RefundEventInvalidError('amountMinor');
@@ -100,10 +107,7 @@ const assertValidRefundEvent = (input: IngestRefundInput): void => {
   }
   // A non-uuid reference can never be a refunds.id, so alone it gives no key to
   // dedupe on and every redelivery would count the money again.
-  if (
-    refundIdOf(input.refundReference) === null &&
-    input.providerRefundId === null
-  ) {
+  if (!hasRefundIdentity(input)) {
     throw new RefundEventInvalidError('no usable refund id');
   }
 };

@@ -10,12 +10,14 @@ type WebhookRequest = {
 type RecurringModel = 'managed' | 'token' | 'none';
 type IntervalUnit = 'day' | 'week' | 'month' | 'year';
 type IntervalSupport = { unit: IntervalUnit; maxCount: number | null };
+type RefundIdentity = 'provider' | 'reference';
 
 type ProviderCapabilities = {
   recurring: RecurringModel;
   intervals: readonly IntervalSupport[];
   partialRefund: boolean;
   catalog: boolean;
+  refundIdentity: RefundIdentity;
 };
 
 type ProviderPaymentStatus =
@@ -130,6 +132,7 @@ export type {
   ProviderPaymentStatus,
   ProviderRefundStatus,
   RecurringModel,
+  RefundIdentity,
   RefundInput,
   ResourceStatus,
   StatusQuery,

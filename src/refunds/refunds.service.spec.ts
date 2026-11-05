@@ -25,6 +25,7 @@ const INPUT: IngestRefundInput = {
   providerPaymentId: 'provider-1',
   refundReference: null,
   providerRefundId: 'provider-refund-1',
+  refundIdentity: 'provider',
   status: 'succeeded',
   amountMinor: 300,
   currency: 'USD',
@@ -115,17 +116,55 @@ describe('RefundsService', () => {
     });
 
     it.each([
-      ['only a uuid reference', REFUND_ID, null],
-      ['a non-uuid reference and a provider id', 'attempt-1', 'provider-id'],
-    ])('accepts %s', async (_case, refundReference, providerRefundId) => {
-      const { refundOutcome } = await serviceWith({}).ingestRefund({
-        ...INPUT,
-        refundReference,
-        providerRefundId,
-      });
+      ['a null provider id under provider', 'provider', REFUND_ID, null],
+      ['a null reference under reference', 'reference', null, 'provider-id'],
+      [
+        'a non-uuid reference under reference',
+        'reference',
+        'attempt-1',
+        'provider-id',
+      ],
+    ] as const)(
+      'rejects %s without opening a transaction',
+      async (_case, refundIdentity, refundReference, providerRefundId) => {
+        const runIngestTransaction = jest.fn();
+        const refundsService = serviceWith({
+          payments: { runIngestTransaction },
+        });
 
-      expect(refundOutcome).toBe('created');
-    });
+        await expect(
+          refundsService.ingestRefund({
+            ...INPUT,
+            refundIdentity,
+            refundReference,
+            providerRefundId,
+          }),
+        ).rejects.toBeInstanceOf(RefundEventInvalidError);
+        expect(runIngestTransaction).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([
+      ['a uuid reference under reference', 'reference', REFUND_ID, null],
+      [
+        'a non-uuid reference and a provider id under provider',
+        'provider',
+        'attempt-1',
+        'provider-id',
+      ],
+    ] as const)(
+      'accepts %s',
+      async (_case, refundIdentity, refundReference, providerRefundId) => {
+        const { refundOutcome } = await serviceWith({}).ingestRefund({
+          ...INPUT,
+          refundIdentity,
+          refundReference,
+          providerRefundId,
+        });
+
+        expect(refundOutcome).toBe('created');
+      },
+    );
   });
 
   describe('retry classification', () => {
@@ -156,6 +195,7 @@ describe('RefundsService', () => {
 
       await serviceWith({ refunds: { insertIfAbsent } }).ingestRefund({
         ...INPUT,
+        refundIdentity: 'reference',
         refundReference: REFUND_ID.toUpperCase(),
         providerRefundId: null,
       });

@@ -44,6 +44,7 @@ const FAKE_CAPABILITIES: ProviderCapabilities = {
   intervals: [],
   partialRefund: true,
   catalog: false,
+  refundIdentity: 'provider',
 };
 
 const rejectedError = (message: string): ProviderError =>

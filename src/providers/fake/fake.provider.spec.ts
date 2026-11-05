@@ -64,12 +64,13 @@ describe('FakeProvider', () => {
     return providerPaymentId;
   };
 
-  it('declares no recurring, intervals or catalog and allows partial refunds', () => {
+  it('declares no recurring, intervals or catalog, allows partial refunds and identifies a refund by the provider id', () => {
     expect(fakeProvider.capabilities).toEqual({
       recurring: 'none',
       intervals: [],
       partialRefund: true,
       catalog: false,
+      refundIdentity: 'provider',
     });
   });
 
@@ -379,6 +380,30 @@ describe('FakeProvider', () => {
         amountMinor: 400,
       });
     });
+
+    it.each([
+      ['a uuid reference', '7f3c1a52-8d4e-4b6a-9c21-0e5d7a9b3f10'],
+      ['a non-uuid reference', 'attempt-1'],
+    ])(
+      'puts the provider refund id on every event with %s',
+      async (_case, reference) => {
+        const providerPaymentId = await createdPaymentId(1000);
+        const { providerRefundId } = await fakeProvider.refund({
+          ...refundInputWith(providerPaymentId, 400),
+          reference,
+        });
+
+        const events = fakeProvider
+          .buildRefundWebhooks(providerRefundId as string, STARTED_AT)
+          .flatMap((webhook) => [...fakeProvider.parseWebhook(webhook)]);
+
+        expect(events).toHaveLength(2);
+        events.forEach((event) => {
+          expect(event).toMatchObject({ providerRefundId });
+        });
+        expect(providerRefundId).not.toBeNull();
+      },
+    );
 
     it.each([
       ['an undecodable id', 'not-a-fake-id', 1000, 400, 'USD'],

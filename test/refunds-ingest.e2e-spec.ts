@@ -59,6 +59,7 @@ const refundInputFor = (
   providerPaymentId: payment.providerPaymentId as string,
   refundReference: null,
   providerRefundId: randomUUID(),
+  refundIdentity: 'provider',
   status: 'succeeded',
   amountMinor: 300,
   currency: 'USD',
@@ -525,6 +526,7 @@ describe('Refunds ingest', () => {
       const payment = await insertPayment();
       const refundReference = randomUUID();
       const input = refundInputFor(payment, {
+        refundIdentity: 'reference',
         refundReference,
         providerRefundId: null,
       });
@@ -543,6 +545,7 @@ describe('Refunds ingest', () => {
       const refundReference = randomUUID();
       const providerRefundId = randomUUID();
       const input = refundInputFor(payment, {
+        refundIdentity: 'reference',
         refundReference,
         providerRefundId: null,
         status: 'pending',
@@ -659,6 +662,7 @@ describe('Refunds ingest', () => {
       await refundsService.ingestRefund(owned);
       const refundReference = randomUUID();
       const input = refundInputFor(payment, {
+        refundIdentity: 'reference',
         refundReference,
         providerRefundId: null,
         status: 'pending',
@@ -737,6 +741,128 @@ describe('Refunds ingest', () => {
 
       expect(await refundRowsOf(payment.id)).toEqual([refund]);
       expect(await storedPaymentOf(payment.id)).toEqual(payment);
+    });
+  });
+
+  describe('refund identity', () => {
+    const succeededTotalOf = async (paymentId: string): Promise<number> =>
+      (await refundRowsOf(paymentId))
+        .filter(({ status }) => status === 'succeeded')
+        .reduce((total, { amountMinor }) => total + amountMinor, 0);
+
+    it('under provider rejects a reference-only event and creates one row from the provider id', async () => {
+      const payment = await insertPayment();
+      const refundIdentity = 'provider';
+
+      await expect(
+        refundsService.ingestRefund(
+          refundInputFor(payment, {
+            refundIdentity,
+            refundReference: randomUUID(),
+            providerRefundId: null,
+          }),
+        ),
+      ).rejects.toBeInstanceOf(RefundEventInvalidError);
+      const { refundedTotalMinor, payment: finalPayment } =
+        await refundsService.ingestRefund(
+          refundInputFor(payment, { refundIdentity }),
+        );
+
+      expect(refundedTotalMinor).toBe(300);
+      expect(finalPayment.status).toBe('partially_refunded');
+      expect(await refundRowsOf(payment.id)).toHaveLength(1);
+      expect(await succeededTotalOf(payment.id)).toBe(300);
+    });
+
+    it('under reference creates the row from the reference and rejects a provider-id-only event', async () => {
+      const payment = await insertPayment();
+      const refundIdentity = 'reference';
+      const refundReference = randomUUID();
+
+      const { refund } = await refundsService.ingestRefund(
+        refundInputFor(payment, {
+          refundIdentity,
+          refundReference,
+          providerRefundId: null,
+        }),
+      );
+      await expect(
+        refundsService.ingestRefund(
+          refundInputFor(payment, { refundIdentity }),
+        ),
+      ).rejects.toBeInstanceOf(RefundEventInvalidError);
+
+      expect(refund.id).toBe(refundReference);
+      expect(await refundRowsOf(payment.id)).toHaveLength(1);
+      expect(await succeededTotalOf(payment.id)).toBe(300);
+    });
+
+    it('under provider converges id then both, and rejects the reference-only step', async () => {
+      const payment = await insertPayment();
+      const refundIdentity = 'provider';
+      const refundReference = randomUUID();
+      const providerRefundId = randomUUID();
+
+      const first = await refundsService.ingestRefund(
+        refundInputFor(payment, { refundIdentity, providerRefundId }),
+      );
+      const second = await refundsService.ingestRefund(
+        refundInputFor(payment, {
+          refundIdentity,
+          refundReference,
+          providerRefundId,
+        }),
+      );
+      await expect(
+        refundsService.ingestRefund(
+          refundInputFor(payment, {
+            refundIdentity,
+            refundReference,
+            providerRefundId: null,
+          }),
+        ),
+      ).rejects.toBeInstanceOf(RefundEventInvalidError);
+
+      expect(first.refundOutcome).toBe('created');
+      expect(second.refundOutcome).toBe('duplicate');
+      expect(await refundRowsOf(payment.id)).toHaveLength(1);
+      expect(await succeededTotalOf(payment.id)).toBe(300);
+    });
+
+    it('under reference rejects the id-only step, creates from both, and converges on the reference', async () => {
+      const payment = await insertPayment();
+      const refundIdentity = 'reference';
+      const refundReference = randomUUID();
+      const providerRefundId = randomUUID();
+
+      await expect(
+        refundsService.ingestRefund(
+          refundInputFor(payment, { refundIdentity, providerRefundId }),
+        ),
+      ).rejects.toBeInstanceOf(RefundEventInvalidError);
+      const second = await refundsService.ingestRefund(
+        refundInputFor(payment, {
+          refundIdentity,
+          refundReference,
+          providerRefundId,
+        }),
+      );
+      const third = await refundsService.ingestRefund(
+        refundInputFor(payment, {
+          refundIdentity,
+          refundReference,
+          providerRefundId: null,
+        }),
+      );
+
+      expect(second.refundOutcome).toBe('created');
+      expect(second.refund).toMatchObject({
+        id: refundReference,
+        providerRefundId,
+      });
+      expect(third.refundOutcome).toBe('duplicate');
+      expect(await refundRowsOf(payment.id)).toHaveLength(1);
+      expect(await succeededTotalOf(payment.id)).toBe(300);
     });
   });
 
