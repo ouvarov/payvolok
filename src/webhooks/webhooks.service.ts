@@ -31,7 +31,7 @@ const MAX_INVALID_ROWS_PER_WINDOW = 20;
 const INVALID_ROWS_WINDOW_MS = 60 * 60 * 1000;
 const MAX_FAILURE_REASON_LENGTH = 200;
 
-type InvalidRowsWindow = { startedAtEpochMs: number; count: number };
+type InvalidAttemptWindow = { startedAtEpochMs: number; attempts: number };
 
 // Only the class and the pg code: a DrizzleQueryError message carries the query params.
 const describeError = (error: unknown): string => {
@@ -58,9 +58,9 @@ const firstFailureReasonOf = (events: ProviderEvents): string | null => {
 @Injectable()
 export class WebhooksService {
   private readonly logger = new Logger(WebhooksService.name);
-  private readonly invalidRowsWindows = new Map<
+  private readonly invalidAttemptWindows = new Map<
     ProviderCode,
-    InvalidRowsWindow
+    InvalidAttemptWindow
   >();
 
   constructor(
@@ -107,10 +107,13 @@ export class WebhooksService {
     provider: ProviderCode,
     rawBody: Buffer,
   ): Promise<void> {
-    if (!this.takeInvalidRowSlot(provider)) {
-      this.logger.warn(
-        `Webhook with an invalid signature for ${provider}, row cap reached`,
-      );
+    const attempts = this.countInvalidAttempt(provider);
+    if (attempts > MAX_INVALID_ROWS_PER_WINDOW) {
+      if (attempts === MAX_INVALID_ROWS_PER_WINDOW + 1) {
+        this.logger.warn(
+          `Webhooks with an invalid signature for ${provider} reached the row cap for this hour`,
+        );
+      }
       return;
     }
 
@@ -128,24 +131,23 @@ export class WebhooksService {
     }
   }
 
-  private takeInvalidRowSlot(provider: ProviderCode): boolean {
+  private countInvalidAttempt(provider: ProviderCode): number {
     const nowEpochMs = Date.now();
-    const window = this.invalidRowsWindows.get(provider);
+    const window = this.invalidAttemptWindows.get(provider);
 
     if (
       !window ||
       nowEpochMs - window.startedAtEpochMs >= INVALID_ROWS_WINDOW_MS
     ) {
-      this.invalidRowsWindows.set(provider, {
+      this.invalidAttemptWindows.set(provider, {
         startedAtEpochMs: nowEpochMs,
-        count: 1,
+        attempts: 1,
       });
-      return true;
+      return 1;
     }
-    if (window.count >= MAX_INVALID_ROWS_PER_WINDOW) return false;
 
-    window.count += 1;
-    return true;
+    window.attempts += 1;
+    return window.attempts;
   }
 
   private async storeDelivery(

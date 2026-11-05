@@ -38,11 +38,12 @@ const sendInvalid = async (
 
 describe('WebhooksService invalid signature cap', () => {
   let now: jest.SpyInstance<number, []>;
+  let warn: jest.SpyInstance;
   let insertInvalidIfAbsent: jest.Mock;
   let service: WebhooksService;
 
   beforeEach(() => {
-    jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
     now = jest.spyOn(Date, 'now').mockReturnValue(START_EPOCH_MS);
     insertInvalidIfAbsent = jest.fn().mockResolvedValue(undefined);
     service = serviceWith(insertInvalidIfAbsent);
@@ -75,5 +76,27 @@ describe('WebhooksService invalid signature cap', () => {
     await sendInvalid(service, 'other', 1);
 
     expect(insertInvalidIfAbsent).toHaveBeenCalledTimes(CAP + 1);
+  });
+
+  it('does not warn up to the cap', async () => {
+    await sendInvalid(service, 'fake', CAP);
+
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('warns once per window, however many requests pass the cap', async () => {
+    await sendInvalid(service, 'fake', CAP + 5);
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    now.mockReturnValue(START_EPOCH_MS + HOUR_MS);
+    await sendInvalid(service, 'fake', CAP + 5);
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+
+  it('warns once for each provider', async () => {
+    await sendInvalid(service, 'fake', CAP + 2);
+    await sendInvalid(service, 'other', CAP + 2);
+
+    expect(warn).toHaveBeenCalledTimes(2);
   });
 });
