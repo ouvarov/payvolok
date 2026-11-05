@@ -537,6 +537,7 @@ describe('Payments ingest', () => {
 
     it('serialises parallel duplicate ingests into one payment and one birth event', async () => {
       const input = renewalInputWith();
+      await warmPool();
 
       const results = await Promise.all(
         Array.from({ length: PARALLEL_INGESTS }, () =>
@@ -1301,6 +1302,7 @@ describe('Payments ingest', () => {
       'resolves parallel ingests with one created and no unique violation',
       async () => {
         const input = renewalInputWith();
+        await warmPool();
 
         const results = await Promise.all(
           Array.from({ length: PARALLEL_INGESTS }, () =>
