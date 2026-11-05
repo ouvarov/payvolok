@@ -119,12 +119,14 @@ describe('Webhooks route', () => {
       JSON.stringify([...warn.mock.calls, ...error.mock.calls]);
   };
 
-  beforeAll(async () => {
+  const startApp = async (): Promise<void> => {
     app = await createE2eApp();
     await app.listen(0);
     db = app.get<Database>(DRIZZLE);
     fakeProvider = app.get(FakeProvider);
-  }, SLOW_TEST_TIMEOUT_MS);
+  };
+
+  beforeAll(startApp, SLOW_TEST_TIMEOUT_MS);
 
   afterAll(async () => {
     await app.close();
@@ -319,6 +321,12 @@ describe('Webhooks route', () => {
   });
 
   describe('invalid signature', () => {
+    // Each app holds its own hourly row budget, so these tests must not share one.
+    beforeEach(async () => {
+      await app.close();
+      await startApp();
+    }, SLOW_TEST_TIMEOUT_MS);
+
     it('answers a generic 401 and stores a metadata-only ignored row', async () => {
       const rawBody = nonJsonBody();
 
