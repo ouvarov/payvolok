@@ -229,13 +229,12 @@ export class RefundsService {
     input: IngestRefundInput,
   ): Promise<Pick<IngestRefundResult, 'payment' | 'paymentOutcome'>> {
     const { payment: currentPayment, outcome } =
-      await this.paymentsService.applyStatusInTransaction(
-        tx,
+      await this.paymentsService.applyStatusInTransaction(tx, {
         payment,
         targetStatus,
-        input.reason,
-        input.webhookEventId,
-      );
+        reason: input.reason,
+        webhookEventId: input.webhookEventId,
+      });
 
     return { payment: currentPayment, paymentOutcome: outcome };
   }

@@ -221,13 +221,12 @@ describe('PaymentsService', () => {
         repositoryWith({ updateStatus, insertEvent }),
       );
 
-      const { outcome } = await paymentsService.applyStatusInTransaction(
-        TX,
-        paymentWith({ status: 'succeeded' }),
-        'partially_refunded',
-        'refund',
-        null,
-      );
+      const { outcome } = await paymentsService.applyStatusInTransaction(TX, {
+        payment: paymentWith({ status: 'succeeded' }),
+        targetStatus: 'partially_refunded',
+        reason: 'refund',
+        webhookEventId: null,
+      });
 
       expect(outcome).toBe('applied');
       expect(insertEvent).toHaveBeenCalledWith(
