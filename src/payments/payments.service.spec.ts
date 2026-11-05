@@ -118,6 +118,21 @@ describe('PaymentsService', () => {
     },
   );
 
+  it('rejects an empty provider payment id without opening a transaction', async () => {
+    const withTransaction = jest.fn();
+    const paymentsService = new PaymentsService(
+      repositoryWith({ withTransaction }),
+    );
+
+    const error: unknown = await paymentsService
+      .ingestPayment({ ...RENEWAL_INPUT, providerPaymentId: '' })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PaymentEventInvalidError);
+    expect(error).toMatchObject({ field: 'providerPaymentId' });
+    expect(withTransaction).not.toHaveBeenCalled();
+  });
+
   it('accepts a zero amount, as the stored check does', async () => {
     const paymentsService = new PaymentsService(
       repositoryWith({

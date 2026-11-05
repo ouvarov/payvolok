@@ -48,9 +48,9 @@ export class IngestRejectedError extends Error {
 }
 
 export class PaymentEventInvalidError extends IngestRejectedError {
-  readonly field: 'amountMinor' | 'currency';
+  readonly field: 'amountMinor' | 'currency' | 'providerPaymentId';
 
-  constructor(field: 'amountMinor' | 'currency') {
+  constructor(field: 'amountMinor' | 'currency' | 'providerPaymentId') {
     super(`Payment event has an invalid ${field}`);
     this.name = 'PaymentEventInvalidError';
     this.field = field;
@@ -130,13 +130,19 @@ export class PaymentNotFoundError extends Error {
 }
 
 const assertValidPaymentEvent = (
-  input: Pick<IngestPaymentInput, 'amountMinor' | 'currency'>,
+  input: Pick<
+    IngestPaymentInput,
+    'amountMinor' | 'currency' | 'providerPaymentId'
+  >,
 ): void => {
   if (!Number.isSafeInteger(input.amountMinor) || input.amountMinor < 0) {
     throw new PaymentEventInvalidError('amountMinor');
   }
   if (!CURRENCY_PATTERN.test(input.currency)) {
     throw new PaymentEventInvalidError('currency');
+  }
+  if (input.providerPaymentId === '') {
+    throw new PaymentEventInvalidError('providerPaymentId');
   }
 };
 

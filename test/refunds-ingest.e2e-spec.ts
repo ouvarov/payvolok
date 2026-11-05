@@ -260,6 +260,22 @@ describe('Refunds ingest', () => {
       );
     });
 
+    it('repeats no over-refund warning for a later pending refund', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      const payment = await insertPayment();
+      await refundsService.ingestRefund(
+        refundInputFor(payment, { amountMinor: 1300 }),
+      );
+      expect(warn).toHaveBeenCalledTimes(1);
+
+      const pending = await refundsService.ingestRefund(
+        refundInputFor(payment, { status: 'pending', amountMinor: 100 }),
+      );
+
+      expect(pending.paymentOutcome).toBe('unchanged');
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+
     it('keeps the origin of the payment row', async () => {
       const payment = await insertPayment({ origin: 'api' });
 
@@ -472,6 +488,96 @@ describe('Refunds ingest', () => {
         expect(warn).toHaveBeenCalledWith(
           expect.stringContaining(`Payment ${payment.id} conflict`),
         );
+      },
+    );
+
+    it('adds no event and no warning for a pending refund going to failed on a failed payment with a sum', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      const payment = await insertPayment({ status: 'failed' });
+      const { paymentOutcome } = await refundsService.ingestRefund(
+        refundInputFor(payment),
+      );
+      expect(paymentOutcome).toBe('conflict');
+      expect(await eventTimelineOf(payment.id)).toHaveLength(1);
+      expect(warn).toHaveBeenCalledTimes(1);
+      const input = refundInputFor(payment, {
+        status: 'pending',
+        amountMinor: 100,
+      });
+
+      const pending = await refundsService.ingestRefund(input);
+      const failed = await refundsService.ingestRefund({
+        ...input,
+        status: 'failed',
+      });
+
+      expect(pending).toMatchObject({
+        refundOutcome: 'created',
+        paymentOutcome: 'unchanged',
+      });
+      expect(failed).toMatchObject({
+        refundOutcome: 'applied',
+        paymentOutcome: 'unchanged',
+      });
+      expect(await eventTimelineOf(payment.id)).toHaveLength(1);
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the money counted and warns when failed follows succeeded', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      const payment = await insertPayment();
+      const input = refundInputFor(payment);
+      const { refund } = await refundsService.ingestRefund(input);
+
+      const reversal = await refundsService.ingestRefund({
+        ...input,
+        status: 'failed',
+      });
+
+      expect(reversal).toMatchObject({
+        refundOutcome: 'conflict',
+        paymentOutcome: 'unchanged',
+        refundedTotalMinor: 300,
+      });
+      expect((await storedPaymentOf(payment.id)).status).toBe(
+        'partially_refunded',
+      );
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining(`Refund ${refund.id} conflict`),
+      );
+    });
+
+    it.each(['failed', 'expired'] as const)(
+      'writes a conflict row and no refund when a payment succeeded event follows %s',
+      async (status) => {
+        const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+        const payment = await insertPayment({ status });
+
+        const { outcome, payment: finalPayment } =
+          await paymentsService.ingestPayment({
+            reference: null,
+            provider: 'fake',
+            providerPaymentId: payment.providerPaymentId as string,
+            status: 'succeeded',
+            amountMinor: 1000,
+            currency: 'USD',
+            purpose: 'one_off',
+            reason: 'late',
+            webhookEventId: null,
+          });
+
+        expect(outcome).toBe('conflict');
+        expect(finalPayment.status).toBe(status);
+        const events = await eventTimelineOf(payment.id);
+        expect(
+          events.map(({ fromStatus, toStatus, outcome: eventOutcome }) => [
+            fromStatus,
+            toStatus,
+            eventOutcome,
+          ]),
+        ).toEqual([[status, 'succeeded', 'conflict']]);
+        expect(await refundRowsOf(payment.id)).toHaveLength(0);
+        expect(warn).toHaveBeenCalledTimes(1);
       },
     );
 

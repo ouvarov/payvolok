@@ -102,6 +102,9 @@ const assertValidRefundEvent = (input: IngestRefundInput): void => {
   if (!CURRENCY_PATTERN.test(input.currency)) {
     throw new RefundEventInvalidError('currency');
   }
+  if (input.providerPaymentId === '') {
+    throw new RefundEventInvalidError('empty providerPaymentId');
+  }
   if (input.providerRefundId === '') {
     throw new RefundEventInvalidError('empty providerRefundId');
   }
@@ -137,8 +140,12 @@ const mismatchProblemOf = (
   return null;
 };
 
-const didRefundRowChange = (refundOutcome: RefundOutcome): boolean =>
-  refundOutcome === 'created' || refundOutcome === 'applied';
+const didRefundBecomeSucceeded = (
+  refund: Refund,
+  refundOutcome: RefundOutcome,
+): boolean =>
+  refund.status === 'succeeded' &&
+  (refundOutcome === 'created' || refundOutcome === 'applied');
 
 @Injectable()
 export class RefundsService {
@@ -201,7 +208,7 @@ export class RefundsService {
       tx,
       payment.id,
     );
-    const targetStatus = didRefundRowChange(refundOutcome)
+    const targetStatus = didRefundBecomeSucceeded(refund, refundOutcome)
       ? paymentStatusAfterRefunds(refundedTotalMinor, payment.amountMinor)
       : null;
     const paymentResult: Pick<
@@ -386,7 +393,7 @@ export class RefundsService {
       );
     }
     if (
-      didRefundRowChange(refundOutcome) &&
+      didRefundBecomeSucceeded(refund, refundOutcome) &&
       result.refundedTotalMinor > payment.amountMinor
     ) {
       this.logger.warn(

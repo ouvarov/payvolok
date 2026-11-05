@@ -94,6 +94,7 @@ describe('RefundsService', () => {
       ['unsafe amount', { amountMinor: 2 ** 53 }],
       ['lowercase currency', { currency: 'usd' }],
       ['no id at all', { refundReference: null, providerRefundId: null }],
+      ['an empty provider payment id', { providerPaymentId: '' }],
       ['an empty provider id', { providerRefundId: '' }],
       [
         'an empty provider id beside a uuid reference',
@@ -315,6 +316,43 @@ describe('RefundsService', () => {
       expect(applyStatusInTransaction).not.toHaveBeenCalled();
     });
 
+    it('leaves the payment alone when a refund is created pending beside a counted sum', async () => {
+      const applyStatusInTransaction = jest.fn();
+
+      const result = await serviceWith({
+        payments: { applyStatusInTransaction },
+        refunds: { sumSucceededMinor: jest.fn().mockResolvedValue(300) },
+      }).ingestRefund({ ...INPUT, status: 'pending' });
+
+      expect(result).toMatchObject({
+        refundOutcome: 'created',
+        paymentOutcome: 'unchanged',
+        refundedTotalMinor: 300,
+      });
+      expect(applyStatusInTransaction).not.toHaveBeenCalled();
+    });
+
+    it('leaves the payment alone when a refund moves to failed beside a counted sum', async () => {
+      const applyStatusInTransaction = jest.fn();
+
+      const result = await serviceWith({
+        payments: { applyStatusInTransaction },
+        refunds: {
+          findByProviderRef: jest.fn().mockResolvedValue(refundWith()),
+          updateStatus: jest
+            .fn()
+            .mockResolvedValue(refundWith({ status: 'failed' })),
+          sumSucceededMinor: jest.fn().mockResolvedValue(300),
+        },
+      }).ingestRefund({ ...INPUT, status: 'failed' });
+
+      expect(result).toMatchObject({
+        refundOutcome: 'applied',
+        paymentOutcome: 'unchanged',
+      });
+      expect(applyStatusInTransaction).not.toHaveBeenCalled();
+    });
+
     it('derives the target from the sum, not from the event amount', async () => {
       const applyStatusInTransaction = jest
         .fn()
@@ -322,7 +360,12 @@ describe('RefundsService', () => {
 
       await serviceWith({
         payments: { applyStatusInTransaction },
-        refunds: { sumSucceededMinor: jest.fn().mockResolvedValue(1000) },
+        refunds: {
+          insertIfAbsent: jest
+            .fn()
+            .mockResolvedValue(refundWith({ status: 'succeeded' })),
+          sumSucceededMinor: jest.fn().mockResolvedValue(1000),
+        },
       }).ingestRefund({ ...INPUT, webhookEventId: 'event-1' });
 
       expect(applyStatusInTransaction).toHaveBeenCalledWith(

@@ -243,7 +243,10 @@ describe('FakeProvider', () => {
       });
     });
 
-    it('turns a refund item with an empty provider refund id into unknown', () => {
+    it.each([
+      ['an empty provider refund id', { providerRefundId: '' }],
+      ['a zero amount', { amountMinor: 0 }],
+    ])('turns a refund item with %s into unknown', (_case, badField) => {
       const [event] = fakeProvider.parseWebhook(
         fakeProvider.buildWebhook(
           wireBodyWith([
@@ -252,9 +255,10 @@ describe('FakeProvider', () => {
               providerPaymentId: 'provider-1',
               reference: null,
               refundReference: 'refund-1',
-              providerRefundId: '',
+              providerRefundId: 'provider-refund-1',
               amountMinor: 100,
               currency: 'USD',
+              ...badField,
             },
           ]),
         ),
