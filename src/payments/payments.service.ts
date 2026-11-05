@@ -214,11 +214,11 @@ export class PaymentsService {
       return this.applyToExisting(tx, linkedPayment, input);
     }
 
-    if (input.purpose === 'subscription_renewal') {
-      const createdPayment = await this.birthPayment(tx, input);
-      if (createdPayment)
-        return { payment: createdPayment, outcome: 'created' };
-    }
+    const createdPayment =
+      input.purpose === 'subscription_renewal'
+        ? await this.birthPayment(tx, input)
+        : null;
+    if (createdPayment) return { payment: createdPayment, outcome: 'created' };
 
     const existingPayment =
       await this.paymentsRepository.findByProviderRefForUpdate(
