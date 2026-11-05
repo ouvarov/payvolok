@@ -171,7 +171,14 @@ describe('Webhooks route', () => {
         .set('CF-Connecting-IP', '203.0.113.1')
         .set('X-Api-Key', 'secret-value')
         .set('X-Auth-Token', 'secret-value')
+        .set('X-Authorization', 'secret-value')
+        .set('api_key', 'secret-value')
+        .set('X-Session-Id', 'secret-value')
+        .set('Forwarded', 'for=203.0.113.1')
+        .set('True-Client-IP', '203.0.113.1')
         .set('X-Request-Id', 'request-1')
+        .set('Content-Type', 'application/json')
+        .set('User-Agent', 'e2e-agent')
         .expect(200);
 
       expect(response.body).toEqual({ received: true });
@@ -190,24 +197,12 @@ describe('Webhooks route', () => {
         finishedAt: null,
       });
       expect(row.rawBody?.equals(rawBody)).toBe(true);
-      expect(row.headers).toMatchObject({
+      expect(row.headers).toEqual({
         [SIGNATURE_HEADER]: signatureOf(rawBody),
-        'x-request-id': 'request-1',
+        'content-type': 'application/json',
+        'content-length': String(rawBody.length),
+        'user-agent': 'e2e-agent',
       });
-      expect(JSON.stringify(row.headers)).not.toContain('secret-value');
-      expect(JSON.stringify(row.headers)).not.toContain('203.0.113.1');
-      for (const name of [
-        'authorization',
-        'cookie',
-        'proxy-authorization',
-        'x-forwarded-for',
-        'x-real-ip',
-        'cf-connecting-ip',
-        'x-api-key',
-        'x-auth-token',
-      ]) {
-        expect(row.headers).not.toHaveProperty([name]);
-      }
     });
 
     it('makes the row due at once', async () => {

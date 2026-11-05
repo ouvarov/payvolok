@@ -86,6 +86,8 @@ type ResourceStatus =
 type PaymentProvider = {
   readonly code: ProviderCode;
   readonly capabilities: ProviderCapabilities;
+  // Lowercase names of the headers verifyWebhook or parseWebhook needs.
+  readonly webhookHeaders: readonly string[];
   createPayment(input: CreatePaymentInput): Promise<CreatedPayment>;
   refund(input: RefundInput): Promise<CreatedRefund>;
   // Null means the provider does not know the resource.

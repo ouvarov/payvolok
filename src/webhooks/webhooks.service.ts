@@ -161,7 +161,7 @@ export class WebhooksService {
           ? storableDedupKey(events[0].dedupKey)
           : dedupKeyFromBody(request.rawBody),
         rawBody: request.rawBody,
-        headers: storableHeaders(request.headers),
+        headers: storableHeaders(request.headers, provider.webhookHeaders),
         eventTypes: events ? events.map(({ type }) => type) : [],
         failureReason: events ? firstFailureReasonOf(events) : null,
       });
