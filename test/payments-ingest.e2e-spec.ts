@@ -990,6 +990,29 @@ describe('Payments ingest', () => {
       expect(await eventTimelineOf(payment.id)).toHaveLength(1);
     });
 
+    it('applies a renewal to the referenced row and births nothing', async () => {
+      const row = await insertNullRefPayment({
+        purpose: 'subscription_renewal',
+      });
+      const input = renewalInputWith({ reference: row.id });
+
+      const { outcome, payment } = await paymentsService.ingestPayment(input);
+
+      expect(outcome).toBe('applied');
+      expect(payment.id).toBe(row.id);
+      const ownerRows = await paymentRowsOf(input.providerPaymentId);
+      expect(ownerRows).toHaveLength(1);
+      expect(ownerRows[0]).toMatchObject({
+        id: row.id,
+        origin: 'api',
+        status: 'succeeded',
+      });
+      const events = await eventTimelineOf(row.id);
+      expect(
+        events.map(({ fromStatus, toStatus }) => [fromStatus, toStatus]),
+      ).toEqual([['created', 'succeeded']]);
+    });
+
     it('does not birth a subscription_initial event', async () => {
       const input = ingestInputWith({ purpose: 'subscription_initial' });
 
