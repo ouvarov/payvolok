@@ -25,6 +25,7 @@ import { decideTransition } from '@/payments/payment-state-machine';
 import {
   PaymentEventInvalidError,
   PaymentMismatchError,
+  PaymentNotFoundError,
   PaymentProviderRefMismatchError,
   PaymentProviderRefOwnedError,
   PaymentsService,
@@ -82,11 +83,15 @@ const ingestInputWith = (
   amountMinor: 1000,
   currency: 'USD',
   purpose: 'one_off',
-  origin: 'demo',
   reason: 'e2e',
   webhookEventId: null,
   ...overrides,
 });
+
+const renewalInputWith = (
+  overrides: Partial<IngestPaymentInput> = {},
+): IngestPaymentInput =>
+  ingestInputWith({ purpose: 'subscription_renewal', ...overrides });
 
 const fullRefundInputOf = (
   input: IngestPaymentInput,
@@ -348,10 +353,10 @@ describe('Payments ingest', () => {
       const providerPaymentId = randomUUID();
 
       const first = await paymentsService.ingestPayment(
-        ingestInputWith({ provider: 'fake', providerPaymentId }),
+        renewalInputWith({ provider: 'fake', providerPaymentId }),
       );
       const second = await paymentsService.ingestPayment(
-        ingestInputWith({ provider: OTHER_PROVIDER, providerPaymentId }),
+        renewalInputWith({ provider: OTHER_PROVIDER, providerPaymentId }),
       );
 
       expect(second.outcome).toBe('created');
@@ -378,7 +383,7 @@ describe('Payments ingest', () => {
     });
 
     it('returns duplicate for the same status and writes nothing', async () => {
-      const input = ingestInputWith();
+      const input = renewalInputWith();
       const { payment } = await paymentsService.ingestPayment(input);
 
       const repeat = await paymentsService.ingestPayment(input);
@@ -389,7 +394,7 @@ describe('Payments ingest', () => {
     });
 
     it('records a stale fact once per webhook event and keeps the status', async () => {
-      const input = ingestInputWith({ status: 'succeeded' });
+      const input = renewalInputWith({ status: 'succeeded' });
       const { payment } = await paymentsService.ingestPayment(input);
       const staleInput = {
         ...input,
@@ -415,7 +420,7 @@ describe('Payments ingest', () => {
 
     it('records and logs a conflict and keeps the status', async () => {
       const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
-      const input = ingestInputWith({ status: 'expired' });
+      const input = renewalInputWith({ status: 'expired' });
       const { payment } = await paymentsService.ingestPayment(input);
 
       const conflict = await paymentsService.ingestPayment({
@@ -437,7 +442,7 @@ describe('Payments ingest', () => {
     });
 
     it('builds an ordered timeline of applied events', async () => {
-      const input = ingestInputWith({
+      const input = renewalInputWith({
         status: 'pending',
         reason: 'birth reason',
       });
@@ -479,7 +484,7 @@ describe('Payments ingest', () => {
     ] as const)(
       'rejects a different %s on an ingest of %s and writes nothing',
       async (_field, status, amountMinor, currency) => {
-        const input = ingestInputWith({ status: 'pending' });
+        const input = renewalInputWith({ status: 'pending' });
         const { payment } = await paymentsService.ingestPayment(input);
 
         const error: unknown = await paymentsService
@@ -522,7 +527,7 @@ describe('Payments ingest', () => {
     });
 
     it('leaves no payment when the birth event insert fails', async () => {
-      const input = ingestInputWith({ webhookEventId: 'not-a-uuid' });
+      const input = renewalInputWith({ webhookEventId: 'not-a-uuid' });
 
       const cause = await databaseCauseOf(() =>
         paymentsService.ingestPayment(input),
@@ -533,7 +538,7 @@ describe('Payments ingest', () => {
     });
 
     it('serialises parallel duplicate ingests into one payment and one birth event', async () => {
-      const input = ingestInputWith();
+      const input = renewalInputWith();
 
       const results = await Promise.all(
         Array.from({ length: PARALLEL_INGESTS }, () =>
@@ -555,7 +560,7 @@ describe('Payments ingest', () => {
       const webhookEventId = randomUUID();
 
       const { payment } = await paymentsService.ingestPayment(
-        ingestInputWith({ webhookEventId }),
+        renewalInputWith({ webhookEventId }),
       );
 
       const [birthEvent] = await eventTimelineOf(payment.id);
@@ -565,7 +570,7 @@ describe('Payments ingest', () => {
 
   describe('provider event statuses', () => {
     it('ends at succeeded after a failed attempt', async () => {
-      const input = ingestInputWith({
+      const input = renewalInputWith({
         status: PAYMENT_STATUS_BY_EVENT_TYPE['payment.attempt_failed'],
       });
       const { payment } = await paymentsService.ingestPayment(input);
@@ -583,7 +588,7 @@ describe('Payments ingest', () => {
 
     it('stays failed with a conflict event when succeeded follows failed', async () => {
       jest.spyOn(Logger.prototype, 'warn').mockImplementation();
-      const input = ingestInputWith({
+      const input = renewalInputWith({
         status: PAYMENT_STATUS_BY_EVENT_TYPE['payment.failed'],
       });
       const { payment } = await paymentsService.ingestPayment(input);
@@ -817,28 +822,183 @@ describe('Payments ingest', () => {
     it.each([
       ['a non-uuid reference', () => 'attempt-1'],
       ['an unknown uuid', () => randomUUID()],
-    ])('falls through to the provider ref for %s', async (_case, reference) => {
-      const input = ingestInputWith({ reference: reference() });
+    ])(
+      'throws not-found on a one-off and births on a renewal for %s',
+      async (_case, reference) => {
+        const input = ingestInputWith({ reference: reference() });
 
-      const { outcome, payment } = await paymentsService.ingestPayment(input);
+        await expect(
+          paymentsService.ingestPayment(input),
+        ).rejects.toBeInstanceOf(PaymentNotFoundError);
+        expect(await paymentRowsOf(input.providerPaymentId)).toHaveLength(0);
 
-      expect(outcome).toBe('created');
-      expect(payment.providerPaymentId).toBe(input.providerPaymentId);
-      expect(await paymentRowsOf(input.providerPaymentId)).toHaveLength(1);
-    });
+        const { outcome, payment } = await paymentsService.ingestPayment({
+          ...input,
+          purpose: 'subscription_renewal',
+        });
 
-    it('falls through and leaves the row alone for another provider', async () => {
+        expect(outcome).toBe('created');
+        expect(payment.providerPaymentId).toBe(input.providerPaymentId);
+        expect(await paymentRowsOf(input.providerPaymentId)).toHaveLength(1);
+      },
+    );
+
+    it('throws not-found on a one-off, births on a renewal and leaves the row alone for another provider', async () => {
       const otherRow = await insertNullRefPayment({
         provider: OTHER_PROVIDER,
       });
       const input = ingestInputWith({ reference: otherRow.id });
 
-      const { outcome, payment } = await paymentsService.ingestPayment(input);
+      await expect(paymentsService.ingestPayment(input)).rejects.toBeInstanceOf(
+        PaymentNotFoundError,
+      );
+      expect(await paymentRowsOf(input.providerPaymentId)).toHaveLength(0);
+
+      const { outcome, payment } = await paymentsService.ingestPayment({
+        ...input,
+        purpose: 'subscription_renewal',
+      });
 
       expect(outcome).toBe('created');
       expect(payment.id).not.toBe(otherRow.id);
       expect(await storedPaymentOf(otherRow.id)).toEqual(otherRow);
       expect(await eventTimelineOf(otherRow.id)).toHaveLength(0);
+    });
+  });
+
+  describe('one-off events', () => {
+    it('writes nothing without a reference, then a referenced event applies to our row', async () => {
+      const row = await insertNullRefPayment();
+      const input = ingestInputWith({ reference: null });
+
+      await expect(paymentsService.ingestPayment(input)).rejects.toBeInstanceOf(
+        PaymentNotFoundError,
+      );
+      expect(await paymentRowsOf(input.providerPaymentId)).toHaveLength(0);
+
+      const { outcome, payment } = await paymentsService.ingestPayment({
+        ...input,
+        reference: row.id,
+      });
+
+      expect(outcome).toBe('applied');
+      expect(payment).toMatchObject({
+        id: row.id,
+        providerPaymentId: input.providerPaymentId,
+        status: 'succeeded',
+      });
+      expect(await paymentRowsOf(input.providerPaymentId)).toHaveLength(1);
+      const events = await eventTimelineOf(row.id);
+      expect(
+        events.map(({ fromStatus, toStatus }) => [fromStatus, toStatus]),
+      ).toEqual([['created', 'succeeded']]);
+    });
+
+    it('applies on a retry once the row appears by provider id', async () => {
+      const input = ingestInputWith();
+
+      await expect(paymentsService.ingestPayment(input)).rejects.toBeInstanceOf(
+        PaymentNotFoundError,
+      );
+      const row = await insertNullRefPayment({
+        providerPaymentId: input.providerPaymentId,
+        status: 'pending',
+      });
+
+      const { outcome, payment } = await paymentsService.ingestPayment(input);
+
+      expect(outcome).toBe('applied');
+      expect(payment).toMatchObject({ id: row.id, status: 'succeeded' });
+    });
+
+    it('returns duplicate for the same status on a stored row', async () => {
+      const input = ingestInputWith({ status: 'pending' });
+      const row = await insertNullRefPayment({
+        providerPaymentId: input.providerPaymentId,
+        status: 'pending',
+      });
+
+      const { outcome } = await paymentsService.ingestPayment(input);
+
+      expect(outcome).toBe('duplicate');
+      expect(await eventTimelineOf(row.id)).toHaveLength(0);
+    });
+
+    it('records a late event as stale once on a stored row', async () => {
+      const input = ingestInputWith({
+        status: 'pending',
+        webhookEventId: randomUUID(),
+      });
+      const row = await insertNullRefPayment({
+        providerPaymentId: input.providerPaymentId,
+        status: 'succeeded',
+      });
+
+      const stale = await paymentsService.ingestPayment(input);
+      const repeatedStale = await paymentsService.ingestPayment(input);
+
+      expect(stale.outcome).toBe('stale');
+      expect(repeatedStale.outcome).toBe('stale');
+      expect(await eventTimelineOf(row.id)).toHaveLength(1);
+    });
+
+    it('records and logs a conflict for succeeded after expired on a stored row', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      const input = ingestInputWith();
+      const row = await insertNullRefPayment({
+        providerPaymentId: input.providerPaymentId,
+        status: 'expired',
+      });
+
+      const { outcome, payment } = await paymentsService.ingestPayment(input);
+
+      expect(outcome).toBe('conflict');
+      expect(payment.status).toBe('expired');
+      expect(await eventTimelineOf(row.id)).toHaveLength(1);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining(row.id));
+    });
+
+    it('rejects a different amount on a stored row', async () => {
+      const input = ingestInputWith({ amountMinor: 2000 });
+      const row = await insertNullRefPayment({
+        providerPaymentId: input.providerPaymentId,
+        status: 'pending',
+      });
+
+      await expect(paymentsService.ingestPayment(input)).rejects.toBeInstanceOf(
+        PaymentMismatchError,
+      );
+
+      expect((await storedPaymentOf(row.id)).status).toBe('pending');
+    });
+  });
+
+  describe('renewal events', () => {
+    it('births an unknown renewal with the provider origin and a repeat is duplicate', async () => {
+      const input = renewalInputWith();
+
+      const { outcome, payment } = await paymentsService.ingestPayment(input);
+      const repeat = await paymentsService.ingestPayment(input);
+
+      expect(outcome).toBe('created');
+      expect(payment).toMatchObject({
+        origin: 'provider',
+        purpose: 'subscription_renewal',
+      });
+      expect(repeat.outcome).toBe('duplicate');
+      expect(await paymentRowsOf(input.providerPaymentId)).toHaveLength(1);
+      expect(await eventTimelineOf(payment.id)).toHaveLength(1);
+    });
+
+    it('does not birth a subscription_initial event', async () => {
+      const input = ingestInputWith({ purpose: 'subscription_initial' });
+
+      await expect(paymentsService.ingestPayment(input)).rejects.toBeInstanceOf(
+        PaymentNotFoundError,
+      );
+
+      expect(await paymentRowsOf(input.providerPaymentId)).toHaveLength(0);
     });
   });
 
@@ -867,7 +1027,7 @@ describe('Payments ingest', () => {
 
     it('rejects an update of payment_events as append-only', async () => {
       const { payment } =
-        await paymentsService.ingestPayment(ingestInputWith());
+        await paymentsService.ingestPayment(renewalInputWith());
 
       const cause = await databaseCauseOf(() =>
         db
@@ -881,7 +1041,7 @@ describe('Payments ingest', () => {
 
     it('allows deleting an event', async () => {
       const { payment } =
-        await paymentsService.ingestPayment(ingestInputWith());
+        await paymentsService.ingestPayment(renewalInputWith());
 
       await db
         .delete(paymentEvents)
@@ -892,7 +1052,7 @@ describe('Payments ingest', () => {
 
     it('rejects deleting a payment that has events', async () => {
       const { payment } =
-        await paymentsService.ingestPayment(ingestInputWith());
+        await paymentsService.ingestPayment(renewalInputWith());
 
       const cause = await databaseCauseOf(() =>
         db.delete(payments).where(eq(payments.id, payment.id)),
@@ -954,7 +1114,7 @@ describe('Payments ingest', () => {
           ${input.provider},
           ${input.providerPaymentId},
           ${input.purpose},
-          ${input.origin},
+          'provider',
           'pending',
           ${input.amountMinor},
           ${input.currency}
@@ -1001,9 +1161,11 @@ describe('Payments ingest', () => {
 
     const trackSettled = <T>(work: Promise<T>) => {
       const tracker = { isSettled: false, work };
-      void work.finally(() => {
+      const markSettled = () => {
         tracker.isSettled = true;
-      });
+      };
+      work.then(markSettled, markSettled);
+
       return tracker;
     };
 
@@ -1016,7 +1178,7 @@ describe('Payments ingest', () => {
     });
 
     it('waits on an uncommitted insert and resolves against the committed row', async () => {
-      const input = ingestInputWith({ status: 'succeeded' });
+      const input = renewalInputWith({ status: 'succeeded' });
       const held = await holdUncommittedInsert(input);
 
       try {
@@ -1037,7 +1199,7 @@ describe('Payments ingest', () => {
     });
 
     it('waits on an uncommitted insert and creates the payment after a rollback', async () => {
-      const input = ingestInputWith({ status: 'succeeded' });
+      const input = renewalInputWith({ status: 'succeeded' });
       const held = await holdUncommittedInsert(input);
 
       try {
@@ -1056,6 +1218,52 @@ describe('Payments ingest', () => {
         await held.release();
       }
     });
+
+    it('does not wait on an uncommitted insert for a one-off and applies on the retry after commit', async () => {
+      const input = ingestInputWith({ status: 'succeeded' });
+      const held = await holdUncommittedInsert(input);
+
+      try {
+        await expect(
+          paymentsService.ingestPayment(input),
+        ).rejects.toBeInstanceOf(PaymentNotFoundError);
+
+        await held.commit();
+        const { payment, outcome } = await paymentsService.ingestPayment(input);
+
+        expect(outcome).toBe('applied');
+        expect(payment.status).toBe('succeeded');
+        expect(await paymentRowsOf(input.providerPaymentId)).toHaveLength(1);
+      } finally {
+        await held.release();
+      }
+    });
+
+    it(
+      'resolves parallel one-off events on a pending row into one applied and one event',
+      async () => {
+        const input = ingestInputWith();
+        const row = await insertNullRefPayment({
+          providerPaymentId: input.providerPaymentId,
+          status: 'pending',
+        });
+        await warmPool();
+
+        const results = await Promise.all(
+          Array.from({ length: PARALLEL_INGESTS }, () =>
+            paymentsService.ingestPayment(input),
+          ),
+        );
+
+        const outcomes = results.map(({ outcome }) => outcome).sort();
+        expect(outcomes).toEqual([
+          'applied',
+          ...Array.from({ length: PARALLEL_INGESTS - 1 }, () => 'duplicate'),
+        ]);
+        expect(await eventTimelineOf(row.id)).toHaveLength(1);
+      },
+      SLOW_TEST_TIMEOUT_MS,
+    );
 
     it('waits on a row lock and decides against the row linked meanwhile', async () => {
       const row = await insertNullRefPayment();
@@ -1094,7 +1302,7 @@ describe('Payments ingest', () => {
     it(
       'resolves parallel ingests with one created and no unique violation',
       async () => {
-        const input = ingestInputWith();
+        const input = renewalInputWith();
 
         const results = await Promise.all(
           Array.from({ length: PARALLEL_INGESTS }, () =>
@@ -1122,7 +1330,7 @@ describe('Payments ingest', () => {
         await warmPool();
 
         for (let repeat = 0; repeat < RACE_REPEATS; repeat += 1) {
-          const input = ingestInputWith({ status: 'pending' });
+          const input = renewalInputWith({ status: 'pending' });
           const { payment } = await paymentsService.ingestPayment(input);
 
           await Promise.all([

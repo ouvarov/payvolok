@@ -436,7 +436,6 @@ describe('Refunds ingest', () => {
             amountMinor: 1000,
             currency: 'USD',
             purpose: 'one_off',
-            origin: 'provider',
             reason: 'late',
             webhookEventId: null,
           });

@@ -7,6 +7,7 @@ import {
   IngestRejectedError,
   PaymentEventInvalidError,
   PaymentMismatchError,
+  PaymentNotFoundError,
   PaymentProviderRefMismatchError,
   PaymentProviderRefOwnedError,
   PaymentsService,
@@ -25,9 +26,13 @@ const INPUT: IngestPaymentInput = {
   amountMinor: 1000,
   currency: 'USD',
   purpose: 'one_off',
-  origin: 'demo',
   reason: 'test',
   webhookEventId: null,
+};
+
+const RENEWAL_INPUT: IngestPaymentInput = {
+  ...INPUT,
+  purpose: 'subscription_renewal',
 };
 
 const paymentWith = (overrides: Partial<Payment> = {}): Payment => ({
@@ -121,7 +126,7 @@ describe('PaymentsService', () => {
     );
 
     const { outcome } = await paymentsService.ingestPayment({
-      ...INPUT,
+      ...RENEWAL_INPUT,
       amountMinor: 0,
     });
 
@@ -266,12 +271,57 @@ describe('PaymentsService', () => {
     });
   });
 
-  it('rejects when the conflicting row is gone by the time it is locked', async () => {
-    const paymentsService = new PaymentsService(repositoryWith({}));
+  describe('payment birth', () => {
+    it.each(['one_off', 'subscription_initial'] as const)(
+      'throws a retryable not-found for %s without inserting',
+      async (purpose) => {
+        const insertIfAbsent = jest.fn();
+        const paymentsService = new PaymentsService(
+          repositoryWith({ insertIfAbsent }),
+        );
 
-    await expect(paymentsService.ingestPayment(INPUT)).rejects.toThrow(
-      'Payment row disappeared during ingest',
+        const error: unknown = await paymentsService
+          .ingestPayment({ ...INPUT, purpose, reference: 'attempt-1' })
+          .catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(PaymentNotFoundError);
+        expect(error).not.toBeInstanceOf(IngestRejectedError);
+        expect(error).toMatchObject({
+          reference: 'attempt-1',
+          providerPaymentId: INPUT.providerPaymentId,
+        });
+        expect(insertIfAbsent).not.toHaveBeenCalled();
+      },
     );
+
+    it('births a renewal with the provider origin and one birth event', async () => {
+      const createdPayment = paymentWith({ origin: 'provider' });
+      const insertIfAbsent = jest.fn().mockResolvedValue(createdPayment);
+      const insertEvent = jest.fn().mockResolvedValue(undefined);
+      const paymentsService = new PaymentsService(
+        repositoryWith({ insertIfAbsent, insertEvent }),
+      );
+
+      const result = await paymentsService.ingestPayment(RENEWAL_INPUT);
+
+      expect(result).toEqual({ payment: createdPayment, outcome: 'created' });
+      expect(insertIfAbsent).toHaveBeenCalledWith(
+        TX,
+        expect.objectContaining({
+          origin: 'provider',
+          purpose: 'subscription_renewal',
+        }),
+      );
+      expect(insertEvent).toHaveBeenCalledTimes(1);
+    });
+
+    it('throws not-found when the conflicting renewal row is gone by the time it is locked', async () => {
+      const paymentsService = new PaymentsService(repositoryWith({}));
+
+      await expect(
+        paymentsService.ingestPayment(RENEWAL_INPUT),
+      ).rejects.toBeInstanceOf(PaymentNotFoundError);
+    });
   });
 
   describe('reference lookup', () => {
@@ -291,7 +341,7 @@ describe('PaymentsService', () => {
         );
 
         const result = await paymentsService.ingestPayment({
-          ...INPUT,
+          ...RENEWAL_INPUT,
           reference,
         });
 

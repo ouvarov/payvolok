@@ -9,7 +9,6 @@ import type { ProviderCode } from '@/providers/provider.constants';
 import {
   CURRENCY_PATTERN,
   PAYMENTS_PROVIDER_REF_UNIQUE,
-  type PaymentOrigin,
   type PaymentPurpose,
   type PaymentStatus,
 } from './payment.constants';
@@ -27,7 +26,6 @@ type IngestPaymentInput = {
   amountMinor: number;
   currency: string;
   purpose: PaymentPurpose;
-  origin: PaymentOrigin;
   reason: string;
   webhookEventId: string | null;
 };
@@ -116,6 +114,21 @@ export class PaymentProviderRefOwnedError extends IngestRejectedError {
   }
 }
 
+// Not an IngestRejectedError: our row may not be committed yet, so the worker retries.
+export class PaymentNotFoundError extends Error {
+  readonly reference: string | null;
+  readonly providerPaymentId: string;
+
+  constructor(received: PaymentLookup) {
+    super(
+      `No payment for reference ${received.reference} or provider ref ${received.providerPaymentId} yet`,
+    );
+    this.name = 'PaymentNotFoundError';
+    this.reference = received.reference;
+    this.providerPaymentId = received.providerPaymentId;
+  }
+}
+
 const assertValidPaymentEvent = (
   input: Pick<IngestPaymentInput, 'amountMinor' | 'currency'>,
 ): void => {
@@ -195,27 +208,10 @@ export class PaymentsService {
       return this.applyToExisting(tx, linkedPayment, input);
     }
 
-    const createdPayment = await this.paymentsRepository.insertIfAbsent(tx, {
-      provider: input.provider,
-      providerPaymentId: input.providerPaymentId,
-      purpose: input.purpose,
-      origin: input.origin,
-      status: input.status,
-      amountMinor: input.amountMinor,
-      currency: input.currency,
-    });
-
-    if (createdPayment) {
-      await this.paymentsRepository.insertEvent(tx, {
-        paymentId: createdPayment.id,
-        fromStatus: null,
-        toStatus: input.status,
-        outcome: 'applied',
-        reason: input.reason,
-        webhookEventId: input.webhookEventId,
-      });
-
-      return { payment: createdPayment, outcome: 'created' };
+    if (input.purpose === 'subscription_renewal') {
+      const createdPayment = await this.birthPayment(tx, input);
+      if (createdPayment)
+        return { payment: createdPayment, outcome: 'created' };
     }
 
     const existingPayment =
@@ -224,12 +220,36 @@ export class PaymentsService {
         input.provider,
         input.providerPaymentId,
       );
-
-    if (!existingPayment) {
-      throw new Error('Payment row disappeared during ingest');
-    }
+    if (!existingPayment) throw new PaymentNotFoundError(input);
 
     return this.applyToExisting(tx, existingPayment, input);
+  }
+
+  private async birthPayment(
+    tx: DatabaseTransaction,
+    input: IngestPaymentInput,
+  ): Promise<Payment | null> {
+    const createdPayment = await this.paymentsRepository.insertIfAbsent(tx, {
+      provider: input.provider,
+      providerPaymentId: input.providerPaymentId,
+      purpose: input.purpose,
+      origin: 'provider',
+      status: input.status,
+      amountMinor: input.amountMinor,
+      currency: input.currency,
+    });
+    if (!createdPayment) return null;
+
+    await this.paymentsRepository.insertEvent(tx, {
+      paymentId: createdPayment.id,
+      fromStatus: null,
+      toStatus: input.status,
+      outcome: 'applied',
+      reason: input.reason,
+      webhookEventId: input.webhookEventId,
+    });
+
+    return createdPayment;
   }
 
   private async findReferencedPayment(
