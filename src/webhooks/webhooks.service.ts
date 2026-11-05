@@ -21,6 +21,7 @@ import {
 import { ProviderRegistry } from '@/providers/provider.registry';
 
 import {
+  INVALID_DEDUP_KEY_PREFIX,
   storableDedupKey,
   storableHeaders,
   withoutControlCharacters,
@@ -122,7 +123,7 @@ export class WebhooksService {
     try {
       await this.webhooksRepository.insertInvalidIfAbsent(
         provider,
-        `invalid:${bodyHash}`,
+        `${INVALID_DEDUP_KEY_PREFIX}${bodyHash}`,
       );
     } catch (error) {
       this.logger.error(

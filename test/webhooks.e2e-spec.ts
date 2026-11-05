@@ -556,6 +556,25 @@ describe('Webhooks route', () => {
     );
   });
 
+  describe('a provider key shaped like an invalid-signature key', () => {
+    it('is stored under a hash and not dropped by the invalid row', async () => {
+      const rejectedBody = nonJsonBody();
+      const invalidKey = invalidKeyOf(rejectedBody);
+      await deliverTo(app, rejectedBody, WRONG_SIGNATURE).expect(401);
+      const rawBody = wireBody(invalidKey);
+
+      await deliver(rawBody).expect(200);
+
+      const invalidRows = await rowsWithKey(invalidKey);
+      const [storedRow] = await rowsWithKey(
+        dedupKeyFromBody(Buffer.from(invalidKey)),
+      );
+      expect(invalidRows.map(({ status }) => status)).toEqual(['ignored']);
+      expect(storedRow.status).toBe('received');
+      expect(storedRow.rawBody?.equals(rawBody)).toBe(true);
+    });
+  });
+
   describe('a parse failure', () => {
     it('stores a received row under the body hash and answers 200', async () => {
       const logs = errorAndWarnLogs();
