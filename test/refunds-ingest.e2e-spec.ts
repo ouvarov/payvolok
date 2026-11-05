@@ -1,12 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
 import { Logger, type INestApplication } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { Test } from '@nestjs/testing';
 import { asc, eq, sql } from 'drizzle-orm';
 import postgres from 'postgres';
 
-import { AppModule } from '@/app.module';
 import { DRIZZLE, type Database } from '@/database/drizzle';
 import {
   paymentEvents,
@@ -29,24 +26,23 @@ import {
   type IngestRefundInput,
 } from '@/refunds/refunds.service';
 
-const PGLITE_POOL_MAX = 1;
-const REAL_POSTGRES_POOL_MAX = 5;
+import {
+  createE2eApp,
+  databaseCauseOf,
+  databasePoolMax,
+  databaseUrl,
+  describeOnRealPostgres,
+  trackSettled,
+  waitUntilBlockedBy,
+} from './helpers';
+
 const POOL_WARMUP_SLEEP_SECONDS = 0.1;
 const PARALLEL_REFUNDS = 20;
 const PARALLEL_REFUND_AMOUNT_MINOR = 50;
 const RACE_REPEATS = 3;
 const CONNECT_TIMEOUT_SECONDS = 10;
 const CLIENT_END_TIMEOUT_SECONDS = 5;
-const LOCK_WAIT_POLL_MS = 100;
-const LOCK_WAIT_DEADLINE_MS = 8000;
 const SLOW_TEST_TIMEOUT_MS = 60000;
-
-const databaseUrl = process.env.E2E_DATABASE_URL as string;
-const isRealPostgres = process.env.E2E_REAL_POSTGRES === 'true';
-const describeOnRealPostgres = isRealPostgres ? describe : describe.skip;
-const databasePoolMax = isRealPostgres
-  ? REAL_POSTGRES_POOL_MAX
-  : PGLITE_POOL_MAX;
 
 const refundInputFor = (
   payment: Pick<Payment, 'providerPaymentId'>,
@@ -65,17 +61,6 @@ const refundInputFor = (
   webhookEventId: null,
   ...overrides,
 });
-
-const databaseCauseOf = async (
-  query: () => PromiseLike<unknown>,
-): Promise<{ code?: string }> => {
-  const error = (await Promise.resolve(query()).then(
-    () => ({}),
-    (caught: unknown) => caught,
-  )) as { cause?: { code?: string } };
-
-  return error.cause ?? {};
-};
 
 describe('Refunds ingest', () => {
   let app: INestApplication;
@@ -157,19 +142,7 @@ describe('Refunds ingest', () => {
   };
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-      .overrideProvider(ConfigService)
-      .useValue({
-        get: (key: 'DATABASE_URL' | 'DATABASE_POOL_MAX') =>
-          ({
-            DATABASE_URL: databaseUrl,
-            DATABASE_POOL_MAX: databasePoolMax,
-          })[key],
-      })
-      .compile();
-
-    app = moduleRef.createNestApplication();
-    await app.init();
+    app = await createE2eApp();
     db = app.get<Database>(DRIZZLE);
     paymentsService = app.get(PaymentsService);
     refundsService = app.get(RefundsService);
@@ -1025,26 +998,6 @@ describe('Refunds ingest', () => {
   describeOnRealPostgres('real Postgres concurrency', () => {
     let holdingClient: postgres.Sql;
 
-    const waitUntilBlockedBy = async (blockerPid: number): Promise<boolean> => {
-      const deadline = Date.now() + LOCK_WAIT_DEADLINE_MS;
-
-      while (Date.now() < deadline) {
-        const [{ waiting_count: waitingCount }] = await db.execute<{
-          waiting_count: number;
-        }>(sql`
-          select count(*)::int as waiting_count
-          from pg_stat_activity
-          where wait_event_type = 'Lock'
-            and ${blockerPid}::int = any(pg_blocking_pids(pid))
-        `);
-        if (waitingCount > 0) return true;
-
-        await new Promise((resolve) => setTimeout(resolve, LOCK_WAIT_POLL_MS));
-      }
-
-      return false;
-    };
-
     const backendPidOf = async (
       connection: postgres.ReservedSql,
     ): Promise<number> => {
@@ -1053,16 +1006,6 @@ describe('Refunds ingest', () => {
       `;
 
       return pid;
-    };
-
-    const trackSettled = <T>(work: Promise<T>) => {
-      const tracker = { isSettled: false, work };
-      const markSettled = () => {
-        tracker.isSettled = true;
-      };
-      work.then(markSettled, markSettled);
-
-      return tracker;
     };
 
     beforeAll(() => {
@@ -1174,7 +1117,7 @@ describe('Refunds ingest', () => {
           const pid = await backendPidOf(connection);
           const ingest = trackSettled(refundsService.ingestRefund(input));
 
-          expect(await waitUntilBlockedBy(pid)).toBe(true);
+          expect(await waitUntilBlockedBy(db, pid)).toBe(true);
           expect(ingest.isSettled).toBe(false);
 
           await connection.unsafe('commit');
@@ -1219,7 +1162,7 @@ describe('Refunds ingest', () => {
               .catch((caught: unknown) => caught),
           );
 
-          expect(await waitUntilBlockedBy(pid)).toBe(true);
+          expect(await waitUntilBlockedBy(db, pid)).toBe(true);
           expect(ingest.isSettled).toBe(false);
 
           await connection.unsafe('commit');
