@@ -29,8 +29,6 @@ import {
   type IngestRefundInput,
 } from '@/refunds/refunds.service';
 
-import { applyMigrations } from './apply-migrations';
-
 const PGLITE_POOL_MAX = 1;
 const REAL_POSTGRES_POOL_MAX = 5;
 const POOL_WARMUP_SLEEP_SECONDS = 0.1;
@@ -159,8 +157,6 @@ describe('Refunds ingest', () => {
   };
 
   beforeAll(async () => {
-    await applyMigrations(databaseUrl);
-
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(ConfigService)
       .useValue({

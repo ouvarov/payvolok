@@ -9,6 +9,7 @@
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
   },
+  "globalSetup": "<rootDir>/test/global-setup.ts",
   "setupFiles": ["<rootDir>/test/setup-env.ts"],
   "testEnvironment": "node",
   "testTimeout": 30000

@@ -235,8 +235,6 @@ describe('Payments ingest', () => {
   };
 
   beforeAll(async () => {
-    await applyMigrations(databaseUrl);
-
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(ConfigService)
       .useValue({
