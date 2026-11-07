@@ -20,4 +20,12 @@ const isUniqueViolationOf = (
   );
 };
 
-export { isUniqueViolationOf };
+const postgresCodeSchema = z.object({ cause: z.object({ code: z.string() }) });
+
+const postgresCodeOf = (error: unknown): string | null => {
+  const parsed = postgresCodeSchema.safeParse(error);
+
+  return parsed.success ? parsed.data.cause.code : null;
+};
+
+export { isUniqueViolationOf, postgresCodeOf };

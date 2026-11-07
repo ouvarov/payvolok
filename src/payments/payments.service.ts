@@ -40,6 +40,13 @@ type PaymentLookup = Pick<
   'reference' | 'provider' | 'providerPaymentId'
 >;
 
+type ApplyStatusInput = {
+  payment: Payment;
+  targetStatus: PaymentStatus;
+  reason: string;
+  webhookEventId: string | null;
+};
+
 export class IngestRejectedError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
@@ -310,37 +317,33 @@ export class PaymentsService {
       throw new PaymentMismatchError(existingPayment, input);
     }
 
-    return this.applyStatusInTransaction(
-      tx,
-      existingPayment,
-      input.status,
-      input.reason,
-      input.webhookEventId,
-    );
+    return this.applyStatusInTransaction(tx, {
+      payment: existingPayment,
+      targetStatus: input.status,
+      reason: input.reason,
+      webhookEventId: input.webhookEventId,
+    });
   }
 
-  // The caller must already hold the row lock on existingPayment.
+  // The caller must already hold the row lock on the payment.
   async applyStatusInTransaction(
     tx: DatabaseTransaction,
-    existingPayment: Payment,
-    targetStatus: PaymentStatus,
-    reason: string,
-    webhookEventId: string | null,
+    { payment, targetStatus, reason, webhookEventId }: ApplyStatusInput,
   ): Promise<IngestPaymentResult> {
-    const decision = decideTransition(existingPayment.status, targetStatus);
+    const decision = decideTransition(payment.status, targetStatus);
 
     if (decision === 'duplicate') {
-      return { payment: existingPayment, outcome: 'duplicate' };
+      return { payment, outcome: 'duplicate' };
     }
 
     const currentPayment =
       decision === 'apply'
         ? await this.paymentsRepository.updateStatus(
             tx,
-            existingPayment.id,
+            payment.id,
             targetStatus,
           )
-        : existingPayment;
+        : payment;
 
     if (!currentPayment) {
       throw new Error('Payment row disappeared during ingest');
@@ -349,8 +352,8 @@ export class PaymentsService {
     const outcome = decision === 'apply' ? 'applied' : decision;
 
     await this.paymentsRepository.insertEvent(tx, {
-      paymentId: existingPayment.id,
-      fromStatus: existingPayment.status,
+      paymentId: payment.id,
+      fromStatus: payment.status,
       toStatus: targetStatus,
       outcome,
       reason,

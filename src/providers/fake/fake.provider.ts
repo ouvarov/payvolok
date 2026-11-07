@@ -119,6 +119,7 @@ const refundStatusOf = (
 export class FakeProvider implements PaymentProvider {
   readonly code = 'fake';
   readonly capabilities = FAKE_CAPABILITIES;
+  readonly webhookHeaders = [SIGNATURE_HEADER];
 
   constructor(private readonly webhookSecret: Buffer) {}
 

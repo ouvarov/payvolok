@@ -74,6 +74,10 @@ describe('FakeProvider', () => {
     });
   });
 
+  it('declares its signature header as the only webhook header it needs', () => {
+    expect(fakeProvider.webhookHeaders).toEqual(['x-fake-signature']);
+  });
+
   it('rejects a payment amount that is not a safe integer', async () => {
     await expect(
       fakeProvider.createPayment(paymentInputWith(10.5)),

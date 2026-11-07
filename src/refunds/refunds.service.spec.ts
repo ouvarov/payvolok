@@ -373,13 +373,12 @@ describe('RefundsService', () => {
         },
       }).ingestRefund({ ...INPUT, webhookEventId: 'event-1' });
 
-      expect(applyStatusInTransaction).toHaveBeenCalledWith(
-        TX,
-        PAYMENT,
-        'refunded',
-        INPUT.reason,
-        'event-1',
-      );
+      expect(applyStatusInTransaction).toHaveBeenCalledWith(TX, {
+        payment: PAYMENT,
+        targetStatus: 'refunded',
+        reason: INPUT.reason,
+        webhookEventId: 'event-1',
+      });
     });
   });
 });

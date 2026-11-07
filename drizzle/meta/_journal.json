@@ -36,6 +36,20 @@
       "when": 1793820956668,
       "tag": "0004_slippery_guardsmen",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793883693119,
+      "tag": "0005_crazy_morg",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793885616249,
+      "tag": "0006_calm_roxanne_simpson",
+      "breakpoints": true
     }
   ]
 }

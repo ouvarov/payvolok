@@ -5,14 +5,11 @@ import { join, relative } from 'node:path';
 
 import { PGlite } from '@electric-sql/pglite';
 import { Logger, type INestApplication } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { Test } from '@nestjs/testing';
 import { asc, eq, sql } from 'drizzle-orm';
 import { drizzle as drizzlePglite } from 'drizzle-orm/pglite';
 import { migrate as migratePglite } from 'drizzle-orm/pglite/migrator';
 import postgres from 'postgres';
 
-import { AppModule } from '@/app.module';
 import { DRIZZLE, type Database } from '@/database/drizzle';
 import {
   paymentEvents,
@@ -22,6 +19,7 @@ import {
   type PaymentEvent,
 } from '@/database/schemas/payments.schema';
 import { decideTransition } from '@/payments/payment-state-machine';
+import { PaymentsRepository } from '@/payments/payments.repository';
 import {
   PaymentEventInvalidError,
   PaymentMismatchError,
@@ -45,33 +43,32 @@ import {
 } from '@/refunds/refunds.service';
 
 import { applyMigrations, MIGRATIONS_FOLDER } from './apply-migrations';
+import {
+  createE2eApp,
+  databaseCauseOf,
+  databasePoolMax,
+  databaseUrl,
+  describeOnRealPostgres,
+  insertInboxEvent,
+  trackSettled,
+  waitUntilBlockedBy,
+} from './helpers';
 
 const REPO_ROOT = join(__dirname, '..');
 const DRIZZLE_KIT_BIN = join(REPO_ROOT, 'node_modules/drizzle-kit/bin.cjs');
 const SCHEMA_GLOB = './src/database/schemas/*.schema.ts';
 const GENERATE_SCRATCH_FOLDER = '.tmp';
 
-const PGLITE_POOL_MAX = 1;
-const REAL_POSTGRES_POOL_MAX = 5;
 const POOL_WARMUP_SLEEP_SECONDS = 0.1;
 const PARALLEL_INGESTS = 20;
 const RACE_REPEATS = 10;
 const CONNECT_TIMEOUT_SECONDS = 10;
 const CLIENT_END_TIMEOUT_SECONDS = 5;
-const LOCK_WAIT_POLL_MS = 100;
-const LOCK_WAIT_DEADLINE_MS = 8000;
 const OVERLONG_SLEEP_SECONDS = 11;
 const SLEEP_GUARD_MS = 20000;
 const SLOW_TEST_TIMEOUT_MS = 60000;
 
 const OTHER_PROVIDER = 'other' as string as ProviderCode;
-
-const databaseUrl = process.env.E2E_DATABASE_URL as string;
-const isRealPostgres = process.env.E2E_REAL_POSTGRES === 'true';
-const describeOnRealPostgres = isRealPostgres ? describe : describe.skip;
-const databasePoolMax = isRealPostgres
-  ? REAL_POSTGRES_POOL_MAX
-  : PGLITE_POOL_MAX;
 
 const ingestInputWith = (
   overrides: Partial<IngestPaymentInput> = {},
@@ -112,17 +109,6 @@ const fullRefundInputOf = (
 
 const isPaymentEvent = (event: ProviderEvent): event is ProviderPaymentEvent =>
   event.type in PAYMENT_STATUS_BY_EVENT_TYPE;
-
-const databaseCauseOf = async (
-  query: () => PromiseLike<unknown>,
-): Promise<{ code?: string; message?: string }> => {
-  const error = (await Promise.resolve(query()).then(
-    () => ({}),
-    (caught: unknown) => caught,
-  )) as { cause?: { code?: string; message?: string } };
-
-  return error.cause ?? {};
-};
 
 const reportFromDrizzleKitGenerate = (): string => {
   mkdirSync(join(REPO_ROOT, GENERATE_SCRATCH_FOLDER), { recursive: true });
@@ -235,19 +221,7 @@ describe('Payments ingest', () => {
   };
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-      .overrideProvider(ConfigService)
-      .useValue({
-        get: (key: 'DATABASE_URL' | 'DATABASE_POOL_MAX') =>
-          ({
-            DATABASE_URL: databaseUrl,
-            DATABASE_POOL_MAX: databasePoolMax,
-          })[key],
-      })
-      .compile();
-
-    app = moduleRef.createNestApplication();
-    await app.init();
+    app = await createE2eApp();
     db = app.get<Database>(DRIZZLE);
     paymentsService = app.get(PaymentsService);
     refundsService = app.get(RefundsService);
@@ -285,12 +259,13 @@ describe('Payments ingest', () => {
             `select tablename as name from pg_tables where schemaname = 'public' order by tablename`,
           );
 
-          expect(firstRunRows.rows).toHaveLength(5);
+          expect(firstRunRows.rows).toHaveLength(7);
           expect(secondRunRows.rows).toEqual(firstRunRows.rows);
           expect(tables.rows.map(({ name }) => name)).toEqual([
             'payment_events',
             'payments',
             'refunds',
+            'webhook_events',
           ]);
         } finally {
           await emptyDatabase.close();
@@ -307,7 +282,7 @@ describe('Payments ingest', () => {
 
         await applyMigrations(databaseUrl);
 
-        expect(rowsBefore).toHaveLength(5);
+        expect(rowsBefore).toHaveLength(7);
         expect(await db.execute(migrationRowsSql)).toEqual(rowsBefore);
       },
       SLOW_TEST_TIMEOUT_MS,
@@ -397,7 +372,7 @@ describe('Payments ingest', () => {
       const staleInput = {
         ...input,
         status: 'pending',
-        webhookEventId: randomUUID(),
+        webhookEventId: await insertInboxEvent(db),
       } as const;
 
       const stale = await paymentsService.ingestPayment(staleInput);
@@ -555,8 +530,8 @@ describe('Payments ingest', () => {
       expect(await eventTimelineOf(paymentRows[0].id)).toHaveLength(1);
     });
 
-    it('accepts a random webhook_event_id with no inbox table', async () => {
-      const webhookEventId = randomUUID();
+    it('stores the webhook_event_id of a real inbox row', async () => {
+      const webhookEventId = await insertInboxEvent(db);
 
       const { payment } = await paymentsService.ingestPayment(
         renewalInputWith({ webhookEventId }),
@@ -926,7 +901,7 @@ describe('Payments ingest', () => {
     it('records a late event as stale once on a stored row', async () => {
       const input = ingestInputWith({
         status: 'pending',
-        webhookEventId: randomUUID(),
+        webhookEventId: await insertInboxEvent(db),
       });
       const row = await insertNullRefPayment({
         providerPaymentId: input.providerPaymentId,
@@ -1083,6 +1058,28 @@ describe('Payments ingest', () => {
       expect(cause.code).toBe('23503');
     });
 
+    it('raises 23505 when a payment event reuses an existing id', async () => {
+      const { payment } =
+        await paymentsService.ingestPayment(renewalInputWith());
+      const [birthEvent] = await eventTimelineOf(payment.id);
+
+      const cause = await databaseCauseOf(() =>
+        app.get(PaymentsRepository).withTransaction((tx) =>
+          app.get(PaymentsRepository).insertEvent(tx, {
+            id: birthEvent.id,
+            paymentId: payment.id,
+            fromStatus: 'succeeded',
+            toStatus: 'pending',
+            outcome: 'stale',
+            reason: 'reused id',
+          }),
+        ),
+      );
+
+      expect(cause.code).toBe('23505');
+      expect(await eventTimelineOf(payment.id)).toEqual([birthEvent]);
+    });
+
     it('stores the statement timeout on the role', async () => {
       const [{ role_config: roleConfig }] = await db.execute<{
         role_config: string;
@@ -1097,7 +1094,7 @@ describe('Payments ingest', () => {
   });
 
   describe('application wiring', () => {
-    it('boots with PaymentsModule and maps no new route', () => {
+    it('boots with PaymentsModule and adds no route of its own', () => {
       const httpInstance = app.getHttpAdapter().getInstance() as {
         router: { stack: { route?: { path: string } }[] };
       };
@@ -1107,7 +1104,11 @@ describe('Payments ingest', () => {
         .sort();
 
       expect(paymentsService).toBeInstanceOf(PaymentsService);
-      expect(routePaths).toEqual(['/health/live', '/health/ready']);
+      expect(routePaths).toEqual([
+        '/health/live',
+        '/health/ready',
+        '/webhooks/:provider',
+      ]);
     });
 
     it('registers the injected fake provider', () => {
@@ -1157,40 +1158,6 @@ describe('Payments ingest', () => {
       };
     };
 
-    const isBlockedBy = async (blockerPid: number): Promise<boolean> => {
-      const [{ waiting_count: waitingCount }] = await db.execute<{
-        waiting_count: number;
-      }>(sql`
-        select count(*)::int as waiting_count
-        from pg_stat_activity
-        where wait_event_type = 'Lock'
-          and ${blockerPid}::int = any(pg_blocking_pids(pid))
-      `);
-
-      return waitingCount > 0;
-    };
-
-    const waitUntilBlockedBy = async (blockerPid: number): Promise<boolean> => {
-      const deadline = Date.now() + LOCK_WAIT_DEADLINE_MS;
-
-      while (Date.now() < deadline) {
-        if (await isBlockedBy(blockerPid)) return true;
-        await new Promise((resolve) => setTimeout(resolve, LOCK_WAIT_POLL_MS));
-      }
-
-      return false;
-    };
-
-    const trackSettled = <T>(work: Promise<T>) => {
-      const tracker = { isSettled: false, work };
-      const markSettled = () => {
-        tracker.isSettled = true;
-      };
-      work.then(markSettled, markSettled);
-
-      return tracker;
-    };
-
     beforeAll(() => {
       holdingClient = newClient();
     });
@@ -1206,7 +1173,7 @@ describe('Payments ingest', () => {
       try {
         const ingest = trackSettled(paymentsService.ingestPayment(input));
 
-        expect(await waitUntilBlockedBy(held.pid)).toBe(true);
+        expect(await waitUntilBlockedBy(db, held.pid)).toBe(true);
         expect(ingest.isSettled).toBe(false);
 
         await held.commit();
@@ -1227,7 +1194,7 @@ describe('Payments ingest', () => {
       try {
         const ingest = trackSettled(paymentsService.ingestPayment(input));
 
-        expect(await waitUntilBlockedBy(held.pid)).toBe(true);
+        expect(await waitUntilBlockedBy(db, held.pid)).toBe(true);
         expect(ingest.isSettled).toBe(false);
 
         await held.rollback();
@@ -1304,7 +1271,7 @@ describe('Payments ingest', () => {
         `;
         const ingest = trackSettled(paymentsService.ingestPayment(input));
 
-        expect(await waitUntilBlockedBy(pid)).toBe(true);
+        expect(await waitUntilBlockedBy(db, pid)).toBe(true);
         expect(ingest.isSettled).toBe(false);
 
         await connection.unsafe('commit');

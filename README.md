@@ -8,7 +8,7 @@ Pet project at an early stage. Sandbox only, no real money: it only talks to pro
 
 ## Status
 
-What exists: the payment and refund ingest core, the fake provider and the health routes. Everything else is planned, including the payment API, the webhook route, the worker, reconciliation and real providers.
+What exists: the payment and refund ingest core, the fake provider, the health routes and the webhook route. `POST /webhooks/:provider` verifies the signature and stores the delivery in `webhook_events`; rows wait as `received` because nothing processes them yet. Everything else is planned, including the payment API, the worker, reconciliation and real providers.
 
 ## Stack
 
