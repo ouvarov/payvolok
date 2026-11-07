@@ -14,11 +14,7 @@ import {
   type RefundsService,
 } from '@/refunds/refunds.service';
 
-import {
-  MAX_ATTEMPTS,
-  RETRY_DELAYS_SECONDS,
-  WebhookEventProcessor,
-} from './webhook-event.processor';
+import { MAX_ATTEMPTS, WebhookEventProcessor } from './webhook-event.processor';
 import type {
   ClaimedWebhookEvent,
   StoredDelivery,
@@ -249,12 +245,13 @@ describe('WebhookEventProcessor', () => {
       expect(ingestRefund).not.toHaveBeenCalled();
     });
 
-    it.each(
-      RETRY_DELAYS_SECONDS.map((delaySeconds, index) => [
-        index + 1,
-        delaySeconds,
-      ]),
-    )(
+    it.each([
+      [1, 30],
+      [2, 120],
+      [3, 600],
+      [4, 3600],
+      [5, 21600],
+    ])(
       'retries attempt %i after %i s while the payment is not found',
       async (attempts, retryDelaySeconds) => {
         ingestPayment.mockRejectedValue(notFoundError());

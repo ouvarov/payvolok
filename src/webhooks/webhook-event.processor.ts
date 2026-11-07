@@ -268,4 +268,4 @@ export class WebhookEventProcessor {
   }
 }
 
-export { MAX_ATTEMPTS, RETRY_DELAYS_SECONDS };
+export { MAX_ATTEMPTS };
