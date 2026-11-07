@@ -24,9 +24,14 @@ const databasePoolMax = isRealPostgres
   ? REAL_POSTGRES_POOL_MAX
   : PGLITE_POOL_MAX;
 
+// The worker is off unless a test asks for it: an enabled worker in one spec
+// file would claim rows another file on the same database still asserts on.
 type E2eAppOptions = {
   appDatabaseUrl?: string;
   appDatabasePoolMax?: number;
+  isWorkerEnabled?: boolean;
+  pollIntervalMs?: number;
+  fakeWebhookSecret?: string;
 };
 
 type DatabaseCause = {
@@ -38,11 +43,21 @@ type DatabaseCause = {
 const createE2eApp = async ({
   appDatabaseUrl = databaseUrl,
   appDatabasePoolMax = databasePoolMax,
+  isWorkerEnabled = false,
+  pollIntervalMs,
+  fakeWebhookSecret,
 }: E2eAppOptions = {}): Promise<INestApplication> => {
   const env = validateEnv({
     ...process.env,
     DATABASE_URL: appDatabaseUrl,
     DATABASE_POOL_MAX: appDatabasePoolMax,
+    WEBHOOK_WORKER_ENABLED: String(isWorkerEnabled),
+    ...(pollIntervalMs === undefined
+      ? {}
+      : { WEBHOOK_POLL_INTERVAL_MS: pollIntervalMs }),
+    ...(fakeWebhookSecret === undefined
+      ? {}
+      : { FAKE_WEBHOOK_SECRET: fakeWebhookSecret }),
   });
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(ConfigService)
