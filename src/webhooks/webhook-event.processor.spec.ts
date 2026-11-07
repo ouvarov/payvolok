@@ -186,6 +186,41 @@ describe('WebhookEventProcessor', () => {
     });
   });
 
+  describe('payment conflicts', () => {
+    it('keeps a payment conflict as the note of a processed row', async () => {
+      ingestPayment.mockResolvedValue({
+        payment: { id: 'payment-1', status: 'expired' },
+        outcome: 'conflict',
+      });
+
+      await expect(
+        processEvents([
+          paymentEventWith({ type: 'payment.succeeded', failureReason: null }),
+        ]),
+      ).resolves.toEqual({
+        status: 'processed',
+        lastError: 'Payment payment-1 conflict: expired -> succeeded',
+        paymentIds: ['payment-1'],
+      });
+    });
+
+    it.each(['applied', 'duplicate', 'stale', 'created'])(
+      'leaves no note for the outcome %s',
+      async (outcome) => {
+        ingestPayment.mockResolvedValue({
+          payment: { id: 'payment-1', status: 'succeeded' },
+          outcome,
+        });
+
+        await expect(processEvents([paymentEventWith()])).resolves.toEqual({
+          status: 'processed',
+          lastError: null,
+          paymentIds: ['payment-1'],
+        });
+      },
+    );
+  });
+
   describe('refund events', () => {
     it('takes the refund identity from the registry and the status from the type', async () => {
       await processEvents([refundEventWith()]);

@@ -166,11 +166,12 @@ export class WebhookEventProcessor {
     providerCode: ProviderCode,
     event: ProviderPaymentEvent,
   ): Promise<EventResult> {
-    const { payment } = await this.paymentsService.ingestPayment({
+    const status = PAYMENT_STATUS_BY_EVENT_TYPE[event.type];
+    const { payment, outcome } = await this.paymentsService.ingestPayment({
       reference: event.reference,
       provider: providerCode,
       providerPaymentId: event.providerPaymentId,
-      status: PAYMENT_STATUS_BY_EVENT_TYPE[event.type],
+      status,
       amountMinor: event.amountMinor,
       currency: event.currency,
       purpose: event.purpose,
@@ -181,7 +182,14 @@ export class WebhookEventProcessor {
       webhookEventId,
     });
 
-    return { kind: 'handled', paymentId: payment.id, note: null };
+    return {
+      kind: 'handled',
+      paymentId: payment.id,
+      note:
+        outcome === 'conflict'
+          ? `Payment ${payment.id} conflict: ${payment.status} -> ${status}`
+          : null,
+    };
   }
 
   private async applyRefund(

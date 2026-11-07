@@ -1581,6 +1581,36 @@ describe('Webhooks route', () => {
         expect((await paymentOf(payment.id)).providerPaymentId).toBeNull();
       });
 
+      it('notes a payment conflict on a processed row and keeps the stored status', async () => {
+        const { payment, providerPaymentId } = await rowFirstPayment(1004);
+        const expiringWebhooks = fakeProvider.buildPaymentWebhooks(
+          providerPaymentId,
+          new Date(),
+        );
+        const succeededWebhook = signed([
+          paymentWireEvent({
+            reference: payment.id,
+            providerPaymentId,
+            amountMinor: 1004,
+          }),
+        ]);
+
+        await postAndDrain([...expiringWebhooks, succeededWebhook]);
+
+        expect(await inboxRowFor(succeededWebhook)).toMatchObject({
+          status: 'processed',
+          paymentIds: [payment.id],
+          lastError: `Payment ${payment.id} conflict: expired -> succeeded`,
+        });
+        for (const webhook of expiringWebhooks) {
+          expect(await inboxRowFor(webhook)).toMatchObject({
+            status: 'processed',
+            lastError: null,
+          });
+        }
+        expect((await paymentOf(payment.id)).status).toBe('expired');
+      });
+
       it('keeps a refund conflict on a processed row and the money counted', async () => {
         const { payment, providerPaymentId } = await succeededRowFirstPayment();
         const refundReference = randomUUID();
