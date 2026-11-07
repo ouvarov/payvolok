@@ -9,6 +9,8 @@ describe('validateEnv', () => {
       PORT: 3000,
       DATABASE_URL: VALID_DATABASE_URL,
       DATABASE_POOL_MAX: 10,
+      WEBHOOK_WORKER_ENABLED: true,
+      WEBHOOK_POLL_INTERVAL_MS: 5000,
     });
   });
 
@@ -101,6 +103,54 @@ describe('validateEnv', () => {
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).toContain('FAKE_WEBHOOK_SECRET');
       expect((error as Error).message).not.toContain(shortSecret);
+    });
+  });
+
+  describe('WEBHOOK_POLL_INTERVAL_MS', () => {
+    it('accepts 100 and 3600000', () => {
+      for (const interval of ['100', '3600000']) {
+        expect(
+          validateEnv({
+            DATABASE_URL: VALID_DATABASE_URL,
+            WEBHOOK_POLL_INTERVAL_MS: interval,
+          }).WEBHOOK_POLL_INTERVAL_MS,
+        ).toBe(Number(interval));
+      }
+    });
+
+    it.each(['', '99', '100000000', '1.5', 'often'])(
+      'rejects %j, naming the key',
+      (interval) => {
+        expect(() =>
+          validateEnv({
+            DATABASE_URL: VALID_DATABASE_URL,
+            WEBHOOK_POLL_INTERVAL_MS: interval,
+          }),
+        ).toThrow(/WEBHOOK_POLL_INTERVAL_MS/);
+      },
+    );
+  });
+
+  describe('WEBHOOK_WORKER_ENABLED', () => {
+    it.each([
+      ['true', true],
+      ['false', false],
+    ])('reads %s as %s', (value, isEnabled) => {
+      expect(
+        validateEnv({
+          DATABASE_URL: VALID_DATABASE_URL,
+          WEBHOOK_WORKER_ENABLED: value,
+        }).WEBHOOK_WORKER_ENABLED,
+      ).toBe(isEnabled);
+    });
+
+    it.each(['', 'maybe', 'ture'])('rejects %j, naming the key', (value) => {
+      expect(() =>
+        validateEnv({
+          DATABASE_URL: VALID_DATABASE_URL,
+          WEBHOOK_WORKER_ENABLED: value,
+        }),
+      ).toThrow(/WEBHOOK_WORKER_ENABLED/);
     });
   });
 

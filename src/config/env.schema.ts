@@ -8,6 +8,13 @@ const envSchema = z.object({
   DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/, hostname: /.+/ }),
   DATABASE_POOL_MAX: z.coerce.number().int().positive().default(10),
   FAKE_WEBHOOK_SECRET: z.string().min(32).optional(),
+  WEBHOOK_WORKER_ENABLED: z.stringbool().default(true),
+  WEBHOOK_POLL_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .min(100)
+    .max(3600000)
+    .default(5000),
 });
 
 type Env = z.infer<typeof envSchema>;
