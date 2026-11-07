@@ -106,7 +106,9 @@ export class WebhookEventProcessor {
     try {
       events = provider.parseWebhook(delivery);
     } catch (error) {
-      return this.finishOf(claimed, [failedResultOf(error)]);
+      return this.finishOf(claimed, [
+        { kind: 'retryable', error: lastErrorOf(error) },
+      ]);
     }
 
     const results: EventResult[] = [];
