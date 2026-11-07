@@ -1928,6 +1928,7 @@ describe('Webhooks route', () => {
             pollIntervalMs: LONG_POLL_INTERVAL_MS,
           });
           try {
+            await workerApp.listen(0);
             const workerDb = workerApp.get<Database>(DRIZZLE);
             await warmPool(workerDb);
             const { payment, providerPaymentId } = await rowFirstPayment(1000);
