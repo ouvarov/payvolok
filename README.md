@@ -82,7 +82,7 @@ Git hooks (simple-git-hooks): pre-commit runs lint-staged, pre-push runs `check`
 
 Each API process runs a worker that takes `received` rows from `webhook_events` one at a time and applies their events to payments and refunds. A new delivery wakes it at once; otherwise it polls every `WEBHOOK_POLL_INTERVAL_MS` (default 5000, 100 to 3600000). Set `WEBHOOK_WORKER_ENABLED=false` (default `true`) for a process that should only serve the API.
 
-Several processes can run workers on one database: a claim locks one row with `SKIP LOCKED` and leases it for 60 seconds, and a worker whose lease ran out cannot overwrite the row. A crash leaves the row due again after the lease; running it again is safe.
+Several processes can run workers on one database: a claim locks one row with `SKIP LOCKED` and leases it for 5 minutes, and a worker whose lease ran out cannot overwrite the row. A crash leaves the row due again after the lease; running it again is safe.
 
 A row ends `processed` when at least one payment or refund event was applied, `ignored` when it held only unknown or subscription events, and `failed` when an event was rejected (an amount mismatch, an invalid value) or six attempts did not succeed. Retryable errors, such as an event that arrives before our payment row, wait 30 s, 2 min, 10 min, 1 h and 6 h between attempts. `last_error` keeps our own error message, or only the error class and Postgres code for anything else.
 

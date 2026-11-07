@@ -82,6 +82,7 @@ const WORKER_WAIT_POLL_MS = 100;
 const WORKER_WAIT_DEADLINE_MS = 15000;
 const LOCK_WAIT_DEADLINE_MS = 3000;
 const FIRST_RETRY_DELAY_SECONDS = 30;
+const LEASE_SECONDS = 300;
 const RETRY_DELAY_TOLERANCE_SECONDS = 5;
 const DRAINED_ROWS = 50;
 const CLIENT_END_TIMEOUT_SECONDS = 5;
@@ -1395,6 +1396,26 @@ describe('Webhooks route', () => {
         expect((await paymentOf(payment.id)).providerPaymentId).toBe(
           providerPaymentId,
         );
+      });
+    });
+
+    describe('lease', () => {
+      it('leases a claimed row for five minutes', async () => {
+        const [id] = await insertDueRows(1);
+
+        const claim = await app.get(WebhooksRepository).claimNext();
+        const [{ leaseSeconds }] = await db
+          .select({
+            leaseSeconds: sql<number>`extract(epoch from ${webhookEvents.nextAttemptAt} - clock_timestamp())::float8`,
+          })
+          .from(webhookEvents)
+          .where(eq(webhookEvents.id, id));
+
+        expect(claim).toMatchObject({ id, attempts: 1 });
+        expect(leaseSeconds).toBeGreaterThan(
+          LEASE_SECONDS - RETRY_DELAY_TOLERANCE_SECONDS,
+        );
+        expect(leaseSeconds).toBeLessThanOrEqual(LEASE_SECONDS);
       });
     });
 

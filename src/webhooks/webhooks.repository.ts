@@ -10,7 +10,8 @@ import {
 } from '@/database/schemas/webhook-events.schema';
 import type { ProviderCode } from '@/providers/provider.constants';
 
-const LEASE_SECONDS = 60;
+// The 10 s statement_timeout bounds each statement, not a delivery that runs one transaction per event.
+const LEASE_SECONDS = 300;
 
 type ReceivedDelivery = Pick<
   NewWebhookEvent,
