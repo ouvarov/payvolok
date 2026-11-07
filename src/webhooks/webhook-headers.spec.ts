@@ -1,8 +1,4 @@
-import {
-  storableDedupKey,
-  storableHeaders,
-  withoutControlCharacters,
-} from './webhook-headers';
+import { storableHeaders } from './webhook-headers';
 
 const PROVIDER_HEADERS = ['x-provider-signature'];
 
@@ -53,42 +49,5 @@ describe('storableHeaders', () => {
         PROVIDER_HEADERS,
       ),
     ).toEqual({ 'x-provider-signature': ['one', 'two'] });
-  });
-});
-
-describe('storableDedupKey', () => {
-  it.each(['evt_1', 'a'.repeat(255), '!~', 'evt:invalid:1'])(
-    'keeps %s',
-    (dedupKey) => {
-      expect(storableDedupKey(dedupKey)).toBe(dedupKey);
-    },
-  );
-
-  it.each([
-    ['a NUL byte', 'evt\u00001'],
-    ['a space', 'evt 1'],
-    ['a non-ascii character', 'evté1'],
-    ['256 characters', 'a'.repeat(256)],
-    ['nothing', ''],
-    ['the invalid-signature prefix', `invalid:${'a'.repeat(64)}`],
-  ])('hashes a key with %s', (_case, dedupKey) => {
-    expect(storableDedupKey(dedupKey)).toMatch(/^sha256:[0-9a-f]{64}$/);
-  });
-
-  it('hashes one key to one value and two keys to two values', () => {
-    const longKey = 'a'.repeat(256);
-
-    expect(storableDedupKey(longKey)).toBe(storableDedupKey(longKey));
-    expect(storableDedupKey(longKey)).not.toBe(
-      storableDedupKey('b'.repeat(256)),
-    );
-  });
-});
-
-describe('withoutControlCharacters', () => {
-  it('removes control characters and keeps other text', () => {
-    expect(withoutControlCharacters('card\u0000 de\u0007clined\n é')).toBe(
-      'card declined é',
-    );
   });
 });

@@ -7,8 +7,9 @@ import {
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { z } from 'zod';
 
-import { postgresCodeOf } from '@/database/postgres-errors';
+import { describeError } from '@/database/postgres-errors';
 import type {
   PaymentProvider,
   WebhookRequest,
@@ -23,33 +24,22 @@ import { ProviderRegistry } from '@/providers/provider.registry';
 import {
   INVALID_DEDUP_KEY_PREFIX,
   storableDedupKey,
-  storableHeaders,
-  withoutControlCharacters,
-} from './webhook-headers';
+} from './webhook-dedup-key';
+import { storableHeaders } from './webhook-headers';
+import { MAX_FAILURE_REASON_LENGTH, storableText } from './webhook-text';
+import { WebhookWorker } from './webhook.worker';
 import { WebhooksRepository } from './webhooks.repository';
 
 const MAX_INVALID_ROWS_PER_WINDOW = 20;
+const webhookEventIdSchema = z.uuid();
 const INVALID_ROWS_WINDOW_MS = 60 * 60 * 1000;
-const MAX_FAILURE_REASON_LENGTH = 200;
 
 type InvalidAttemptWindow = { startedAtEpochMs: number; attempts: number };
-
-// Only the class and the pg code: a DrizzleQueryError message carries the query params.
-const describeError = (error: unknown): string => {
-  const errorClass =
-    error instanceof Error ? error.constructor.name : 'unknown';
-  const code = postgresCodeOf(error);
-
-  return code ? `${errorClass} ${code}` : errorClass;
-};
 
 const firstFailureReasonOf = (events: ProviderEvents): string | null => {
   for (const event of events) {
     if ('failureReason' in event && event.failureReason !== null) {
-      return withoutControlCharacters(event.failureReason).slice(
-        0,
-        MAX_FAILURE_REASON_LENGTH,
-      );
+      return storableText(event.failureReason, MAX_FAILURE_REASON_LENGTH);
     }
   }
 
@@ -67,7 +57,17 @@ export class WebhooksService {
   constructor(
     private readonly providerRegistry: ProviderRegistry,
     private readonly webhooksRepository: WebhooksRepository,
+    private readonly webhookWorker: WebhookWorker,
   ) {}
+
+  async replay(webhookEventId: string): Promise<string | null> {
+    if (!webhookEventIdSchema.safeParse(webhookEventId).success) return null;
+
+    const replayId = await this.webhooksRepository.insertReplay(webhookEventId);
+    if (replayId) this.webhookWorker.kick();
+
+    return replayId;
+  }
 
   async receive(
     providerCode: string,
@@ -156,9 +156,10 @@ export class WebhooksService {
     request: WebhookRequest,
   ): Promise<void> {
     const events = this.parseOrNull(provider, request);
+    let isInserted: boolean;
 
     try {
-      await this.webhooksRepository.insertReceivedIfAbsent({
+      isInserted = await this.webhooksRepository.insertReceivedIfAbsent({
         provider: provider.code,
         dedupKey: events
           ? storableDedupKey(events[0].dedupKey)
@@ -174,6 +175,8 @@ export class WebhooksService {
       );
       throw new ServiceUnavailableException();
     }
+
+    if (isInserted) this.webhookWorker.kick();
   }
 
   private parseOrNull(

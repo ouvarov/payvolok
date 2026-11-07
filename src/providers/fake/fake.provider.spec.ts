@@ -1,4 +1,5 @@
 import { ProviderError, type WebhookRequest } from '../payment-provider.port';
+import type { ProviderPaymentEvent } from '../provider-events';
 
 import { FakeProvider } from './fake.provider';
 
@@ -18,6 +19,7 @@ const paymentInputWith = (amountMinor: number, currency = 'USD') => ({
 
 const wirePaymentEvent = {
   type: 'payment.succeeded',
+  purpose: 'one_off',
   reference: 'payment-reference',
   providerPaymentId: 'provider-1',
   providerSubscriptionId: null,
@@ -189,6 +191,13 @@ describe('FakeProvider', () => {
         );
 
         expect(eventTypesOf(webhooks)).toEqual(eventTypes);
+        expect(
+          webhooks.flatMap((webhook) =>
+            fakeProvider
+              .parseWebhook(webhook)
+              .map((event) => ('purpose' in event ? event.purpose : null)),
+          ),
+        ).toEqual(eventTypes.map(() => 'one_off'));
         await expect(
           fakeProvider.getStatus({ resource: 'payment', providerPaymentId }),
         ).resolves.toEqual({
@@ -272,6 +281,49 @@ describe('FakeProvider', () => {
         type: 'unknown',
         rawType: 'refund.succeeded',
       });
+    });
+
+    it('turns a payment item without purpose into unknown', () => {
+      const { purpose: _purpose, ...eventWithoutPurpose } = wirePaymentEvent;
+
+      const [event] = fakeProvider.parseWebhook(
+        fakeProvider.buildWebhook(wireBodyWith([eventWithoutPurpose])),
+      );
+
+      expect(event).toMatchObject({
+        type: 'unknown',
+        rawType: 'payment.succeeded',
+      });
+    });
+
+    it.each(['subscription_initial', 'subscription_renewal'])(
+      'keeps the purpose %s a signed payment item states',
+      (purpose) => {
+        const [event] = fakeProvider.parseWebhook(
+          fakeProvider.buildWebhook(
+            wireBodyWith([{ ...wirePaymentEvent, purpose }]),
+          ),
+        );
+
+        expect(event).toMatchObject({ type: 'payment.succeeded', purpose });
+      },
+    );
+
+    it('needs a purpose on a payment event at compile time', () => {
+      // @ts-expect-error purpose is required: no adapter may leave it to inference
+      const eventWithoutPurpose: ProviderPaymentEvent = {
+        type: 'payment.succeeded',
+        dedupKey: 'event-1',
+        occurredAt: null,
+        reference: null,
+        providerPaymentId: 'provider-1',
+        providerSubscriptionId: 'subscription-1',
+        amountMinor: 1000,
+        currency: 'USD',
+        failureReason: null,
+      };
+
+      expect(eventWithoutPurpose).not.toHaveProperty('purpose');
     });
 
     it('turns an item with no type into unknown with a null rawType', () => {

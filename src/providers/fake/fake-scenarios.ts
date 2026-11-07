@@ -147,6 +147,7 @@ const fakeWirePaymentEventSchema = z.object({
     'payment.failed',
     'payment.expired',
   ]),
+  purpose: z.enum(['one_off', 'subscription_initial', 'subscription_renewal']),
   reference: z.string().nullable(),
   providerPaymentId: z.string().min(1),
   providerSubscriptionId: z.string().nullable(),
