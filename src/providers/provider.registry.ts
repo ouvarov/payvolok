@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { FakeProvider } from './fake/fake.provider';
-import type { PaymentProvider } from './payment-provider.port';
+import type { PaymentProvider, RefundIdentity } from './payment-provider.port';
 import { isProviderCode, type ProviderCode } from './provider.constants';
 
 @Injectable()
@@ -18,5 +18,9 @@ export class ProviderRegistry {
 
   find(code: string): PaymentProvider | null {
     return isProviderCode(code) ? this.providers[code] : null;
+  }
+
+  refundIdentityOf(code: ProviderCode): RefundIdentity {
+    return this.get(code).capabilities.refundIdentity;
   }
 }

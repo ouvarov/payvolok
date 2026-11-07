@@ -8,9 +8,7 @@ type ProviderEventBase = {
 
 // Only a provider's explicit renewal marker may say subscription_renewal: that value births a row.
 type ProviderPaymentPurpose =
-  | 'one_off'
-  | 'subscription_initial'
-  | 'subscription_renewal';
+  'one_off' | 'subscription_initial' | 'subscription_renewal';
 
 type ProviderPaymentEvent = ProviderEventBase & {
   type:
