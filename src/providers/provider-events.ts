@@ -6,6 +6,12 @@ type ProviderEventBase = {
   occurredAt: string | null;
 };
 
+// Only a provider's explicit renewal marker may say subscription_renewal: that value births a row.
+type ProviderPaymentPurpose =
+  | 'one_off'
+  | 'subscription_initial'
+  | 'subscription_renewal';
+
 type ProviderPaymentEvent = ProviderEventBase & {
   type:
     | 'payment.pending'
@@ -13,6 +19,7 @@ type ProviderPaymentEvent = ProviderEventBase & {
     | 'payment.succeeded'
     | 'payment.failed'
     | 'payment.expired';
+  purpose: ProviderPaymentPurpose;
   reference: string | null;
   providerPaymentId: string;
   providerSubscriptionId: string | null;
@@ -66,6 +73,7 @@ export type {
   ProviderEvent,
   ProviderEvents,
   ProviderPaymentEvent,
+  ProviderPaymentPurpose,
   ProviderRefundEvent,
   ProviderSubscriptionEvent,
   ProviderUnknownEvent,

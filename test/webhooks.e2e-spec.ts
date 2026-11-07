@@ -53,6 +53,7 @@ const LEAK_MARKER = 'LEAKMARKER';
 
 const failedPaymentEvent = (failureReason: string | null) => ({
   type: 'payment.failed',
+  purpose: 'one_off',
   reference: null,
   providerPaymentId: randomUUID(),
   providerSubscriptionId: null,
