@@ -1094,7 +1094,7 @@ describe('Payments ingest', () => {
   });
 
   describe('application wiring', () => {
-    it('boots with PaymentsModule and adds no route of its own', () => {
+    it('boots with PaymentsModule and adds only the payment read route', () => {
       const httpInstance = app.getHttpAdapter().getInstance() as {
         router: { stack: { route?: { path: string } }[] };
       };
@@ -1105,6 +1105,7 @@ describe('Payments ingest', () => {
 
       expect(paymentsService).toBeInstanceOf(PaymentsService);
       expect(routePaths).toEqual([
+        '/api/v1/payments/:id',
         '/health/live',
         '/health/ready',
         '/webhooks/:provider',

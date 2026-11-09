@@ -697,7 +697,7 @@ describe('Webhooks route', () => {
       }
     });
 
-    it('maps exactly the health and webhook routes', () => {
+    it('maps exactly the public routes', () => {
       const httpInstance = app.getHttpAdapter().getInstance() as {
         router: { stack: { route?: { path: string } }[] };
       };
@@ -706,7 +706,12 @@ describe('Webhooks route', () => {
         httpInstance.router.stack
           .flatMap(({ route }) => (route ? [route.path] : []))
           .sort(),
-      ).toEqual(['/health/live', '/health/ready', '/webhooks/:provider']);
+      ).toEqual([
+        '/api/v1/payments/:id',
+        '/health/live',
+        '/health/ready',
+        '/webhooks/:provider',
+      ]);
     });
 
     it('exports only the registry from ProvidersModule', () => {
