@@ -8,7 +8,7 @@ Pet project at an early stage. Sandbox only, no real money: it only talks to pro
 
 ## Status
 
-What exists: the payment and refund ingest core, the fake provider, the health routes and the webhook route. `POST /webhooks/:provider` verifies the signature and stores the delivery in `webhook_events`; rows wait as `received` because nothing processes them yet. Everything else is planned, including the payment API, the worker, reconciliation and real providers.
+What exists: the payment and refund ingest core, the fake provider, the health routes, the webhook route and the webhook worker. `POST /webhooks/:provider` verifies the signature and stores the delivery in `webhook_events`; the worker then applies it to payments and refunds. Everything else is planned, including the payment API, reconciliation and real providers.
 
 ## Stack
 
@@ -77,6 +77,14 @@ Git hooks (simple-git-hooks): pre-commit runs lint-staged, pre-push runs `check`
 
 - `GET /health/live` returns `200 {"status":"ok"}` while the process is up. It never touches the database.
 - `GET /health/ready` returns `200 {"status":"ok"}` when `select 1` succeeds. If the database is unreachable or does not answer within two seconds it returns `503 {"status":"unavailable"}`, with no connection details.
+
+## Webhook worker
+
+Each API process runs a worker that takes `received` rows from `webhook_events` one at a time and applies their events to payments and refunds. A new delivery wakes it at once; otherwise it polls every `WEBHOOK_POLL_INTERVAL_MS` (default 5000, 100 to 3600000). Set `WEBHOOK_WORKER_ENABLED=false` (default `true`) for a process that should only serve the API.
+
+Several processes can run workers on one database: a claim locks one row with `SKIP LOCKED` and leases it for 5 minutes, and a worker whose lease ran out cannot overwrite the row. A crash leaves the row due again after the lease; running it again is safe.
+
+A row ends `processed` when at least one payment or refund event was applied, `ignored` when it held only unknown or subscription events, and `failed` when an event was rejected (an amount mismatch, an invalid value) or six attempts did not succeed. Retryable errors, such as an event that arrives before our payment row, wait 30 s, 2 min, 10 min, 1 h and 6 h between attempts. `last_error` keeps our own error message, or only the error class and Postgres code for anything else.
 
 ## Fake provider
 

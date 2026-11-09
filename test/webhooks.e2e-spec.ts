@@ -12,31 +12,57 @@ import { gzipSync } from 'node:zlib';
 
 import { PGlite } from '@electric-sql/pglite';
 import { Logger, type INestApplication } from '@nestjs/common';
-import { DrizzleQueryError, eq, inArray, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  DrizzleQueryError,
+  eq,
+  inArray,
+  isNull,
+  sql,
+} from 'drizzle-orm';
 import { drizzle as drizzlePglite } from 'drizzle-orm/pglite';
 import { migrate as migratePglite } from 'drizzle-orm/pglite/migrator';
+import postgres from 'postgres';
 import request from 'supertest';
 
 import { WEBHOOK_BODY_LIMIT_BYTES } from '@/app.setup';
 import { DRIZZLE, type Database } from '@/database/drizzle';
-import { paymentEvents, payments } from '@/database/schemas/payments.schema';
+import {
+  paymentEvents,
+  payments,
+  type NewPayment,
+  type Payment,
+  type PaymentEvent,
+} from '@/database/schemas/payments.schema';
+import { refunds } from '@/database/schemas/refunds.schema';
 import {
   webhookEvents,
   type NewWebhookEvent,
   type WebhookEvent,
 } from '@/database/schemas/webhook-events.schema';
 import { FakeProvider } from '@/providers/fake/fake.provider';
-import { ProviderError } from '@/providers/payment-provider.port';
+import {
+  ProviderError,
+  type WebhookRequest,
+} from '@/providers/payment-provider.port';
 import { dedupKeyFromBody } from '@/providers/provider-events';
 import { ProviderRegistry } from '@/providers/provider.registry';
 import { ProvidersModule } from '@/providers/providers.module';
+import {
+  MAX_ATTEMPTS,
+  WebhookEventProcessor,
+} from '@/webhooks/webhook-event.processor';
+import { WebhookWorker } from '@/webhooks/webhook.worker';
 import { WebhooksRepository } from '@/webhooks/webhooks.repository';
+import { WebhooksService } from '@/webhooks/webhooks.service';
 
 import { MIGRATIONS_FOLDER } from './apply-migrations';
 import {
   createE2eApp,
   databaseCauseOf,
   databasePoolMax,
+  databaseUrl,
   describeOnRealPostgres,
   insertInboxEvent,
   serverOf,
@@ -50,9 +76,54 @@ const PARALLEL_DELIVERIES = 20;
 const POOL_WARMUP_SLEEP_SECONDS = 0.1;
 const SLOW_TEST_TIMEOUT_MS = 60000;
 const LEAK_MARKER = 'LEAKMARKER';
+const LONG_POLL_INTERVAL_MS = 60 * 60 * 1000;
+const SHORT_POLL_INTERVAL_MS = 200;
+const WORKER_WAIT_POLL_MS = 100;
+const WORKER_WAIT_DEADLINE_MS = 15000;
+const LOCK_WAIT_DEADLINE_MS = 3000;
+const FIRST_RETRY_DELAY_SECONDS = 30;
+const LEASE_SECONDS = 300;
+const RETRY_DELAY_TOLERANCE_SECONDS = 5;
+const DRAINED_ROWS = 50;
+const CLIENT_END_TIMEOUT_SECONDS = 5;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+const paymentWireEvent = (overrides: Record<string, unknown> = {}) => ({
+  type: 'payment.succeeded',
+  purpose: 'one_off',
+  reference: null,
+  providerPaymentId: randomUUID(),
+  providerSubscriptionId: null,
+  amountMinor: 1000,
+  currency: 'USD',
+  failureReason: null,
+  ...overrides,
+});
+
+const refundWireEvent = (overrides: Record<string, unknown> = {}) => ({
+  type: 'refund.succeeded',
+  providerPaymentId: randomUUID(),
+  reference: null,
+  refundReference: null,
+  providerRefundId: randomUUID(),
+  amountMinor: 400,
+  currency: 'USD',
+  ...overrides,
+});
+
+const subscriptionWireEvent = () => ({
+  type: 'subscription.canceled',
+  reference: null,
+  providerSubscriptionId: randomUUID(),
+  providerStatus: 'canceled',
+  currentPeriodEnd: null,
+});
 
 const failedPaymentEvent = (failureReason: string | null) => ({
   type: 'payment.failed',
+  purpose: 'one_off',
   reference: null,
   providerPaymentId: randomUUID(),
   providerSubscriptionId: null,
@@ -928,6 +999,1095 @@ describe('Webhooks route', () => {
         ['created_at', 'clock_timestamp()'],
         ['updated_at', 'clock_timestamp()'],
       ]);
+    });
+  });
+
+  describe('worker', () => {
+    const PAYMENT_INPUT = {
+      currency: 'USD',
+      description: 'e2e',
+      returnUrl: 'https://example.test/return',
+      webhookUrl: 'https://example.test/webhook',
+    };
+
+    const drain = (target: INestApplication = app): Promise<number> =>
+      target.get(WebhookWorker).drain();
+
+    const post = (webhook: WebhookRequest, target: INestApplication = app) =>
+      deliverTo(
+        target,
+        webhook.rawBody,
+        webhook.headers[SIGNATURE_HEADER] as string,
+      ).expect(200);
+
+    const postAndDrain = async (webhooks: WebhookRequest[]): Promise<void> => {
+      for (const webhook of webhooks) {
+        await post(webhook);
+        await drain();
+      }
+    };
+
+    const signed = (events: unknown[]): WebhookRequest =>
+      fakeProvider.buildWebhook({
+        eventId: randomUUID(),
+        occurredAt: null,
+        events,
+      });
+
+    const inboxRowById = async (
+      id: string,
+      database: Database = db,
+    ): Promise<WebhookEvent> => {
+      const [row] = await database
+        .select()
+        .from(webhookEvents)
+        .where(eq(webhookEvents.id, id));
+
+      return row;
+    };
+
+    const originalRowsFor = (
+      webhook: WebhookRequest,
+      database: Database = db,
+    ): Promise<WebhookEvent[]> =>
+      database
+        .select()
+        .from(webhookEvents)
+        .where(
+          and(
+            eq(
+              webhookEvents.dedupKey,
+              fakeProvider.parseWebhook(webhook)[0].dedupKey,
+            ),
+            isNull(webhookEvents.replayOf),
+          ),
+        );
+
+    const inboxRowFor = async (
+      webhook: WebhookRequest,
+      database: Database = db,
+    ): Promise<WebhookEvent> => {
+      const [row] = await originalRowsFor(webhook, database);
+
+      return row;
+    };
+
+    const waitForStatus = async (
+      database: Database,
+      id: string,
+      status: WebhookEvent['status'],
+    ): Promise<WebhookEvent> => {
+      const deadline = Date.now() + WORKER_WAIT_DEADLINE_MS;
+      let row = await inboxRowById(id, database);
+      while (row.status !== status && Date.now() < deadline) {
+        await sleep(WORKER_WAIT_POLL_MS);
+        row = await inboxRowById(id, database);
+      }
+
+      return row;
+    };
+
+    const forceDue = (id: string) =>
+      db
+        .update(webhookEvents)
+        .set({ nextAttemptAt: sql`clock_timestamp() - interval '1 second'` })
+        .where(
+          and(eq(webhookEvents.id, id), eq(webhookEvents.status, 'received')),
+        );
+
+    const insertDueRows = async (count: number): Promise<string[]> => {
+      const rows = await db
+        .insert(webhookEvents)
+        .values(
+          Array.from({ length: count }, (_value, index) => ({
+            provider: 'fake' as const,
+            dedupKey: randomUUID(),
+            status: 'received' as const,
+            signatureValid: true,
+            rawBody: Buffer.from('{}'),
+            nextAttemptAt: sql`clock_timestamp() - ${count - index}::integer * interval '1 second'`,
+          })),
+        )
+        .returning({ id: webhookEvents.id });
+
+      return rows.map(({ id }) => id);
+    };
+
+    const insertPayment = async (
+      overrides: Partial<NewPayment> = {},
+    ): Promise<Payment> => {
+      const [payment] = await db
+        .insert(payments)
+        .values({
+          provider: 'fake',
+          providerPaymentId: null,
+          purpose: 'one_off',
+          origin: 'api',
+          status: 'created',
+          amountMinor: 1000,
+          currency: 'USD',
+          ...overrides,
+        })
+        .returning();
+
+      return payment;
+    };
+
+    const rowFirstPayment = async (amountMinor = 1000) => {
+      const payment = await insertPayment({ amountMinor });
+      const { providerPaymentId } = await fakeProvider.createPayment({
+        ...PAYMENT_INPUT,
+        reference: payment.id,
+        amountMinor,
+      });
+
+      return { payment, providerPaymentId };
+    };
+
+    const succeededRowFirstPayment = async () => {
+      const rowFirst = await rowFirstPayment(1000);
+      await postAndDrain(
+        fakeProvider.buildPaymentWebhooks(
+          rowFirst.providerPaymentId,
+          new Date(),
+        ),
+      );
+
+      return rowFirst;
+    };
+
+    const paymentOf = async (paymentId: string): Promise<Payment> => {
+      const [payment] = await db
+        .select()
+        .from(payments)
+        .where(eq(payments.id, paymentId));
+
+      return payment;
+    };
+
+    const paymentsWithProviderRef = (providerPaymentId: string) =>
+      db
+        .select()
+        .from(payments)
+        .where(eq(payments.providerPaymentId, providerPaymentId));
+
+    const paymentEventsOf = (paymentId: string): Promise<PaymentEvent[]> =>
+      db
+        .select()
+        .from(paymentEvents)
+        .where(eq(paymentEvents.paymentId, paymentId))
+        .orderBy(asc(paymentEvents.createdAt), asc(paymentEvents.id));
+
+    const refundsOf = (paymentId: string) =>
+      db.select().from(refunds).where(eq(refunds.paymentId, paymentId));
+
+    const countOf = async (
+      table: typeof payments | typeof paymentEvents,
+    ): Promise<number> => {
+      const [{ count }] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(table);
+
+      return count;
+    };
+
+    const warnsAbout = (warn: jest.SpyInstance, id: string): unknown[][] =>
+      (warn.mock.calls as unknown[][]).filter(([message]) =>
+        String(message).includes(id),
+      );
+
+    // Every other test leaves its rows received; a drain must not touch them by accident.
+    beforeEach(async () => {
+      await db
+        .update(webhookEvents)
+        .set({
+          status: 'failed',
+          lastError: 'Closed by the e2e worker tests',
+          nextAttemptAt: null,
+          finishedAt: sql`clock_timestamp()`,
+        })
+        .where(eq(webhookEvents.status, 'received'));
+    });
+
+    describe('birth gate', () => {
+      it.each(['one_off', 'subscription_initial'])(
+        'keeps a %s event with a subscription id and no row received at attempt 1 without a payment',
+        async (purpose) => {
+          const event = paymentWireEvent({
+            purpose,
+            providerSubscriptionId: randomUUID(),
+          });
+          const webhook = signed([event]);
+
+          await postAndDrain([webhook]);
+
+          expect(await inboxRowFor(webhook)).toMatchObject({
+            status: 'received',
+            attempts: 1,
+            paymentIds: [],
+          });
+          expect(
+            await paymentsWithProviderRef(event.providerPaymentId),
+          ).toHaveLength(0);
+        },
+      );
+
+      it('births one provider row from a signed renewal and dedups its redelivery', async () => {
+        const event = paymentWireEvent({
+          purpose: 'subscription_renewal',
+          providerSubscriptionId: randomUUID(),
+        });
+        const webhook = signed([event]);
+
+        await postAndDrain([webhook, webhook]);
+
+        const inboxRows = await originalRowsFor(webhook);
+        const birthedPayments = await paymentsWithProviderRef(
+          event.providerPaymentId,
+        );
+        expect(inboxRows).toHaveLength(1);
+        expect(birthedPayments).toHaveLength(1);
+        const [payment] = birthedPayments;
+        expect(payment).toMatchObject({
+          origin: 'provider',
+          purpose: 'subscription_renewal',
+          status: 'succeeded',
+        });
+        expect(inboxRows[0]).toMatchObject({
+          status: 'processed',
+          attempts: 1,
+          paymentIds: [payment.id],
+        });
+        expect(await paymentEventsOf(payment.id)).toMatchObject([
+          {
+            fromStatus: null,
+            toStatus: 'succeeded',
+            webhookEventId: inboxRows[0].id,
+          },
+        ]);
+      });
+    });
+
+    describe('row-first fake flows', () => {
+      it.each([
+        [1000, 'succeeded'],
+        [1001, 'failed'],
+        [1002, 'succeeded'],
+        [1003, 'failed'],
+        [1004, 'expired'],
+        [1005, 'pending'],
+      ])(
+        'brings amount %i to %s and links every event to its inbox row',
+        async (amountMinor, finalStatus) => {
+          const { payment, providerPaymentId } =
+            await rowFirstPayment(amountMinor);
+          const webhooks = fakeProvider.buildPaymentWebhooks(
+            providerPaymentId,
+            new Date(),
+          );
+
+          await postAndDrain(webhooks);
+
+          expect((await paymentOf(payment.id)).status).toBe(finalStatus);
+          const inboxRows = await Promise.all(
+            webhooks.map((webhook) => inboxRowFor(webhook)),
+          );
+          for (const row of inboxRows) {
+            expect(row).toMatchObject({
+              status: 'processed',
+              attempts: 1,
+              paymentIds: [payment.id],
+              lastError: null,
+            });
+          }
+          const events = await paymentEventsOf(payment.id);
+          expect(events.length).toBeGreaterThan(0);
+          const inboxIds = inboxRows.map(({ id }) => id);
+          for (const event of events) {
+            expect(inboxIds).toContain(event.webhookEventId);
+          }
+        },
+      );
+
+      it('writes no event for a repeated pending yet keeps the attempt on the inbox row', async () => {
+        const { payment, providerPaymentId } = await rowFirstPayment(1002);
+        const webhooks = fakeProvider.buildPaymentWebhooks(
+          providerPaymentId,
+          new Date(),
+        );
+
+        await postAndDrain(webhooks);
+
+        const attemptRow = await inboxRowFor(webhooks[1]);
+        const events = await paymentEventsOf(payment.id);
+        expect(attemptRow).toMatchObject({
+          status: 'processed',
+          eventTypes: ['payment.attempt_failed'],
+          paymentIds: [payment.id],
+          failureReason: 'fake_declined',
+        });
+        expect(events.map(({ toStatus }) => toStatus)).toEqual([
+          'pending',
+          'succeeded',
+        ]);
+        expect(
+          events.map(({ webhookEventId }) => webhookEventId),
+        ).not.toContain(attemptRow.id);
+      });
+
+      it('writes the failure reason of payment.failed into the event', async () => {
+        const { payment, providerPaymentId } = await rowFirstPayment(1001);
+
+        await postAndDrain(
+          fakeProvider.buildPaymentWebhooks(providerPaymentId, new Date()),
+        );
+
+        expect(await paymentEventsOf(payment.id)).toMatchObject([
+          { toStatus: 'pending', reason: 'payment.pending' },
+          { toStatus: 'failed', reason: 'fake_declined' },
+        ]);
+      });
+
+      it('brings a partial fake refund to partially_refunded through the inbox', async () => {
+        const { payment, providerPaymentId } = await succeededRowFirstPayment();
+        const { providerRefundId } = await fakeProvider.refund({
+          reference: randomUUID(),
+          providerPaymentId,
+          amountMinor: 400,
+          currency: 'USD',
+        });
+        const refundWebhooks = fakeProvider.buildRefundWebhooks(
+          providerRefundId as string,
+          new Date(),
+        );
+
+        await postAndDrain(refundWebhooks);
+
+        const succeededRow = await inboxRowFor(refundWebhooks[1]);
+        const events = await paymentEventsOf(payment.id);
+        expect((await paymentOf(payment.id)).status).toBe('partially_refunded');
+        expect(await refundsOf(payment.id)).toMatchObject([
+          { status: 'succeeded', amountMinor: 400, providerRefundId },
+        ]);
+        expect(succeededRow).toMatchObject({
+          status: 'processed',
+          paymentIds: [payment.id],
+          lastError: null,
+        });
+        expect(events[events.length - 1]).toMatchObject({
+          toStatus: 'partially_refunded',
+          webhookEventId: succeededRow.id,
+        });
+      });
+
+      it('applies a row-first event with a reference at the first attempt', async () => {
+        const { payment, providerPaymentId } = await rowFirstPayment(1000);
+        const [pendingWebhook] = fakeProvider.buildPaymentWebhooks(
+          providerPaymentId,
+          new Date(),
+        );
+
+        await postAndDrain([pendingWebhook]);
+
+        expect(await inboxRowFor(pendingWebhook)).toMatchObject({
+          status: 'processed',
+          attempts: 1,
+        });
+        expect((await paymentOf(payment.id)).providerPaymentId).toBe(
+          providerPaymentId,
+        );
+      });
+    });
+
+    describe('lease', () => {
+      it('leases a claimed row for five minutes', async () => {
+        const [id] = await insertDueRows(1);
+
+        const claim = await app.get(WebhooksRepository).claimNext();
+        const [{ leaseSeconds }] = await db
+          .select({
+            leaseSeconds: sql<number>`extract(epoch from ${webhookEvents.nextAttemptAt} - clock_timestamp())::float8`,
+          })
+          .from(webhookEvents)
+          .where(eq(webhookEvents.id, id));
+
+        expect(claim).toMatchObject({ id, attempts: 1 });
+        expect(leaseSeconds).toBeGreaterThan(
+          LEASE_SECONDS - RETRY_DELAY_TOLERANCE_SECONDS,
+        );
+        expect(leaseSeconds).toBeLessThanOrEqual(LEASE_SECONDS);
+      });
+    });
+
+    describe('ignored deliveries', () => {
+      it('ignores unknown and subscription-only deliveries without writing payments', async () => {
+        const webhooks = [
+          signed([{ type: 'some.new.type' }]),
+          signed([subscriptionWireEvent(), subscriptionWireEvent()]),
+          fakeProvider.signRawBody(nonJsonBody()),
+        ];
+        const paymentsBefore = await countOf(payments);
+        const paymentEventsBefore = await countOf(paymentEvents);
+
+        await postAndDrain(webhooks);
+
+        for (const webhook of webhooks) {
+          const row = await inboxRowFor(webhook);
+          expect(row).toMatchObject({
+            status: 'ignored',
+            attempts: 1,
+            lastError: null,
+            paymentIds: [],
+            nextAttemptAt: null,
+          });
+          expect(row.finishedAt).toBeInstanceOf(Date);
+        }
+        expect(await countOf(payments)).toBe(paymentsBefore);
+        expect(await countOf(paymentEvents)).toBe(paymentEventsBefore);
+      });
+    });
+
+    describe('retries', () => {
+      it('retries a reference-less event that beats its row after about 30 s, then applies it once', async () => {
+        const event = paymentWireEvent();
+        const webhook = signed([event]);
+
+        await postAndDrain([webhook]);
+
+        const retryRow = await inboxRowFor(webhook);
+        const [{ secondsUntilRetry }] = await db
+          .select({
+            secondsUntilRetry: sql<number>`extract(epoch from ${webhookEvents.nextAttemptAt} - clock_timestamp())::float8`,
+          })
+          .from(webhookEvents)
+          .where(eq(webhookEvents.id, retryRow.id));
+        expect(retryRow).toMatchObject({
+          status: 'received',
+          attempts: 1,
+          lastError: `No payment for reference null or provider ref ${event.providerPaymentId} yet`,
+        });
+        expect(secondsUntilRetry).toBeGreaterThan(
+          FIRST_RETRY_DELAY_SECONDS - RETRY_DELAY_TOLERANCE_SECONDS,
+        );
+        expect(secondsUntilRetry).toBeLessThanOrEqual(
+          FIRST_RETRY_DELAY_SECONDS,
+        );
+        expect(await drain()).toBe(0);
+
+        const payment = await insertPayment({
+          providerPaymentId: event.providerPaymentId,
+          status: 'pending',
+        });
+        await forceDue(retryRow.id);
+        await drain();
+        await drain();
+
+        expect(await inboxRowById(retryRow.id)).toMatchObject({
+          status: 'processed',
+          attempts: 2,
+          lastError: null,
+          paymentIds: [payment.id],
+        });
+        expect((await paymentOf(payment.id)).status).toBe('succeeded');
+        expect(await paymentEventsOf(payment.id)).toMatchObject([
+          { toStatus: 'succeeded', webhookEventId: retryRow.id },
+        ]);
+      });
+
+      it('retries a refund that beats its payment, then applies it once', async () => {
+        const event = refundWireEvent();
+        const webhook = signed([event]);
+
+        await postAndDrain([webhook]);
+
+        const retryRow = await inboxRowFor(webhook);
+        expect(retryRow).toMatchObject({
+          status: 'received',
+          attempts: 1,
+          lastError: `No payment for provider ref ${event.providerPaymentId} yet`,
+        });
+
+        const payment = await insertPayment({
+          providerPaymentId: event.providerPaymentId,
+          status: 'succeeded',
+        });
+        await forceDue(retryRow.id);
+        await drain();
+        await drain();
+
+        expect(await inboxRowById(retryRow.id)).toMatchObject({
+          status: 'processed',
+          attempts: 2,
+          paymentIds: [payment.id],
+        });
+        expect(await refundsOf(payment.id)).toMatchObject([
+          { status: 'succeeded', amountMinor: 400 },
+        ]);
+        expect((await paymentOf(payment.id)).status).toBe('partially_refunded');
+      });
+
+      it(
+        'fails a never-resolving event at the last attempt with one warn and then leaves it alone',
+        async () => {
+          const warn = jest
+            .spyOn(Logger.prototype, 'warn')
+            .mockImplementation();
+          const webhook = signed([paymentWireEvent()]);
+          await post(webhook);
+          const { id } = await inboxRowFor(webhook);
+
+          for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+            await forceDue(id);
+            await drain();
+          }
+          const failedRow = await inboxRowById(id);
+          await drain();
+
+          expect(failedRow).toMatchObject({
+            status: 'failed',
+            attempts: 6,
+            nextAttemptAt: null,
+          });
+          expect(failedRow.finishedAt).toBeInstanceOf(Date);
+          expect(warnsAbout(warn, id)).toHaveLength(1);
+          expect(await inboxRowById(id)).toEqual(failedRow);
+        },
+        SLOW_TEST_TIMEOUT_MS,
+      );
+    });
+
+    describe('rejected events', () => {
+      it('fails a different amount at the first attempt without a retry', async () => {
+        const { payment, providerPaymentId } = await rowFirstPayment(1000);
+        const webhook = signed([
+          paymentWireEvent({
+            reference: payment.id,
+            providerPaymentId,
+            amountMinor: 2000,
+          }),
+        ]);
+
+        await postAndDrain([webhook]);
+        await drain();
+
+        const row = await inboxRowFor(webhook);
+        expect(row).toMatchObject({
+          status: 'failed',
+          attempts: 1,
+          nextAttemptAt: null,
+          lastError: `Payment ${payment.id} mismatch: stored 1000 USD, received 2000 USD`,
+        });
+        expect(await paymentOf(payment.id)).toMatchObject({
+          status: 'created',
+          providerPaymentId: null,
+        });
+      });
+
+      it('fails a NUL in the provider payment id at the first attempt with the pg code and stores no NUL', async () => {
+        const payment = await insertPayment();
+        const webhook = signed([
+          paymentWireEvent({
+            reference: payment.id,
+            providerPaymentId: `pay\u0000${randomUUID()}`,
+          }),
+        ]);
+
+        await postAndDrain([webhook]);
+
+        expect(await inboxRowFor(webhook)).toMatchObject({
+          status: 'failed',
+          attempts: 1,
+          lastError: 'DrizzleQueryError 22021',
+        });
+        expect((await paymentOf(payment.id)).providerPaymentId).toBeNull();
+      });
+
+      it('notes a payment conflict on a processed row and keeps the stored status', async () => {
+        const { payment, providerPaymentId } = await rowFirstPayment(1004);
+        const expiringWebhooks = fakeProvider.buildPaymentWebhooks(
+          providerPaymentId,
+          new Date(),
+        );
+        const succeededWebhook = signed([
+          paymentWireEvent({
+            reference: payment.id,
+            providerPaymentId,
+            amountMinor: 1004,
+          }),
+        ]);
+
+        await postAndDrain([...expiringWebhooks, succeededWebhook]);
+
+        expect(await inboxRowFor(succeededWebhook)).toMatchObject({
+          status: 'processed',
+          paymentIds: [payment.id],
+          lastError: `Payment ${payment.id} conflict: expired -> succeeded`,
+        });
+        for (const webhook of expiringWebhooks) {
+          expect(await inboxRowFor(webhook)).toMatchObject({
+            status: 'processed',
+            lastError: null,
+          });
+        }
+        expect((await paymentOf(payment.id)).status).toBe('expired');
+      });
+
+      it('keeps a refund conflict on a processed row and the money counted', async () => {
+        const { payment, providerPaymentId } = await succeededRowFirstPayment();
+        const refundReference = randomUUID();
+        const { providerRefundId } = await fakeProvider.refund({
+          reference: refundReference,
+          providerPaymentId,
+          amountMinor: 400,
+          currency: 'USD',
+        });
+        const refundWebhooks = fakeProvider.buildRefundWebhooks(
+          providerRefundId as string,
+          new Date(),
+        );
+        const failedWebhook = signed([
+          refundWireEvent({
+            type: 'refund.failed',
+            providerPaymentId,
+            reference: payment.id,
+            refundReference,
+            providerRefundId,
+          }),
+        ]);
+
+        await postAndDrain([...refundWebhooks, failedWebhook]);
+
+        expect(await inboxRowFor(failedWebhook)).toMatchObject({
+          status: 'processed',
+          paymentIds: [payment.id],
+          lastError: `Refund ${refundReference} conflict: succeeded -> failed`,
+        });
+        expect(await inboxRowFor(refundWebhooks[1])).toMatchObject({
+          status: 'processed',
+          lastError: null,
+        });
+        expect(await refundsOf(payment.id)).toMatchObject([
+          { status: 'succeeded' },
+        ]);
+        expect((await paymentOf(payment.id)).status).toBe('partially_refunded');
+      });
+
+      it('fails a delivery with a handled and a rejected event and keeps the handled effect', async () => {
+        const handled = await rowFirstPayment(1000);
+        const rejected = await rowFirstPayment(1000);
+        const webhook = signed([
+          paymentWireEvent({
+            type: 'payment.pending',
+            reference: handled.payment.id,
+            providerPaymentId: handled.providerPaymentId,
+          }),
+          paymentWireEvent({
+            reference: rejected.payment.id,
+            providerPaymentId: rejected.providerPaymentId,
+            amountMinor: 2000,
+          }),
+        ]);
+
+        await postAndDrain([webhook]);
+
+        expect(await inboxRowFor(webhook)).toMatchObject({
+          status: 'failed',
+          attempts: 1,
+          paymentIds: [handled.payment.id],
+          lastError: expect.stringContaining(
+            `Payment ${rejected.payment.id} mismatch`,
+          ) as string,
+        });
+        expect((await paymentOf(handled.payment.id)).status).toBe('pending');
+      });
+
+      it('retries a delivery with a retryable and a rejected event', async () => {
+        const rejected = await rowFirstPayment(1000);
+        const webhook = signed([
+          paymentWireEvent(),
+          paymentWireEvent({
+            reference: rejected.payment.id,
+            providerPaymentId: rejected.providerPaymentId,
+            amountMinor: 2000,
+          }),
+        ]);
+
+        await postAndDrain([webhook]);
+
+        expect(await inboxRowFor(webhook)).toMatchObject({
+          status: 'received',
+          attempts: 1,
+        });
+      });
+    });
+
+    describe('replay', () => {
+      const replay = (id: string) => app.get(WebhooksService).replay(id);
+
+      it('processes the stored event through a body-less replay row and leaves the original as it was', async () => {
+        const { payment, providerPaymentId } = await rowFirstPayment(1000);
+        const [pendingWebhook] = fakeProvider.buildPaymentWebhooks(
+          providerPaymentId,
+          new Date(),
+        );
+        await postAndDrain([pendingWebhook]);
+        const original = await inboxRowFor(pendingWebhook);
+
+        const replayId = await replay(original.id);
+        const queuedReplay = await inboxRowById(replayId as string);
+        await drain();
+
+        expect(queuedReplay).toMatchObject({
+          replayOf: original.id,
+          dedupKey: original.dedupKey,
+          rawBody: null,
+          headers: {},
+          status: 'received',
+          attempts: 0,
+        });
+        expect(await inboxRowById(replayId as string)).toMatchObject({
+          status: 'processed',
+          paymentIds: [payment.id],
+        });
+        expect(await inboxRowFor(pendingWebhook)).toEqual(original);
+      });
+
+      it('recovers a failed original through a replay made after its row exists, and still dedups the key', async () => {
+        jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+        const event = paymentWireEvent();
+        const webhook = signed([event]);
+        await post(webhook);
+        const { id } = await inboxRowFor(webhook);
+        await db
+          .update(webhookEvents)
+          .set({ attempts: MAX_ATTEMPTS - 1 })
+          .where(eq(webhookEvents.id, id));
+        await drain();
+        const failedOriginal = await inboxRowById(id);
+        const payment = await insertPayment({
+          providerPaymentId: event.providerPaymentId,
+          status: 'pending',
+        });
+
+        const replayId = await replay(id);
+        await drain();
+        await post(webhook);
+        await drain();
+
+        expect(failedOriginal).toMatchObject({ status: 'failed', attempts: 6 });
+        expect(await inboxRowById(replayId as string)).toMatchObject({
+          status: 'processed',
+          paymentIds: [payment.id],
+        });
+        expect((await paymentOf(payment.id)).status).toBe('succeeded');
+        expect(await paymentEventsOf(payment.id)).toMatchObject([
+          { webhookEventId: replayId },
+        ]);
+        expect(await inboxRowById(id)).toEqual(failedOriginal);
+        expect(await originalRowsFor(webhook)).toHaveLength(1);
+      });
+
+      it('points a replay of a replay at the root', async () => {
+        const webhook = signed([subscriptionWireEvent()]);
+        await post(webhook);
+        const { id } = await inboxRowFor(webhook);
+
+        const firstReplayId = await replay(id);
+        const secondReplayId = await replay(firstReplayId as string);
+
+        expect(await inboxRowById(secondReplayId as string)).toMatchObject({
+          replayOf: id,
+        });
+      });
+
+      it('refuses an invalid-signature row, an unknown id and a non-uuid', async () => {
+        const rejectedBody = nonJsonBody();
+        await deliverTo(app, rejectedBody, WRONG_SIGNATURE).expect(401);
+        const [invalidRow] = await rowsWithKey(invalidKeyOf(rejectedBody));
+
+        await expect(replay(invalidRow.id)).resolves.toBeNull();
+        await expect(replay(randomUUID())).resolves.toBeNull();
+        await expect(replay('not-a-uuid')).resolves.toBeNull();
+        expect(
+          await db
+            .select()
+            .from(webhookEvents)
+            .where(eq(webhookEvents.replayOf, invalidRow.id)),
+        ).toHaveLength(0);
+      });
+    });
+
+    describe('enabled worker', () => {
+      it(
+        'processes a row a closed app left received once a new enabled app boots',
+        async () => {
+          const { payment, providerPaymentId } = await rowFirstPayment(1000);
+          const [pendingWebhook] = fakeProvider.buildPaymentWebhooks(
+            providerPaymentId,
+            new Date(),
+          );
+          const closedApp = await createE2eApp();
+          await deliverTo(
+            closedApp,
+            pendingWebhook.rawBody,
+            closedApp.get(FakeProvider).signRawBody(pendingWebhook.rawBody)
+              .headers[SIGNATURE_HEADER] as string,
+          ).expect(200);
+          await closedApp.close();
+          const { id } = await inboxRowFor(pendingWebhook);
+
+          const workerApp = await createE2eApp({
+            isWorkerEnabled: true,
+            pollIntervalMs: LONG_POLL_INTERVAL_MS,
+          });
+          try {
+            const row = await waitForStatus(
+              workerApp.get<Database>(DRIZZLE),
+              id,
+              'processed',
+            );
+
+            expect(row).toMatchObject({
+              status: 'processed',
+              paymentIds: [payment.id],
+            });
+          } finally {
+            await workerApp.close();
+          }
+        },
+        SLOW_TEST_TIMEOUT_MS,
+      );
+
+      it(
+        'processes a POST through the kick well inside a long interval',
+        async () => {
+          const claimNext = jest.spyOn(
+            WebhooksRepository.prototype,
+            'claimNext',
+          );
+          const workerApp = await createE2eApp({
+            isWorkerEnabled: true,
+            pollIntervalMs: LONG_POLL_INTERVAL_MS,
+          });
+          try {
+            const workerDb = workerApp.get<Database>(DRIZZLE);
+            while (claimNext.mock.results.length === 0) {
+              await sleep(WORKER_WAIT_POLL_MS);
+            }
+            await claimNext.mock.results[0].value;
+            await sleep(WORKER_WAIT_POLL_MS);
+            const workerProvider = workerApp.get(FakeProvider);
+            const webhook = workerProvider.buildWebhook({
+              eventId: randomUUID(),
+              occurredAt: null,
+              events: [{ type: 'some.new.type' }],
+            });
+
+            await post(webhook, workerApp);
+            const { id } = await inboxRowFor(webhook, workerDb);
+            const row = await waitForStatus(workerDb, id, 'ignored');
+
+            expect(row.status).toBe('ignored');
+          } finally {
+            await workerApp.close();
+          }
+        },
+        SLOW_TEST_TIMEOUT_MS,
+      );
+    });
+
+    describeOnRealPostgres('claims on real Postgres', () => {
+      const repository = () => app.get(WebhooksRepository);
+
+      const warmPool = async (database: Database): Promise<void> => {
+        await Promise.all(
+          Array.from({ length: databasePoolMax }, () =>
+            database.execute(
+              sql`select pg_sleep(${POOL_WARMUP_SLEEP_SECONDS})`,
+            ),
+          ),
+        );
+      };
+
+      it('gives two concurrent claimers different rows', async () => {
+        const ids = await insertDueRows(2);
+        await warmPool(db);
+
+        const claims = await Promise.all([
+          repository().claimNext(),
+          repository().claimNext(),
+        ]);
+
+        expect(new Set(claims.map((claim) => claim?.id))).toEqual(new Set(ids));
+      });
+
+      it('skips a row another client holds instead of waiting on it', async () => {
+        const [lockedId, freeId] = await insertDueRows(2);
+        const lockClient = postgres(databaseUrl, { max: 1, prepare: false });
+
+        try {
+          const claim = await lockClient.begin(async (tx) => {
+            await tx`select id from webhook_events where id = ${lockedId} for update`;
+
+            return Promise.race([
+              repository().claimNext(),
+              sleep(LOCK_WAIT_DEADLINE_MS).then(() => 'blocked' as const),
+            ]);
+          });
+
+          expect(claim).toMatchObject({ id: freeId, attempts: 1 });
+        } finally {
+          await lockClient.end({ timeout: CLIENT_END_TIMEOUT_SECONDS });
+        }
+      });
+
+      it('reclaims an expired lease at attempt 2 and fences the stale finish', async () => {
+        const [id] = await insertDueRows(1);
+        const staleClaim = await repository().claimNext();
+        await db
+          .update(webhookEvents)
+          .set({ nextAttemptAt: sql`clock_timestamp() - interval '1 second'` })
+          .where(eq(webhookEvents.id, id));
+        const freshClaim = await repository().claimNext();
+
+        const isStaleFinished = await repository().finish(
+          staleClaim as NonNullable<typeof staleClaim>,
+          { status: 'processed', lastError: null, paymentIds: [] },
+        );
+        const rowAfterStaleFinish = await inboxRowById(id);
+        const isFreshFinished = await repository().finish(
+          freshClaim as NonNullable<typeof freshClaim>,
+          { status: 'ignored', lastError: null, paymentIds: [] },
+        );
+
+        expect(staleClaim).toMatchObject({ id, attempts: 1 });
+        expect(freshClaim).toMatchObject({ id, attempts: 2 });
+        expect(isStaleFinished).toBe(false);
+        expect(rowAfterStaleFinish).toMatchObject({
+          status: 'received',
+          attempts: 2,
+        });
+        expect(isFreshFinished).toBe(true);
+        expect(await inboxRowById(id)).toMatchObject({ status: 'ignored' });
+      });
+
+      it(
+        'turns 20 parallel identical POSTs into one row and one transition',
+        async () => {
+          const workerApp = await createE2eApp({
+            isWorkerEnabled: true,
+            pollIntervalMs: LONG_POLL_INTERVAL_MS,
+          });
+          try {
+            await workerApp.listen(0);
+            const workerDb = workerApp.get<Database>(DRIZZLE);
+            await warmPool(workerDb);
+            const { payment, providerPaymentId } = await rowFirstPayment(1000);
+            const [pendingWebhook] = workerApp
+              .get(FakeProvider)
+              .buildPaymentWebhooks(providerPaymentId, new Date());
+
+            const responses = await Promise.all(
+              Array.from({ length: PARALLEL_DELIVERIES }, () =>
+                deliverTo(
+                  workerApp,
+                  pendingWebhook.rawBody,
+                  pendingWebhook.headers[SIGNATURE_HEADER] as string,
+                ),
+              ),
+            );
+            const [{ id }, ...otherRows] = await originalRowsFor(
+              pendingWebhook,
+              workerDb,
+            );
+            const row = await waitForStatus(workerDb, id, 'processed');
+
+            expect(responses.map(({ status }) => status)).toEqual(
+              Array.from({ length: PARALLEL_DELIVERIES }, () => 200),
+            );
+            expect(otherRows).toHaveLength(0);
+            expect(row).toMatchObject({ status: 'processed', attempts: 1 });
+            expect(await paymentEventsOf(payment.id)).toMatchObject([
+              { fromStatus: 'created', toStatus: 'pending' },
+            ]);
+          } finally {
+            await workerApp.close();
+          }
+        },
+        SLOW_TEST_TIMEOUT_MS,
+      );
+
+      it(
+        'lets the worker of a second app with the same secret process what the first stored',
+        async () => {
+          const processEvent = jest.spyOn(
+            WebhookEventProcessor.prototype,
+            'process',
+          );
+          const sharedSecret = randomBytes(32).toString('hex');
+          const receiverApp = await createE2eApp({
+            fakeWebhookSecret: sharedSecret,
+          });
+          const workerApp = await createE2eApp({
+            fakeWebhookSecret: sharedSecret,
+            isWorkerEnabled: true,
+            pollIntervalMs: SHORT_POLL_INTERVAL_MS,
+          });
+          try {
+            const { payment, providerPaymentId } = await rowFirstPayment(1000);
+            const [pendingWebhook] = receiverApp
+              .get(FakeProvider)
+              .buildPaymentWebhooks(providerPaymentId, new Date());
+
+            await post(pendingWebhook, receiverApp);
+            const { id } = await inboxRowFor(pendingWebhook);
+            const row = await waitForStatus(db, id, 'processed');
+
+            expect(row).toMatchObject({
+              status: 'processed',
+              paymentIds: [payment.id],
+            });
+            const workerProcessor = workerApp.get(WebhookEventProcessor);
+            expect(processEvent.mock.contexts.length).toBeGreaterThan(0);
+            expect(
+              processEvent.mock.contexts.every(
+                (context) => context === workerProcessor,
+              ),
+            ).toBe(true);
+          } finally {
+            await workerApp.close();
+            await receiverApp.close();
+          }
+        },
+        SLOW_TEST_TIMEOUT_MS,
+      );
+
+      it(
+        'gives each of 50 rows one attempt across two draining apps',
+        async () => {
+          const ids = await insertDueRows(DRAINED_ROWS);
+          const otherApp = await createE2eApp();
+          try {
+            await warmPool(db);
+            await warmPool(otherApp.get<Database>(DRIZZLE));
+
+            const drainedCounts = await Promise.all([drain(), drain(otherApp)]);
+
+            const rows = await db
+              .select()
+              .from(webhookEvents)
+              .where(inArray(webhookEvents.id, ids));
+            expect(drainedCounts[0] + drainedCounts[1]).toBe(DRAINED_ROWS);
+            expect(rows).toHaveLength(DRAINED_ROWS);
+            for (const row of rows) {
+              expect(row).toMatchObject({ status: 'ignored', attempts: 1 });
+            }
+          } finally {
+            await otherApp.close();
+          }
+        },
+        SLOW_TEST_TIMEOUT_MS,
+      );
     });
   });
 

@@ -233,6 +233,7 @@ export class FakeProvider implements PaymentProvider {
       startedAt,
       (type) => ({
         type,
+        purpose: 'one_off',
         reference: payment.reference,
         providerPaymentId,
         providerSubscriptionId: null,
