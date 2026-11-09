@@ -199,9 +199,12 @@ describe('Public API', () => {
     });
 
     it('is refused outside /api as well, even with a valid key', async () => {
+      const logs = captureLogs();
+
       await get('/undeclared-outside-api', VALID_AUTHORIZATION).expect(401);
 
       expect(undeclaredHandlerRan).not.toHaveBeenCalled();
+      expect(logs()).toContain('UndeclaredOutsideApiController.handle');
     });
   });
 
