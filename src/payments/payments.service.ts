@@ -1,11 +1,13 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
 
+import { ApiException } from '@/common/errors/api-exception';
 import type { DatabaseTransaction } from '@/database/drizzle';
 import { isUniqueViolationOf } from '@/database/postgres-errors';
 import type { Payment } from '@/database/schemas/payments.schema';
 import type { ProviderCode } from '@/providers/provider.constants';
 
+import { PaymentResponseDto } from './dto/payment-response.dto';
 import {
   CURRENCY_PATTERN,
   PAYMENTS_PROVIDER_REF_UNIQUE,
@@ -158,6 +160,19 @@ export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
 
   constructor(private readonly paymentsRepository: PaymentsRepository) {}
+
+  async getPayment(paymentId: string): Promise<PaymentResponseDto> {
+    const payment = await this.paymentsRepository.findById(paymentId);
+    if (!payment) {
+      throw new ApiException({
+        statusCode: HttpStatus.NOT_FOUND,
+        code: 'payment_not_found',
+        message: 'Payment not found',
+      });
+    }
+
+    return new PaymentResponseDto(payment);
+  }
 
   async ingestPayment(input: IngestPaymentInput): Promise<IngestPaymentResult> {
     assertValidPaymentEvent(input);

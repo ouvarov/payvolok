@@ -56,6 +56,7 @@ const repositoryWith = (
     withTransaction: jest.fn((work: (tx: DatabaseTransaction) => unknown) =>
       Promise.resolve(work(TX)),
     ),
+    findById: jest.fn().mockResolvedValue(null),
     insertIfAbsent: jest.fn().mockResolvedValue(null),
     findByProviderRefForUpdate: jest.fn().mockResolvedValue(null),
     findByIdAndProviderForUpdate: jest.fn().mockResolvedValue(null),
@@ -66,6 +67,43 @@ const repositoryWith = (
   }) as unknown as PaymentsRepository;
 
 describe('PaymentsService', () => {
+  describe('getPayment', () => {
+    it('returns only the public fields of the payment', async () => {
+      const service = new PaymentsService(
+        repositoryWith({
+          findById: jest.fn().mockResolvedValue(
+            paymentWith({
+              providerPaymentId: 'provider-1',
+              status: 'pending',
+            }),
+          ),
+        }),
+      );
+
+      expect({ ...(await service.getPayment(REFERENCE)) }).toEqual({
+        paymentId: REFERENCE,
+        status: 'pending',
+        provider: 'fake',
+        amountMinor: 1000,
+        currency: 'USD',
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      });
+    });
+
+    it('throws payment_not_found when the id is unknown', async () => {
+      const service = new PaymentsService(repositoryWith({}));
+
+      await expect(service.getPayment(REFERENCE)).rejects.toMatchObject({
+        body: {
+          statusCode: 404,
+          code: 'payment_not_found',
+          message: 'Payment not found',
+        },
+      });
+    });
+  });
+
   it('accepts only registered provider codes at compile time', () => {
     const inputWithUnregisteredProvider: IngestPaymentInput = {
       ...INPUT,

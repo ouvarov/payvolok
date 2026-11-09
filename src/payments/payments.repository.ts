@@ -27,6 +27,15 @@ export class PaymentsRepository {
     return this.db.transaction(work);
   }
 
+  async findById(paymentId: string): Promise<Payment | null> {
+    const [payment] = await this.db
+      .select()
+      .from(payments)
+      .where(eq(payments.id, paymentId));
+
+    return payment ?? null;
+  }
+
   async insertIfAbsent(
     tx: DatabaseTransaction,
     newPayment: NewPayment,
