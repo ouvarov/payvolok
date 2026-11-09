@@ -41,7 +41,8 @@ export class ApiExceptionFilter extends BaseExceptionFilter {
 
   override catch(exception: unknown, host: ArgumentsHost): void {
     const http = host.switchToHttp();
-    if (!API_PATH_PATTERN.test(http.getRequest<Request>().originalUrl)) {
+    // Not originalUrl: it keeps the scheme and host of an absolute-form request.
+    if (!API_PATH_PATTERN.test(http.getRequest<Request>().path)) {
       super.catch(exception, host);
       return;
     }

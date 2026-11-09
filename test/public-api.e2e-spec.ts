@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { connect, type AddressInfo } from 'node:net';
 
 import {
   Controller,
@@ -47,6 +48,15 @@ const TABLES_WITH_REQUEST_DATA = [
 ];
 
 const undeclaredHandlerRan = jest.fn();
+
+const sendRawRequest = (port: number, rawRequest: string): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const socket = connect(port, '127.0.0.1', () => socket.write(rawRequest));
+    socket.on('data', (chunk) => chunks.push(chunk));
+    socket.on('end', () => resolve(Buffer.concat(chunks).toString()));
+    socket.on('error', reject);
+  });
 
 @Controller(`${API_V1_PREFIX}/undeclared`)
 class UndeclaredApiController {
@@ -147,6 +157,7 @@ describe('Public API', () => {
         UndeclaredOutsideApiController,
       ],
     });
+    await app.listen(0);
     db = app.get<Database>(DRIZZLE);
     fakeProvider = app.get(FakeProvider);
   });
@@ -248,6 +259,28 @@ describe('Public API', () => {
 
       expect(response.body).toEqual(UNAUTHORIZED_BODY);
       expect(response.headers['www-authenticate']).toBe('Bearer');
+    });
+  });
+
+  describe('an absolute-form request line', () => {
+    it('gets the uniform 401 on an /api/v1 route', async () => {
+      const { port } = serverOf(app).address() as AddressInfo;
+
+      const rawResponse = await sendRawRequest(
+        port,
+        [
+          `GET http://127.0.0.1:${port}${paymentPath(randomUUID())} HTTP/1.1`,
+          'Host: 127.0.0.1',
+          'Connection: close',
+          '',
+          '',
+        ].join('\r\n'),
+      );
+      const [head, body] = rawResponse.split('\r\n\r\n');
+
+      expect(head).toMatch(/^HTTP\/1\.1 401 /);
+      expect(head).toMatch(/^www-authenticate: Bearer$/im);
+      expect(JSON.parse(body) as unknown).toEqual(UNAUTHORIZED_BODY);
     });
   });
 
