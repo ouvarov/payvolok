@@ -373,6 +373,21 @@ describe('Public API', () => {
       expect(response.body).toEqual(BAD_REQUEST_BODY);
     });
 
+    it('answers the generic http_error for an unsupported charset, echoing nothing', async () => {
+      const response = await request(serverOf(app))
+        .post(`/${API_V1_PREFIX}/nope`)
+        .set('Content-Type', `application/json; charset=${LEAK_MARKER}`)
+        .send('{}')
+        .expect(415);
+
+      expect(response.body).toEqual({
+        statusCode: 415,
+        code: 'http_error',
+        message: 'Request failed',
+      });
+      expect(response.text.toUpperCase()).not.toContain(LEAK_MARKER);
+    });
+
     it('answers the uniform 413 for an oversized body', async () => {
       const response = await request(serverOf(app))
         .post(`/${API_V1_PREFIX}/nope`)
