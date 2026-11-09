@@ -1,6 +1,9 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 
+import { AccessGuard } from './auth/access.guard';
+import { ApiExceptionFilter } from './common/filters/api-exception.filter';
 import { validateEnv } from './config/env.schema';
 import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
@@ -22,6 +25,10 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     ProvidersModule,
     RefundsModule,
     WebhooksModule,
+  ],
+  providers: [
+    { provide: APP_GUARD, useClass: AccessGuard },
+    { provide: APP_FILTER, useClass: ApiExceptionFilter },
   ],
 })
 export class AppModule {}
