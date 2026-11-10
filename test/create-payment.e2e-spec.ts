@@ -685,6 +685,35 @@ describe('POST /api/v1/payments', () => {
       ]);
     });
 
+    it('logs the interruption once, only after the recovery committed', async () => {
+      const { warn } = muteLogs();
+      const key = newKey();
+      const body = paymentBodyWith();
+      const interruptionWarnings = () =>
+        warn.mock.calls.filter(([message]) =>
+          String(message).includes('request was interrupted'),
+        );
+      jest
+        .spyOn(PaymentsService.prototype, 'recordCreated')
+        .mockRejectedValueOnce(new Error('crash after the provider answered'));
+      jest
+        .spyOn(IdempotencyRepository.prototype, 'complete')
+        .mockRejectedValueOnce(new Error('recovery could not be stored'));
+      await postPayment(body, key).expect(500);
+      await ageKey(key, IDEMPOTENCY_LEASE_SECONDS + 1);
+
+      await postPayment(body, key).expect(500);
+      const failedRecoveryWarnings = interruptionWarnings().length;
+      const recovered = await postPayment(body, key).expect(503);
+      await postPayment(body, key).expect(503);
+
+      const paymentId = (recovered.body as { paymentId: string }).paymentId;
+      expect(failedRecoveryWarnings).toBe(0);
+      expect(interruptionWarnings()).toEqual([
+        [expect.stringContaining(paymentId)],
+      ]);
+    });
+
     it('lets an owner whose lease was recovered keep its writes and return the stored 503', async () => {
       muteLogs();
       const key = newKey();

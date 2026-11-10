@@ -23,9 +23,14 @@ type ClaimHandlers = {
   ) => Promise<StoredResponse>;
 };
 
-type ClaimResult =
-  | { isOwner: true; paymentId: string }
-  | { isOwner: false; response: IdempotentResponse };
+type TakenKeyResult = {
+  isOwner: false;
+  response: IdempotentResponse;
+  // Set only when this request ran the recovery, after it committed.
+  recoveredPaymentId: string | null;
+};
+
+type ClaimResult = { isOwner: true; paymentId: string } | TakenKeyResult;
 
 type TakenKeyDecision =
   | { action: 'respond'; response: IdempotentResponse }
@@ -115,12 +120,15 @@ export class IdempotencyService {
       request,
       await this.idempotencyRepository.findState(request),
     );
-    const response =
-      decision.action === 'respond'
-        ? decision.response
-        : await this.recover(request, handlers.onInterrupted);
+    if (decision.action === 'respond') {
+      return {
+        isOwner: false,
+        response: decision.response,
+        recoveredPaymentId: null,
+      };
+    }
 
-    return { isOwner: false, response };
+    return this.recover(request, handlers.onInterrupted);
   }
 
   // The key is locked before record locks the payment, in the order recovery
@@ -141,17 +149,27 @@ export class IdempotencyService {
   private recover(
     request: IdempotentRequest,
     onInterrupted: ClaimHandlers['onInterrupted'],
-  ): Promise<IdempotentResponse> {
+  ): Promise<TakenKeyResult> {
     return this.idempotencyRepository.withTransaction(async (tx) => {
       const decision = decideForTakenKey(
         request,
         await this.idempotencyRepository.findStateForUpdate(tx, request),
       );
-      if (decision.action === 'respond') return decision.response;
+      if (decision.action === 'respond') {
+        return {
+          isOwner: false,
+          response: decision.response,
+          recoveredPaymentId: null,
+        };
+      }
 
       const response = await onInterrupted(tx, decision.paymentId);
 
-      return this.store(tx, request, decision.paymentId, response);
+      return {
+        isOwner: false,
+        response: await this.store(tx, request, decision.paymentId, response),
+        recoveredPaymentId: decision.paymentId,
+      };
     });
   }
 

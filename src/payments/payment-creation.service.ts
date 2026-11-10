@@ -110,7 +110,15 @@ export class PaymentCreationService {
       onInterrupted: (tx, paymentId) =>
         this.recordInterrupted(tx, { paymentId, provider: dto.provider }),
     });
-    if (!claim.isOwner) return claim.response;
+    if (!claim.isOwner) {
+      if (claim.recoveredPaymentId !== null) {
+        this.logger.warn(
+          `Payment ${claim.recoveredPaymentId}: its request was interrupted before the provider answer was stored`,
+        );
+      }
+
+      return claim.response;
+    }
 
     const ref = { paymentId: claim.paymentId, provider: dto.provider };
     const outcome = await this.callProvider(ref.paymentId, dto);
@@ -178,9 +186,6 @@ export class PaymentCreationService {
     ref: ApiPaymentRef,
   ): Promise<StoredResponse> {
     await this.paymentsService.recordInterrupted(tx, ref);
-    this.logger.warn(
-      `Payment ${ref.paymentId} failed: its request was interrupted before the provider answer was stored`,
-    );
 
     return providerUnavailableResponseOf(ref.paymentId);
   }
