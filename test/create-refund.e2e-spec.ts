@@ -487,6 +487,24 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
       },
     );
 
+    it('answers 409 for a succeeded payment without a provider id', async () => {
+      const payment = await insertPayment({ providerPaymentId: null });
+      const key = newKey();
+
+      const response = await postRefund(
+        payment.id,
+        { amountMinor: REFUND_AMOUNT_MINOR },
+        key,
+      ).expect(409);
+
+      expect(response.body).toEqual({
+        statusCode: 409,
+        code: 'payment_not_refundable',
+        message: expect.any(String) as string,
+      });
+      await expectNothingStored(key);
+    });
+
     it('answers 422 above what pending and succeeded refunds leave, then refunds the rest under the same key', async () => {
       const payment = await insertPayment({
         amountMinor: 10000,
