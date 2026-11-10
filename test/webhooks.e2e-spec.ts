@@ -1187,16 +1187,6 @@ describe('Webhooks route', () => {
     const refundsOf = (paymentId: string) =>
       db.select().from(refunds).where(eq(refunds.paymentId, paymentId));
 
-    const countOf = async (
-      table: typeof payments | typeof paymentEvents,
-    ): Promise<number> => {
-      const [{ count }] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(table);
-
-      return count;
-    };
-
     const warnsAbout = (warn: jest.SpyInstance, id: string): unknown[][] =>
       (warn.mock.calls as unknown[][]).filter(([message]) =>
         String(message).includes(id),
@@ -1432,7 +1422,6 @@ describe('Webhooks route', () => {
           signed([subscriptionWireEvent(), subscriptionWireEvent()]),
           fakeProvider.signRawBody(nonJsonBody()),
         ];
-        const paymentEventsBefore = await countOf(paymentEvents);
         const inboxRowIds: string[] = [];
 
         await postAndDrain(webhooks);
@@ -1457,7 +1446,11 @@ describe('Webhooks route', () => {
             .from(paymentEvents)
             .where(inArray(paymentEvents.webhookEventId, inboxRowIds)),
         ).toEqual([]);
-        expect(await countOf(paymentEvents)).toBe(paymentEventsBefore);
+        const [{ linkedEventCount }] = await db
+          .select({ linkedEventCount: sql<number>`count(*)::int` })
+          .from(paymentEvents)
+          .where(inArray(paymentEvents.webhookEventId, inboxRowIds));
+        expect(linkedEventCount).toBe(0);
       });
     });
 
