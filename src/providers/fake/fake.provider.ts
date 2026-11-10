@@ -20,6 +20,7 @@ import {
 } from '../provider-events';
 
 import {
+  createFailureFor,
   decodeFakePaymentId,
   decodeFakeRefundId,
   encodeFakeId,
@@ -133,6 +134,16 @@ export class FakeProvider implements PaymentProvider {
     if (!identity.success) {
       return Promise.reject(
         rejectedError('Payment amount or currency is invalid'),
+      );
+    }
+
+    const failureKind = createFailureFor(identity.data.amountMinor);
+    if (failureKind) {
+      return Promise.reject(
+        new ProviderError(`Fake ${failureKind} failure chosen by the amount`, {
+          providerCode: 'fake',
+          kind: failureKind,
+        }),
       );
     }
 
