@@ -1440,12 +1440,6 @@ describe('Webhooks route', () => {
         }
         // Other spec files write payments in parallel, so only the rows these
         // deliveries could have written are counted: a write records its inbox row.
-        expect(
-          await db
-            .selectDistinct({ paymentId: paymentEvents.paymentId })
-            .from(paymentEvents)
-            .where(inArray(paymentEvents.webhookEventId, inboxRowIds)),
-        ).toEqual([]);
         const [{ linkedEventCount }] = await db
           .select({ linkedEventCount: sql<number>`count(*)::int` })
           .from(paymentEvents)
