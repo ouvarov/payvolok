@@ -90,6 +90,30 @@ describe('FakeProvider', () => {
     });
   });
 
+  describe('createPayment failures by amount', () => {
+    it.each([
+      [1097, 'rejected', false],
+      [1098, 'unavailable', true],
+      [1099, 'misconfigured', false],
+    ])('fails amount %i as %s', async (amountMinor, kind, isRetryable) => {
+      const error: unknown = await fakeProvider
+        .createPayment(paymentInputWith(amountMinor))
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(ProviderError);
+      expect(error).toMatchObject({ providerCode: 'fake', kind, isRetryable });
+    });
+
+    it.each([1000, 1096, 1100, 9700])(
+      'creates a payment for amount %i',
+      async (amountMinor) => {
+        await expect(
+          fakeProvider.createPayment(paymentInputWith(amountMinor)),
+        ).resolves.toMatchObject({ status: 'pending' });
+      },
+    );
+  });
+
   describe('verifyWebhook', () => {
     const signedRequest = fakeProvider.buildWebhook(
       wireBodyWith([wirePaymentEvent]),

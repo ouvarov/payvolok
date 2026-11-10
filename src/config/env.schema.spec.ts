@@ -2,9 +2,11 @@ import { validateEnv } from './env.schema';
 
 const VALID_DATABASE_URL = 'postgres://user:pass@localhost:5432/db';
 const VALID_API_KEY_SHA256 = 'a1'.repeat(32);
+const VALID_PUBLIC_BASE_URL = 'https://payvolok.example.test';
 const VALID_ENV = {
   DATABASE_URL: VALID_DATABASE_URL,
   API_KEY_SHA256: VALID_API_KEY_SHA256,
+  PUBLIC_BASE_URL: VALID_PUBLIC_BASE_URL,
 };
 
 describe('validateEnv', () => {
@@ -14,6 +16,7 @@ describe('validateEnv', () => {
       PORT: 3000,
       DATABASE_URL: VALID_DATABASE_URL,
       API_KEY_SHA256: VALID_API_KEY_SHA256,
+      PUBLIC_BASE_URL: VALID_PUBLIC_BASE_URL,
       DATABASE_POOL_MAX: 10,
       WEBHOOK_WORKER_ENABLED: true,
       WEBHOOK_POLL_INTERVAL_MS: 5000,
@@ -91,6 +94,36 @@ describe('validateEnv', () => {
 
       expect(message).toContain('API_KEY_SHA256');
       if (value !== '') expect(message).not.toContain(value);
+    });
+  });
+
+  describe('PUBLIC_BASE_URL', () => {
+    it('is required, naming the key', () => {
+      const { PUBLIC_BASE_URL: _publicBaseUrl, ...envWithoutBaseUrl } =
+        VALID_ENV;
+
+      expect(() => validateEnv(envWithoutBaseUrl)).toThrow(/PUBLIC_BASE_URL/);
+    });
+
+    it.each([
+      ['not a url', 'payvolok.example.test'],
+      ['another scheme', 'ftp://payvolok.example.test'],
+      ['no host', 'https://'],
+      ['empty', ''],
+    ])('rejects %s, naming the key', (_case, value) => {
+      expect(() =>
+        validateEnv({ ...VALID_ENV, PUBLIC_BASE_URL: value }),
+      ).toThrow(/PUBLIC_BASE_URL/);
+    });
+
+    it.each([
+      ['http://localhost:3000', 'http://localhost:3000'],
+      ['https://payvolok.example.test/', 'https://payvolok.example.test'],
+      ['https://example.test/pay//', 'https://example.test/pay'],
+    ])('reads %s as %s', (value, publicBaseUrl) => {
+      expect(
+        validateEnv({ ...VALID_ENV, PUBLIC_BASE_URL: value }).PUBLIC_BASE_URL,
+      ).toBe(publicBaseUrl);
     });
   });
 

@@ -707,6 +707,7 @@ describe('Webhooks route', () => {
           .flatMap(({ route }) => (route ? [route.path] : []))
           .sort(),
       ).toEqual([
+        '/api/v1/payments',
         '/api/v1/payments/:id',
         '/health/live',
         '/health/ready',
@@ -1186,16 +1187,6 @@ describe('Webhooks route', () => {
     const refundsOf = (paymentId: string) =>
       db.select().from(refunds).where(eq(refunds.paymentId, paymentId));
 
-    const countOf = async (
-      table: typeof payments | typeof paymentEvents,
-    ): Promise<number> => {
-      const [{ count }] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(table);
-
-      return count;
-    };
-
     const warnsAbout = (warn: jest.SpyInstance, id: string): unknown[][] =>
       (warn.mock.calls as unknown[][]).filter(([message]) =>
         String(message).includes(id),
@@ -1431,13 +1422,13 @@ describe('Webhooks route', () => {
           signed([subscriptionWireEvent(), subscriptionWireEvent()]),
           fakeProvider.signRawBody(nonJsonBody()),
         ];
-        const paymentsBefore = await countOf(payments);
-        const paymentEventsBefore = await countOf(paymentEvents);
+        const inboxRowIds: string[] = [];
 
         await postAndDrain(webhooks);
 
         for (const webhook of webhooks) {
           const row = await inboxRowFor(webhook);
+          inboxRowIds.push(row.id);
           expect(row).toMatchObject({
             status: 'ignored',
             attempts: 1,
@@ -1447,8 +1438,13 @@ describe('Webhooks route', () => {
           });
           expect(row.finishedAt).toBeInstanceOf(Date);
         }
-        expect(await countOf(payments)).toBe(paymentsBefore);
-        expect(await countOf(paymentEvents)).toBe(paymentEventsBefore);
+        // Other spec files write payments in parallel, so only the rows these
+        // deliveries could have written are counted: a write records its inbox row.
+        const [{ linkedEventCount }] = await db
+          .select({ linkedEventCount: sql<number>`count(*)::int` })
+          .from(paymentEvents)
+          .where(inArray(paymentEvents.webhookEventId, inboxRowIds));
+        expect(linkedEventCount).toBe(0);
       });
     });
 

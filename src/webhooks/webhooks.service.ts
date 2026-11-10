@@ -9,6 +9,10 @@ import {
 } from '@nestjs/common';
 import { z } from 'zod';
 
+import {
+  MAX_FAILURE_REASON_LENGTH,
+  storableText,
+} from '@/common/storable-text';
 import { describeError } from '@/database/postgres-errors';
 import type {
   PaymentProvider,
@@ -26,7 +30,6 @@ import {
   storableDedupKey,
 } from './webhook-dedup-key';
 import { storableHeaders } from './webhook-headers';
-import { MAX_FAILURE_REASON_LENGTH, storableText } from './webhook-text';
 import { WebhookWorker } from './webhook.worker';
 import { WebhooksRepository } from './webhooks.repository';
 
