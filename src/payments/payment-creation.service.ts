@@ -2,13 +2,8 @@ import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { ApiErrorBody } from '@/common/errors/api-exception';
-import {
-  MAX_FAILURE_REASON_LENGTH,
-  storableText,
-} from '@/common/storable-text';
 import type { Env } from '@/config/env.schema';
 import type { DatabaseTransaction } from '@/database/drizzle';
-import { describeError } from '@/database/postgres-errors';
 import type {
   IdempotentRequest,
   StoredResponse,
@@ -18,31 +13,24 @@ import {
   requestHashOf,
   type IdempotentResponse,
 } from '@/idempotency/idempotency.service';
-import {
-  ProviderError,
-  type CreatedPayment,
-  type ProviderErrorKind,
+import type {
+  CreatedPayment,
+  ProviderErrorKind,
 } from '@/providers/payment-provider.port';
 import type { ProviderCode } from '@/providers/provider.constants';
+import {
+  providerFailureOf,
+  type ProviderFailure,
+} from '@/providers/provider-failure';
 import { ProviderRegistry } from '@/providers/provider.registry';
 
 import type { CreatePaymentDto } from './dto/create-payment.dto';
 import { CreatedPaymentResponseDto } from './dto/created-payment-response.dto';
 import { PaymentsService, type ApiPaymentRef } from './payments.service';
 
-type ProviderFailure = { kind: ProviderErrorKind; detail: string };
-
 type ProviderOutcome =
   | { isCreated: true; created: CreatedPayment }
   | { isCreated: false; failure: ProviderFailure };
-
-const providerFailureOf = (error: unknown): ProviderFailure =>
-  error instanceof ProviderError
-    ? {
-        kind: error.kind,
-        detail: storableText(error.message, MAX_FAILURE_REASON_LENGTH),
-      }
-    : { kind: 'unavailable', detail: describeError(error) };
 
 const errorResponseOf = (body: ApiErrorBody): StoredResponse => ({
   statusCode: body.statusCode,
@@ -105,8 +93,9 @@ export class PaymentCreationService {
   ): Promise<IdempotentResponse> {
     const request = requestOf(idempotencyKey, dto);
     const claim = await this.idempotencyService.claim(request, {
-      onClaimed: async (tx) =>
-        (await this.paymentsService.recordRequested(tx, dto)).id,
+      onClaimed: async (tx) => ({
+        paymentId: (await this.paymentsService.recordRequested(tx, dto)).id,
+      }),
       onInterrupted: (tx, paymentId) =>
         this.recordInterrupted(tx, { paymentId, provider: dto.provider }),
     });
@@ -120,7 +109,7 @@ export class PaymentCreationService {
       return claim.response;
     }
 
-    const ref = { paymentId: claim.paymentId, provider: dto.provider };
+    const ref = { paymentId: claim.claimed.paymentId, provider: dto.provider };
     const outcome = await this.callProvider(ref.paymentId, dto);
     const response = await this.idempotencyService.complete(
       request,

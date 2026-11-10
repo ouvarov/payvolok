@@ -70,6 +70,19 @@ export class PaymentsRepository {
     return payment ?? null;
   }
 
+  async findByIdForUpdate(
+    tx: DatabaseTransaction,
+    paymentId: string,
+  ): Promise<Payment | null> {
+    const [payment] = await tx
+      .select()
+      .from(payments)
+      .where(eq(payments.id, paymentId))
+      .for('update');
+
+    return payment ?? null;
+  }
+
   async findByIdAndProviderForUpdate(
     tx: DatabaseTransaction,
     paymentId: string,

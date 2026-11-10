@@ -81,6 +81,7 @@ const serviceWith = ({
       setProviderRefundId: jest.fn().mockResolvedValue(null),
       updateStatus: jest.fn().mockResolvedValue(null),
       sumSucceededMinor: jest.fn().mockResolvedValue(300),
+      sumReservedMinor: jest.fn().mockResolvedValue(300),
       ...refunds,
     },
   );
