@@ -520,6 +520,37 @@ describe('FakeProvider', () => {
       },
     );
 
+    it.each([
+      [497, 'rejected', false],
+      [498, 'unavailable', true],
+      [499, 'misconfigured', false],
+    ])('fails amount %i as %s', async (amountMinor, kind, isRetryable) => {
+      const providerPaymentId = await createdPaymentId(1000);
+
+      const error: unknown = await fakeProvider
+        .refund(refundInputWith(providerPaymentId, amountMinor))
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(ProviderError);
+      expect(error).toMatchObject({
+        providerCode: 'fake',
+        kind,
+        isRetryable,
+        message: `Fake ${kind} failure chosen by the amount`,
+      });
+    });
+
+    it('checks the range before the failure suffix', async () => {
+      const providerPaymentId = await createdPaymentId(1000);
+
+      await expect(
+        fakeProvider.refund(refundInputWith(providerPaymentId, 1098)),
+      ).rejects.toMatchObject({
+        kind: 'rejected',
+        message: 'Refund amount is out of range',
+      });
+    });
+
     it('allows a refund of the full payment amount', async () => {
       const providerPaymentId = await createdPaymentId(1000);
 

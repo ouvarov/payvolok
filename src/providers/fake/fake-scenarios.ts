@@ -85,15 +85,17 @@ const REFUND_SCENARIOS_BY_SUFFIX: ReadonlyMap<number, FakeRefundScenario> =
     [5, { eventTypes: ['refund.pending'], finalStatus: 'pending' }],
   ]);
 
-const CREATE_FAILURES_BY_SUFFIX: ReadonlyMap<number, ProviderErrorKind> =
-  new Map<number, ProviderErrorKind>([
-    [97, 'rejected'],
-    [98, 'unavailable'],
-    [99, 'misconfigured'],
-  ]);
+const CALL_FAILURES_BY_SUFFIX: ReadonlyMap<number, ProviderErrorKind> = new Map<
+  number,
+  ProviderErrorKind
+>([
+  [97, 'rejected'],
+  [98, 'unavailable'],
+  [99, 'misconfigured'],
+]);
 
-const createFailureFor = (amountMinor: number): ProviderErrorKind | null =>
-  CREATE_FAILURES_BY_SUFFIX.get(amountMinor % SCENARIO_AMOUNT_MODULUS) ?? null;
+const callFailureFor = (amountMinor: number): ProviderErrorKind | null =>
+  CALL_FAILURES_BY_SUFFIX.get(amountMinor % SCENARIO_AMOUNT_MODULUS) ?? null;
 
 const paymentScenarioFor = (amountMinor: number): FakePaymentScenario =>
   PAYMENT_SCENARIOS_BY_SUFFIX.get(amountMinor % SCENARIO_AMOUNT_MODULUS) ??
@@ -212,7 +214,7 @@ type FakeWireBody = {
 };
 
 export {
-  createFailureFor,
+  callFailureFor,
   decodeFakePaymentId,
   decodeFakeRefundId,
   encodeFakeId,
