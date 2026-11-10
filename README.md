@@ -8,7 +8,7 @@ Pet project at an early stage. Sandbox only, no real money: it only talks to pro
 
 ## Status
 
-What exists: the payment and refund ingest core, the fake provider, the health routes, the webhook route, the webhook worker, `POST /api/v1/payments` and `GET /api/v1/payments/:id`. `POST /webhooks/:provider` verifies the signature and stores the delivery in `webhook_events`; the worker then applies it to payments and refunds. Everything else is planned, including refunds through the API, reconciliation and real providers.
+What exists: the payment and refund ingest core, the fake provider, the health routes, the webhook route, the webhook worker, `POST /api/v1/payments`, `GET /api/v1/payments/:id` and `POST /api/v1/payments/:paymentId/refunds`. `POST /webhooks/:provider` verifies the signature and stores the delivery in `webhook_events`; the worker then applies it to payments and refunds. Everything else is planned, including reconciliation and real providers.
 
 ## Stack
 
@@ -117,15 +117,31 @@ A 400 for an invalid body has `code: "validation_failed"` and `issues: [{ "field
 
 When the provider refuses the order the answer is `422 order_rejected`; when it cannot be reached, fails in an unexpected way or is set up wrong it is `503 provider_unavailable` with the `paymentId`. In both cases the payment is `failed` and the reason is in its events, unless a provider webhook already moved it on: then it keeps the provider's status and the failure is recorded as a `stale` event. Check `GET /api/v1/payments/:id` before retrying. Nothing retries on its own: retry with a new key.
 
+### Refund a payment
+
+`POST /api/v1/payments/:paymentId/refunds` with an `Idempotency-Key` header and the body `{"amountMinor": 500}`, in the payment's currency. On success it answers `201 {"refundId": "...", "paymentId": "...", "status": "pending"}`; `status` is `pending`, `succeeded` or `failed` as the provider reported it, and webhooks move it on.
+
+Refused before the provider is called, storing nothing under the key:
+
+- `404 payment_not_found` for an unknown payment.
+- `409 payment_not_refundable` unless the payment is `succeeded` or `partially_refunded`.
+- `422 refund_amount_exceeds_remaining` when the amount is larger than the payment minus its `pending` and `succeeded` refunds.
+- `409 refund_in_progress` while another key's refund of the same payment waits for the provider.
+
+When the provider refuses the refund the answer is `422 refund_rejected`; when it cannot be reached, is set up wrong or does not return a refund id it is `503 provider_unavailable` with the `paymentId`. A provider that identifies refunds by our id gets a `pending` refund row before the call; a refusal or a setup error marks it `failed`, an outage leaves it `pending`, because the refund may still have happened. A status a provider webhook already reported is kept. A provider that identifies refunds by its own id gets the row only after it answers.
+
+A refund request interrupted after its key was taken stores `503 provider_unavailable` for that key after 60 s and changes no refund. Check the payment before retrying with a new key.
+
 ### Idempotency
 
-`Idempotency-Key` is required: 1 to 255 printable ASCII characters without spaces, for example a UUID. A missing key is `400 idempotency_key_required`, a malformed one `400 idempotency_key_invalid`.
+`Idempotency-Key` is required on both POST routes: 1 to 255 printable ASCII characters without spaces, for example a UUID. A missing key is `400 idempotency_key_required`, a malformed one `400 idempotency_key_invalid`.
 
 - The same key with the same body returns the stored answer, success or failure, with `Idempotent-Replayed: true`, and calls no provider again. The order of the JSON fields does not matter.
 - The same key with another body is `422 idempotency_key_reused`.
 - While the first request still runs, the same key gets `409 idempotency_key_in_progress`.
-- A request that stopped after the payment row was written, for example a crash, holds its key for 60 s. The next request with that key then marks the payment `failed` (`request_interrupted`), or records that as `stale` if a webhook already moved it on, without calling the provider, and stores `503 provider_unavailable` for the key.
-- Keys live 24 h. After that the same key starts a new payment.
+- A payment request that stopped after the payment row was written, for example a crash, holds its key for 60 s. The next request with that key then marks the payment `failed` (`request_interrupted`), or records that as `stale` if a webhook already moved it on, without calling the provider, and stores `503 provider_unavailable` for the key.
+- Keys live 24 h. After that the same key starts a new payment or refund.
+- Payment and refund keys are separate: one key string can be used once for each.
 
 Only requests that reached the provider are stored: a 400 or 401 leaves no trace, so a fixed request can reuse its key.
 
@@ -148,7 +164,7 @@ A row ends `processed` when at least one payment or refund event was applied, `i
 
 `fake` is a provider for development and chaos tests. It keeps no data. The last two digits of `amountMinor` choose the scenario: `01` fails, `02` succeeds after a failed attempt, `03` fails after a failed attempt, `04` expires, `05` stays pending, anything else succeeds. On a refund amount, `01` fails, `05` stays pending, anything else succeeds.
 
-Creating a payment fails at once for three endings: `97` is rejected (`422 order_rejected`), `98` is an outage and `99` a misconfiguration (both `503 provider_unavailable`).
+Creating a payment fails at once for three endings: `97` is rejected (`422 order_rejected`), `98` is an outage and `99` a misconfiguration (both `503 provider_unavailable`). A refund amount with those endings fails the same way, with `422 refund_rejected` for `97`, once the amount is within the payment.
 
 It signs webhooks with `FAKE_WEBHOOK_SECRET`, at least 32 characters, so several instances verify each other. When it is unset, each process makes a random secret at boot.
 
