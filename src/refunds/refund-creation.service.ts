@@ -155,12 +155,17 @@ export class RefundCreationService {
 
     const reservation = claim.claimed;
     const outcome = await this.callProvider(reservation);
-    const response = await this.idempotencyService.complete(
+    const { response, isLeaseLost } = await this.idempotencyService.complete(
       request,
       reservation.paymentId,
       (tx) => this.recordOutcome(tx, reservation, outcome),
     );
     this.logOutcome(reservation, outcome);
+    if (isLeaseLost) {
+      this.logger.warn(
+        `Refund ${reservation.refundId} of payment ${reservation.paymentId}: the provider answered after a retry recovered the request; its outcome was recorded but the stored ${response.statusCode} was returned`,
+      );
+    }
 
     return response;
   }

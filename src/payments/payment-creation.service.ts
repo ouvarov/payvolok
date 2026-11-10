@@ -111,12 +111,17 @@ export class PaymentCreationService {
 
     const ref = { paymentId: claim.claimed.paymentId, provider: dto.provider };
     const outcome = await this.callProvider(ref.paymentId, dto);
-    const response = await this.idempotencyService.complete(
+    const { response, isLeaseLost } = await this.idempotencyService.complete(
       request,
       ref.paymentId,
       (tx) => this.recordOutcome(tx, ref, outcome),
     );
     if (!outcome.isCreated) this.logFailure(ref, outcome.failure);
+    if (isLeaseLost) {
+      this.logger.warn(
+        `Payment ${ref.paymentId}: the provider answered after a retry recovered the request; its outcome was recorded but the stored ${response.statusCode} was returned`,
+      );
+    }
 
     return response;
   }

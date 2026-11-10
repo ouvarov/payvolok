@@ -15,6 +15,13 @@ import {
 
 type IdempotentResponse = StoredResponse & { isReplayed: boolean };
 
+// isLeaseLost: a recovery stored its response first, so this request's
+// writes were kept but its own response was not.
+type CompletedResponse = {
+  response: IdempotentResponse;
+  isLeaseLost: boolean;
+};
+
 type Claimed = { paymentId: string };
 
 type ClaimHandlers<TClaimed extends Claimed> = {
@@ -140,7 +147,7 @@ export class IdempotencyService {
     request: IdempotentRequest,
     paymentId: string,
     record: (tx: DatabaseTransaction) => Promise<StoredResponse>,
-  ): Promise<IdempotentResponse> {
+  ): Promise<CompletedResponse> {
     return this.idempotencyRepository.withTransaction(async (tx) => {
       await this.idempotencyRepository.findStateForUpdate(tx, request);
       const response = await record(tx);
@@ -179,10 +186,16 @@ export class IdempotencyService {
       }
 
       const response = await onInterrupted(tx, decision.paymentId);
+      const completed = await this.store(
+        tx,
+        request,
+        decision.paymentId,
+        response,
+      );
 
       return {
         isOwner: false,
-        response: await this.store(tx, request, decision.paymentId, response),
+        response: completed.response,
         recoveredPaymentId: decision.paymentId,
       };
     });
@@ -193,16 +206,30 @@ export class IdempotencyService {
     request: IdempotentRequest,
     paymentId: string,
     response: StoredResponse,
-  ): Promise<IdempotentResponse> {
-    const storedResponse =
-      (await this.idempotencyRepository.complete(
-        tx,
-        request,
-        paymentId,
-        response,
-      )) ?? (await this.recoveredResponseOf(tx, request, paymentId));
+  ): Promise<CompletedResponse> {
+    const storedResponse = await this.idempotencyRepository.complete(
+      tx,
+      request,
+      paymentId,
+      response,
+    );
+    if (storedResponse) {
+      return {
+        response: { ...storedResponse, isReplayed: false },
+        isLeaseLost: false,
+      };
+    }
 
-    return { ...storedResponse, isReplayed: false };
+    const recoveredResponse = await this.recoveredResponseOf(
+      tx,
+      request,
+      paymentId,
+    );
+
+    return {
+      response: { ...recoveredResponse, isReplayed: false },
+      isLeaseLost: true,
+    };
   }
 
   private async recoveredResponseOf(
@@ -227,4 +254,9 @@ export class IdempotencyService {
 }
 
 export { requestHashOf };
-export type { ClaimHandlers, ClaimResult, IdempotentResponse };
+export type {
+  ClaimHandlers,
+  ClaimResult,
+  CompletedResponse,
+  IdempotentResponse,
+};

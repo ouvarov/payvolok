@@ -753,6 +753,27 @@ describe('POST /api/v1/payments', () => {
       expect(createPayment).toHaveBeenCalledTimes(1);
     });
 
+    it('warns when an owner whose lease was recovered returns the stored response', async () => {
+      const { warn } = muteLogs();
+      const key = newKey();
+      const body = paymentBodyWith();
+      createPayment.mockImplementation(async (input) => {
+        await ageKey(key, IDEMPOTENCY_LEASE_SECONDS + 1);
+        await postPayment(body, key).expect(503);
+
+        return realCreatePayment(input);
+      });
+
+      const owner = await postPayment(body, key).expect(503);
+
+      const paymentId = (owner.body as { paymentId: string }).paymentId;
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining(
+          `Payment ${paymentId}: the provider answered after a retry recovered the request`,
+        ),
+      );
+    });
+
     it('keeps a pending status a webhook set when the lease is recovered', async () => {
       muteLogs();
       const key = newKey();

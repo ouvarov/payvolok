@@ -890,6 +890,33 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
       },
     );
 
+    it('keeps the refund of an owner whose lease was recovered, returns the stored 503 and warns', async () => {
+      const { warn } = muteLogs();
+      const payment = await insertPayment();
+      const key = newKey();
+      const body = { amountMinor: REFUND_AMOUNT_MINOR };
+      let recovery: request.Response | null = null;
+      refund.mockImplementation(async (input) => {
+        await ageKey(key, IDEMPOTENCY_LEASE_SECONDS + 1);
+        recovery = await postRefund(payment.id, body, key);
+
+        return realRefund(input);
+      });
+
+      const owner = await postRefund(payment.id, body, key).expect(503);
+
+      const refundId = refund.mock.calls[0][0].reference;
+      expect(recovery).toMatchObject({ status: 503, text: owner.text });
+      expect(await refundRowsOf(payment.id)).toEqual([
+        expect.objectContaining({ id: refundId, status: 'succeeded' }),
+      ]);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining(
+          `Refund ${refundId} of payment ${payment.id}: the provider answered after a retry recovered the request`,
+        ),
+      );
+    });
+
     it.each(['provider', 'reference'] as const)(
       'with %s identity rolls back the refund with the key completion that failed after it',
       async (identity) => {
