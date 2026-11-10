@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import {
+  MAX_FAILURE_REASON_LENGTH,
+  storableText,
+} from '@/common/storable-text';
+import {
   describeError,
   isPermanentDataError,
 } from '@/database/postgres-errors';
@@ -24,7 +28,6 @@ import {
   RefundsService,
 } from '@/refunds/refunds.service';
 
-import { MAX_FAILURE_REASON_LENGTH, storableText } from './webhook-text';
 import type {
   ClaimedWebhookEvent,
   StoredDelivery,

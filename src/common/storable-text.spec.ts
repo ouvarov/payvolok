@@ -1,4 +1,4 @@
-import { storableText } from './webhook-text';
+import { storableText } from './storable-text';
 
 describe('storableText', () => {
   it('removes control characters and keeps other text', () => {
