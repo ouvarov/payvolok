@@ -8,7 +8,7 @@ Pet project at an early stage. Sandbox only, no real money: it only talks to pro
 
 ## Status
 
-What exists: the payment and refund ingest core, the fake provider, the health routes, the webhook route, the webhook worker and `GET /api/v1/payments/:id`. `POST /webhooks/:provider` verifies the signature and stores the delivery in `webhook_events`; the worker then applies it to payments and refunds. Everything else is planned, including creating payments through the API, reconciliation and real providers.
+What exists: the payment and refund ingest core, the fake provider, the health routes, the webhook route, the webhook worker, `POST /api/v1/payments` and `GET /api/v1/payments/:id`. `POST /webhooks/:provider` verifies the signature and stores the delivery in `webhook_events`; the worker then applies it to payments and refunds. Everything else is planned, including refunds through the API, reconciliation and real providers.
 
 ## Stack
 
@@ -24,7 +24,7 @@ The repository root is the API. A web frontend will live in `web/` later.
 
 ## Run locally
 
-Copy `.env.example` to `.env` first. The app refuses to start when `DATABASE_URL` is missing or is not a Postgres URL, or when `API_KEY_SHA256` is missing or is not 64 lowercase hex characters.
+Copy `.env.example` to `.env` first. The app refuses to start when `DATABASE_URL` is missing or is not a Postgres URL, when `API_KEY_SHA256` is missing or is not 64 lowercase hex characters, or when `PUBLIC_BASE_URL` is missing or is not an http or https URL. `PUBLIC_BASE_URL` is where providers reach this API: payments ask them to send webhooks to `{PUBLIC_BASE_URL}/webhooks/{provider}`.
 
 ### With Docker
 
@@ -97,6 +97,38 @@ Errors under `/api/` are JSON of one shape, with a stable `code`:
 }
 ```
 
+A 400 for an invalid body has `code: "validation_failed"` and `issues: [{ "field", "messages" }]`. Unknown fields are refused, not ignored.
+
+### Create a payment
+
+`POST /api/v1/payments` with an `Idempotency-Key` header and the body:
+
+```json
+{
+  "provider": "fake",
+  "amountMinor": 1000,
+  "currency": "USD",
+  "description": "Order 42",
+  "returnUrl": "https://shop.example/return"
+}
+```
+
+`amountMinor` is a positive integer in minor units, `currency` three uppercase letters, `description` 1 to 255 characters and `returnUrl` an http or https URL. On success it answers `201 {"paymentId": "...", "checkout": {"type": "redirect", "url": "..."}}`: send the customer to `checkout.url`. The payment is `pending` until the provider's webhooks move it on.
+
+When the provider refuses the order the answer is `422 order_rejected`; when it cannot be reached, fails in an unexpected way or is set up wrong it is `503 provider_unavailable` with the `paymentId`. In both cases the payment is `failed` and the reason is in its events. Nothing retries on its own: retry with a new key.
+
+### Idempotency
+
+`Idempotency-Key` is required: 1 to 255 printable ASCII characters without spaces, for example a UUID. A missing key is `400 idempotency_key_required`, a malformed one `400 idempotency_key_invalid`.
+
+- The same key with the same body returns the stored answer, success or failure, with `Idempotent-Replayed: true`, and calls no provider again. The order of the JSON fields does not matter.
+- The same key with another body is `422 idempotency_key_reused`.
+- While the first request still runs, the same key gets `409 idempotency_key_in_progress`.
+- A request that stopped after the payment row was written, for example a crash, holds its key for 60 s. The next request with that key then marks the payment `failed` (`request_interrupted`) without calling the provider and stores `503 provider_unavailable` for the key.
+- Keys live 24 h. After that the same key starts a new payment.
+
+Only requests that reached the provider are stored: a 400 or 401 leaves no trace, so a fixed request can reuse its key.
+
 `GET /api/v1/payments/:id` returns `paymentId`, `status`, `provider`, `amountMinor`, `currency`, `createdAt` and `updatedAt` from our database, or 404 `payment_not_found`. It does not call the provider.
 
 ## Health routes
@@ -115,5 +147,7 @@ A row ends `processed` when at least one payment or refund event was applied, `i
 ## Fake provider
 
 `fake` is a provider for development and chaos tests. It keeps no data. The last two digits of `amountMinor` choose the scenario: `01` fails, `02` succeeds after a failed attempt, `03` fails after a failed attempt, `04` expires, `05` stays pending, anything else succeeds. On a refund amount, `01` fails, `05` stays pending, anything else succeeds.
+
+Creating a payment fails at once for three endings: `97` is rejected (`422 order_rejected`), `98` is an outage and `99` a misconfiguration (both `503 provider_unavailable`).
 
 It signs webhooks with `FAKE_WEBHOOK_SECRET`, at least 32 characters, so several instances verify each other. When it is unset, each process makes a random secret at boot.
