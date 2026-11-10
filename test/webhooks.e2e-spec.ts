@@ -1432,13 +1432,14 @@ describe('Webhooks route', () => {
           signed([subscriptionWireEvent(), subscriptionWireEvent()]),
           fakeProvider.signRawBody(nonJsonBody()),
         ];
-        const paymentsBefore = await countOf(payments);
         const paymentEventsBefore = await countOf(paymentEvents);
+        const inboxRowIds: string[] = [];
 
         await postAndDrain(webhooks);
 
         for (const webhook of webhooks) {
           const row = await inboxRowFor(webhook);
+          inboxRowIds.push(row.id);
           expect(row).toMatchObject({
             status: 'ignored',
             attempts: 1,
@@ -1448,7 +1449,14 @@ describe('Webhooks route', () => {
           });
           expect(row.finishedAt).toBeInstanceOf(Date);
         }
-        expect(await countOf(payments)).toBe(paymentsBefore);
+        // Other spec files write payments in parallel, so only the rows these
+        // deliveries could have written are counted: a write records its inbox row.
+        expect(
+          await db
+            .selectDistinct({ paymentId: paymentEvents.paymentId })
+            .from(paymentEvents)
+            .where(inArray(paymentEvents.webhookEventId, inboxRowIds)),
+        ).toEqual([]);
         expect(await countOf(paymentEvents)).toBe(paymentEventsBefore);
       });
     });
