@@ -242,6 +242,11 @@ export class PaymentsService {
     reason: string,
   ): Promise<IngestPaymentResult> {
     const payment = await this.lockApiPayment(tx, ref);
+    // A webhook already reported the provider's status, which our own failure
+    // signal must not override: failed is terminal and would block a later succeeded.
+    if (payment.status !== 'created' && payment.status !== 'failed') {
+      return this.recordStaleFailure(tx, payment, reason);
+    }
 
     return this.applyApiStatus(tx, payment, 'failed', reason);
   }
@@ -344,6 +349,23 @@ export class PaymentsService {
     if (!payment) throw new Error(`Payment ${ref.paymentId} disappeared`);
 
     return payment;
+  }
+
+  private async recordStaleFailure(
+    tx: DatabaseTransaction,
+    payment: Payment,
+    reason: string,
+  ): Promise<IngestPaymentResult> {
+    await this.paymentsRepository.insertEvent(tx, {
+      paymentId: payment.id,
+      fromStatus: payment.status,
+      toStatus: 'failed',
+      outcome: 'stale',
+      reason,
+      webhookEventId: null,
+    });
+
+    return { payment, outcome: 'stale' };
   }
 
   private async applyApiStatus(

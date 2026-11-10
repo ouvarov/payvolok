@@ -115,7 +115,7 @@ A 400 for an invalid body has `code: "validation_failed"` and `issues: [{ "field
 
 `amountMinor` is a positive integer in minor units, `currency` three uppercase letters, `description` 1 to 255 characters and `returnUrl` an http or https URL. On success it answers `201 {"paymentId": "...", "checkout": {"type": "redirect", "url": "..."}}`: send the customer to `checkout.url`. The payment is `pending` until the provider's webhooks move it on.
 
-When the provider refuses the order the answer is `422 order_rejected`; when it cannot be reached, fails in an unexpected way or is set up wrong it is `503 provider_unavailable` with the `paymentId`. In both cases the payment is `failed` and the reason is in its events. Nothing retries on its own: retry with a new key.
+When the provider refuses the order the answer is `422 order_rejected`; when it cannot be reached, fails in an unexpected way or is set up wrong it is `503 provider_unavailable` with the `paymentId`. In both cases the payment is `failed` and the reason is in its events, unless a provider webhook already moved it on: then it keeps the provider's status and the failure is recorded as a `stale` event. Check `GET /api/v1/payments/:id` before retrying. Nothing retries on its own: retry with a new key.
 
 ### Idempotency
 
@@ -124,7 +124,7 @@ When the provider refuses the order the answer is `422 order_rejected`; when it 
 - The same key with the same body returns the stored answer, success or failure, with `Idempotent-Replayed: true`, and calls no provider again. The order of the JSON fields does not matter.
 - The same key with another body is `422 idempotency_key_reused`.
 - While the first request still runs, the same key gets `409 idempotency_key_in_progress`.
-- A request that stopped after the payment row was written, for example a crash, holds its key for 60 s. The next request with that key then marks the payment `failed` (`request_interrupted`) without calling the provider and stores `503 provider_unavailable` for the key.
+- A request that stopped after the payment row was written, for example a crash, holds its key for 60 s. The next request with that key then marks the payment `failed` (`request_interrupted`), or records that as `stale` if a webhook already moved it on, without calling the provider, and stores `503 provider_unavailable` for the key.
 - Keys live 24 h. After that the same key starts a new payment.
 
 Only requests that reached the provider are stored: a 400 or 401 leaves no trace, so a fixed request can reuse its key.

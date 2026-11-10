@@ -26,10 +26,11 @@ import { IdempotencyRepository } from '@/idempotency/idempotency.repository';
 import { PaymentsRepository } from '@/payments/payments.repository';
 import { PaymentsService } from '@/payments/payments.service';
 import { FakeProvider } from '@/providers/fake/fake.provider';
-import type {
-  CreatedPayment,
-  CreatePaymentInput,
-  WebhookRequest,
+import {
+  ProviderError,
+  type CreatedPayment,
+  type CreatePaymentInput,
+  type WebhookRequest,
 } from '@/providers/payment-provider.port';
 import { WebhookEventProcessor } from '@/webhooks/webhook-event.processor';
 
@@ -721,6 +722,76 @@ describe('POST /api/v1/payments', () => {
         ['failed', 'pending', 'stale', 'provider_created'],
       ]);
       expect(createPayment).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps a pending status a webhook set when the lease is recovered', async () => {
+      muteLogs();
+      const key = newKey();
+      const body = paymentBodyWith();
+      let recovery: request.Response | null = null;
+      createPayment.mockImplementation(async (input) => {
+        const created = await realCreatePayment(input);
+        const [pendingWebhook] = fakeProvider.buildPaymentWebhooks(
+          created.providerPaymentId,
+          new Date(),
+        );
+        await processSignedWebhook(pendingWebhook);
+        await ageKey(key, IDEMPOTENCY_LEASE_SECONDS + 1);
+        recovery = await postPayment(body, key);
+
+        return created;
+      });
+
+      const owner = await postPayment(body, key).expect(503);
+
+      const paymentId = (owner.body as { paymentId: string }).paymentId;
+      expect(owner.body).toEqual({
+        statusCode: 503,
+        code: 'provider_unavailable',
+        message: 'The payment provider did not confirm the payment',
+        paymentId,
+      });
+      expect(recovery).toMatchObject({ status: 503, text: owner.text });
+      expect(await keyRowOf(key)).toMatchObject({
+        status: 'completed',
+        responseStatus: 503,
+      });
+      expect((await paymentOf(paymentId))?.status).toBe('pending');
+      expect(await timelineOf(paymentId)).toEqual([
+        [null, 'created', 'applied', 'api_request'],
+        ['created', 'pending', 'applied', 'payment.pending'],
+        ['pending', 'failed', 'stale', 'request_interrupted'],
+      ]);
+    });
+
+    it('keeps a pending status a webhook set when the provider call then fails', async () => {
+      muteLogs();
+      createPayment.mockImplementation(async (input) => {
+        const created = await realCreatePayment(input);
+        const [pendingWebhook] = fakeProvider.buildPaymentWebhooks(
+          created.providerPaymentId,
+          new Date(),
+        );
+        await processSignedWebhook(pendingWebhook);
+
+        throw new ProviderError('Timed out after the provider accepted', {
+          providerCode: 'fake',
+          kind: 'unavailable',
+        });
+      });
+
+      const response = await postPayment(paymentBodyWith(), newKey()).expect(
+        503,
+      );
+
+      const paymentId = (response.body as { paymentId: string }).paymentId;
+      expect((await paymentOf(paymentId))?.status).toBe('pending');
+      expect((await timelineOf(paymentId)).at(-1)).toEqual([
+        'pending',
+        'failed',
+        'stale',
+        'provider_unavailable: Timed out after the provider accepted',
+      ]);
     });
 
     it('leaves neither key nor payment when the first transaction fails', async () => {

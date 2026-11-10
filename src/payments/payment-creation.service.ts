@@ -53,7 +53,7 @@ const providerUnavailableResponseOf = (paymentId: string): StoredResponse =>
   errorResponseOf({
     statusCode: HttpStatus.SERVICE_UNAVAILABLE,
     code: 'provider_unavailable',
-    message: 'The payment provider is unavailable; the payment was not created',
+    message: 'The payment provider did not confirm the payment',
     paymentId,
   });
 
