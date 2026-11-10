@@ -5,6 +5,7 @@ import { ApiException } from '@/common/errors/api-exception';
 import type { DatabaseTransaction } from '@/database/drizzle';
 import { isUniqueViolationOf } from '@/database/postgres-errors';
 import type { Payment } from '@/database/schemas/payments.schema';
+import type { CreatedPayment } from '@/providers/payment-provider.port';
 import type { ProviderCode } from '@/providers/provider.constants';
 
 import { PaymentResponseDto } from './dto/payment-response.dto';
@@ -19,6 +20,18 @@ import { PaymentsRepository } from './payments.repository';
 import type { IngestablePaymentStatus } from './provider-event-status';
 
 const paymentReferenceSchema = z.uuid();
+
+const API_REQUEST_REASON = 'api_request';
+const PROVIDER_CREATED_REASON = 'provider_created';
+const REQUEST_INTERRUPTED_REASON = 'request_interrupted';
+
+type RequestedPaymentInput = {
+  provider: ProviderCode;
+  amountMinor: number;
+  currency: string;
+};
+
+type ApiPaymentRef = { paymentId: string; provider: ProviderCode };
 
 type IngestPaymentInput = {
   reference: string | null;
@@ -174,6 +187,72 @@ export class PaymentsService {
     return new PaymentResponseDto(payment);
   }
 
+  async recordRequested(
+    tx: DatabaseTransaction,
+    input: RequestedPaymentInput,
+  ): Promise<Payment> {
+    const payment = await this.paymentsRepository.insertIfAbsent(tx, {
+      provider: input.provider,
+      providerPaymentId: null,
+      purpose: 'one_off',
+      origin: 'api',
+      status: 'created',
+      amountMinor: input.amountMinor,
+      currency: input.currency,
+    });
+    if (!payment) throw new Error('Payment insert returned no row');
+
+    await this.paymentsRepository.insertEvent(tx, {
+      paymentId: payment.id,
+      fromStatus: null,
+      toStatus: 'created',
+      outcome: 'applied',
+      reason: API_REQUEST_REASON,
+      webhookEventId: null,
+    });
+
+    return payment;
+  }
+
+  // A webhook may have moved the row first: the link is then a no-op and an
+  // older status is recorded as stale.
+  async recordCreated(
+    tx: DatabaseTransaction,
+    ref: ApiPaymentRef,
+    created: CreatedPayment,
+  ): Promise<IngestPaymentResult> {
+    const payment = await this.lockApiPayment(tx, ref);
+    const linkedPayment = await this.linkProviderPaymentId(tx, payment, {
+      reference: payment.id,
+      provider: ref.provider,
+      providerPaymentId: created.providerPaymentId,
+    });
+
+    return this.applyApiStatus(
+      tx,
+      linkedPayment,
+      created.status,
+      PROVIDER_CREATED_REASON,
+    );
+  }
+
+  async recordFailed(
+    tx: DatabaseTransaction,
+    ref: ApiPaymentRef,
+    reason: string,
+  ): Promise<IngestPaymentResult> {
+    const payment = await this.lockApiPayment(tx, ref);
+
+    return this.applyApiStatus(tx, payment, 'failed', reason);
+  }
+
+  recordInterrupted(
+    tx: DatabaseTransaction,
+    ref: ApiPaymentRef,
+  ): Promise<IngestPaymentResult> {
+    return this.recordFailed(tx, ref, REQUEST_INTERRUPTED_REASON);
+  }
+
   async ingestPayment(input: IngestPaymentInput): Promise<IngestPaymentResult> {
     assertValidPaymentEvent(input);
 
@@ -251,6 +330,42 @@ export class PaymentsService {
     if (!existingPayment) throw new PaymentNotFoundError(input);
 
     return this.applyToExisting(tx, existingPayment, input);
+  }
+
+  private async lockApiPayment(
+    tx: DatabaseTransaction,
+    ref: ApiPaymentRef,
+  ): Promise<Payment> {
+    const payment = await this.paymentsRepository.findByIdAndProviderForUpdate(
+      tx,
+      ref.paymentId,
+      ref.provider,
+    );
+    if (!payment) throw new Error(`Payment ${ref.paymentId} disappeared`);
+
+    return payment;
+  }
+
+  private async applyApiStatus(
+    tx: DatabaseTransaction,
+    payment: Payment,
+    targetStatus: PaymentStatus,
+    reason: string,
+  ): Promise<IngestPaymentResult> {
+    const result = await this.applyStatusInTransaction(tx, {
+      payment,
+      targetStatus,
+      reason,
+      webhookEventId: null,
+    });
+
+    if (result.outcome === 'conflict') {
+      this.logger.warn(
+        `Payment ${payment.id} conflict: ${payment.status} -> ${targetStatus}`,
+      );
+    }
+
+    return result;
   }
 
   private async birthPayment(
@@ -379,4 +494,10 @@ export class PaymentsService {
   }
 }
 
-export type { IngestPaymentInput, IngestPaymentResult, PaymentLookup };
+export type {
+  ApiPaymentRef,
+  IngestPaymentInput,
+  IngestPaymentResult,
+  PaymentLookup,
+  RequestedPaymentInput,
+};

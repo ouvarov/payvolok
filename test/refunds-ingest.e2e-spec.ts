@@ -995,6 +995,7 @@ describe('Refunds ingest', () => {
 
       expect(refundsService).toBeInstanceOf(RefundsService);
       expect(routePaths).toEqual([
+        '/api/v1/payments',
         '/api/v1/payments/:id',
         '/health/live',
         '/health/ready',

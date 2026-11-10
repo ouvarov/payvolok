@@ -707,6 +707,7 @@ describe('Webhooks route', () => {
           .flatMap(({ route }) => (route ? [route.path] : []))
           .sort(),
       ).toEqual([
+        '/api/v1/payments',
         '/api/v1/payments/:id',
         '/health/live',
         '/health/ready',
