@@ -39,6 +39,8 @@ services:
       <<: *local-database
       NODE_ENV: development
       PORT: 3000
+      # sha256 of local-dev-api-key, local development only
+      API_KEY_SHA256: 2bcd99491790f5324dd084241b713b576a92b12c497f3b553230d49cc72e15c2
       FAKE_WEBHOOK_SECRET:
     ports:
       - '3000:3000'

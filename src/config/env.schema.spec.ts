@@ -1,13 +1,19 @@
 import { validateEnv } from './env.schema';
 
 const VALID_DATABASE_URL = 'postgres://user:pass@localhost:5432/db';
+const VALID_API_KEY_SHA256 = 'a1'.repeat(32);
+const VALID_ENV = {
+  DATABASE_URL: VALID_DATABASE_URL,
+  API_KEY_SHA256: VALID_API_KEY_SHA256,
+};
 
 describe('validateEnv', () => {
-  it('applies defaults when only DATABASE_URL is set', () => {
-    expect(validateEnv({ DATABASE_URL: VALID_DATABASE_URL })).toEqual({
+  it('applies defaults when only the required keys are set', () => {
+    expect(validateEnv(VALID_ENV)).toEqual({
       NODE_ENV: 'development',
       PORT: 3000,
       DATABASE_URL: VALID_DATABASE_URL,
+      API_KEY_SHA256: VALID_API_KEY_SHA256,
       DATABASE_POOL_MAX: 10,
       WEBHOOK_WORKER_ENABLED: true,
       WEBHOOK_POLL_INTERVAL_MS: 5000,
@@ -16,7 +22,7 @@ describe('validateEnv', () => {
 
   it('coerces PORT and DATABASE_POOL_MAX from strings', () => {
     const env = validateEnv({
-      DATABASE_URL: VALID_DATABASE_URL,
+      ...VALID_ENV,
       PORT: '8080',
       DATABASE_POOL_MAX: '3',
     });
@@ -52,18 +58,47 @@ describe('validateEnv', () => {
   it('accepts the postgresql scheme', () => {
     const databaseUrl = 'postgresql://user:pass@localhost:5432/db';
 
-    expect(validateEnv({ DATABASE_URL: databaseUrl }).DATABASE_URL).toBe(
-      databaseUrl,
-    );
+    expect(
+      validateEnv({ ...VALID_ENV, DATABASE_URL: databaseUrl }).DATABASE_URL,
+    ).toBe(databaseUrl);
+  });
+
+  describe('API_KEY_SHA256', () => {
+    const errorMessageFor = (config: Record<string, unknown>): string => {
+      try {
+        validateEnv(config);
+      } catch (caught) {
+        return (caught as Error).message;
+      }
+
+      return '';
+    };
+
+    it('is required, naming the key', () => {
+      expect(errorMessageFor({ DATABASE_URL: VALID_DATABASE_URL })).toContain(
+        'API_KEY_SHA256',
+      );
+    });
+
+    it.each([
+      ['uppercase', 'A1'.repeat(32)],
+      ['63 characters', 'a'.repeat(63)],
+      ['65 characters', 'a'.repeat(65)],
+      ['not hex', 'g'.repeat(64)],
+      ['empty', ''],
+    ])('rejects %s, naming the key without echoing it', (_case, value) => {
+      const message = errorMessageFor({ ...VALID_ENV, API_KEY_SHA256: value });
+
+      expect(message).toContain('API_KEY_SHA256');
+      if (value !== '') expect(message).not.toContain(value);
+    });
   });
 
   describe('FAKE_WEBHOOK_SECRET', () => {
     const SECRET_MIN_LENGTH = 32;
 
     it('is valid when unset and leaves the key absent', () => {
-      expect(
-        validateEnv({ DATABASE_URL: VALID_DATABASE_URL }),
-      ).not.toHaveProperty('FAKE_WEBHOOK_SECRET');
+      expect(validateEnv(VALID_ENV)).not.toHaveProperty('FAKE_WEBHOOK_SECRET');
     });
 
     it('accepts 32 characters', () => {
@@ -71,7 +106,7 @@ describe('validateEnv', () => {
 
       expect(
         validateEnv({
-          DATABASE_URL: VALID_DATABASE_URL,
+          ...VALID_ENV,
           FAKE_WEBHOOK_SECRET: secret,
         }).FAKE_WEBHOOK_SECRET,
       ).toBe(secret);
@@ -80,7 +115,7 @@ describe('validateEnv', () => {
     it('rejects an empty value, naming the key', () => {
       expect(() =>
         validateEnv({
-          DATABASE_URL: VALID_DATABASE_URL,
+          ...VALID_ENV,
           FAKE_WEBHOOK_SECRET: '',
         }),
       ).toThrow(/FAKE_WEBHOOK_SECRET/);
@@ -92,7 +127,7 @@ describe('validateEnv', () => {
       const error: unknown = (() => {
         try {
           return validateEnv({
-            DATABASE_URL: VALID_DATABASE_URL,
+            ...VALID_ENV,
             FAKE_WEBHOOK_SECRET: shortSecret,
           });
         } catch (caught) {
@@ -111,7 +146,7 @@ describe('validateEnv', () => {
       for (const interval of ['100', '3600000']) {
         expect(
           validateEnv({
-            DATABASE_URL: VALID_DATABASE_URL,
+            ...VALID_ENV,
             WEBHOOK_POLL_INTERVAL_MS: interval,
           }).WEBHOOK_POLL_INTERVAL_MS,
         ).toBe(Number(interval));
@@ -123,7 +158,7 @@ describe('validateEnv', () => {
       (interval) => {
         expect(() =>
           validateEnv({
-            DATABASE_URL: VALID_DATABASE_URL,
+            ...VALID_ENV,
             WEBHOOK_POLL_INTERVAL_MS: interval,
           }),
         ).toThrow(/WEBHOOK_POLL_INTERVAL_MS/);
@@ -138,7 +173,7 @@ describe('validateEnv', () => {
     ])('reads %s as %s', (value, isEnabled) => {
       expect(
         validateEnv({
-          DATABASE_URL: VALID_DATABASE_URL,
+          ...VALID_ENV,
           WEBHOOK_WORKER_ENABLED: value,
         }).WEBHOOK_WORKER_ENABLED,
       ).toBe(isEnabled);
@@ -147,7 +182,7 @@ describe('validateEnv', () => {
     it.each(['', 'maybe', 'ture'])('rejects %j, naming the key', (value) => {
       expect(() =>
         validateEnv({
-          DATABASE_URL: VALID_DATABASE_URL,
+          ...VALID_ENV,
           WEBHOOK_WORKER_ENABLED: value,
         }),
       ).toThrow(/WEBHOOK_WORKER_ENABLED/);
@@ -155,8 +190,8 @@ describe('validateEnv', () => {
   });
 
   it('rejects an unknown NODE_ENV', () => {
-    expect(() =>
-      validateEnv({ DATABASE_URL: VALID_DATABASE_URL, NODE_ENV: 'staging' }),
-    ).toThrow(/NODE_ENV/);
+    expect(() => validateEnv({ ...VALID_ENV, NODE_ENV: 'staging' })).toThrow(
+      /NODE_ENV/,
+    );
   });
 });

@@ -10,8 +10,12 @@ import {
   Post,
 } from '@nestjs/common';
 
+import { RouteAccess } from '@/auth/route-access.decorator';
+
 import { WebhooksService } from './webhooks.service';
 
+// Providers cannot hold our key; WebhooksService checks each delivery's signature.
+@RouteAccess('public')
 @Controller('webhooks')
 export class WebhooksController {
   constructor(private readonly webhooksService: WebhooksService) {}

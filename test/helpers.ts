@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 
-import type { INestApplication } from '@nestjs/common';
+import type { INestApplication, Type } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { sql } from 'drizzle-orm';
@@ -16,6 +16,8 @@ const PGLITE_POOL_MAX = 1;
 const REAL_POSTGRES_POOL_MAX = 5;
 const LOCK_WAIT_POLL_MS = 100;
 const LOCK_WAIT_DEADLINE_MS = 8000;
+// setup-env.ts configures the SHA-256 of this key.
+const TEST_API_KEY = 'e2e-test-api-key-with-enough-length-0001';
 
 const databaseUrl = process.env.E2E_DATABASE_URL as string;
 const isRealPostgres = process.env.E2E_REAL_POSTGRES === 'true';
@@ -32,6 +34,7 @@ type E2eAppOptions = {
   isWorkerEnabled?: boolean;
   pollIntervalMs?: number;
   fakeWebhookSecret?: string;
+  extraControllers?: Type<unknown>[];
 };
 
 type DatabaseCause = {
@@ -46,6 +49,7 @@ const createE2eApp = async ({
   isWorkerEnabled = false,
   pollIntervalMs,
   fakeWebhookSecret,
+  extraControllers = [],
 }: E2eAppOptions = {}): Promise<INestApplication> => {
   const env = validateEnv({
     ...process.env,
@@ -59,7 +63,10 @@ const createE2eApp = async ({
       ? {}
       : { FAKE_WEBHOOK_SECRET: fakeWebhookSecret }),
   });
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+  const moduleRef = await Test.createTestingModule({
+    imports: [AppModule],
+    controllers: extraControllers,
+  })
     .overrideProvider(ConfigService)
     .useValue({ get: (key: keyof Env) => env[key] })
     .compile();
@@ -141,6 +148,7 @@ export {
   describeOnRealPostgres,
   insertInboxEvent,
   serverOf,
+  TEST_API_KEY,
   trackSettled,
   waitUntilBlockedBy,
 };

@@ -8,7 +8,7 @@ Pet project at an early stage. Sandbox only, no real money: it only talks to pro
 
 ## Status
 
-What exists: the payment and refund ingest core, the fake provider, the health routes, the webhook route and the webhook worker. `POST /webhooks/:provider` verifies the signature and stores the delivery in `webhook_events`; the worker then applies it to payments and refunds. Everything else is planned, including the payment API, reconciliation and real providers.
+What exists: the payment and refund ingest core, the fake provider, the health routes, the webhook route, the webhook worker and `GET /api/v1/payments/:id`. `POST /webhooks/:provider` verifies the signature and stores the delivery in `webhook_events`; the worker then applies it to payments and refunds. Everything else is planned, including creating payments through the API, reconciliation and real providers.
 
 ## Stack
 
@@ -24,7 +24,7 @@ The repository root is the API. A web frontend will live in `web/` later.
 
 ## Run locally
 
-Copy `.env.example` to `.env` first. The app refuses to start when `DATABASE_URL` is missing or is not a Postgres URL.
+Copy `.env.example` to `.env` first. The app refuses to start when `DATABASE_URL` is missing or is not a Postgres URL, or when `API_KEY_SHA256` is missing or is not 64 lowercase hex characters.
 
 ### With Docker
 
@@ -72,6 +72,32 @@ The e2e tests apply migrations to `E2E_DATABASE_URL` once, before the Jest worke
 The role's 10 s `statement_timeout` also applies to migrations: a long statement in a migration needs `SET LOCAL statement_timeout = 0` before it.
 
 Git hooks (simple-git-hooks): pre-commit runs lint-staged, pre-push runs `check` and the unit tests. CI runs the same checks plus e2e and a Docker boot.
+
+## API access
+
+Routes under `/api/v1` need `Authorization: Bearer <key>`. Every route declares its access with `@RouteAccess`; a route that declares nothing answers 401, even with a valid key. `/health/*` and `/webhooks/:provider` are public: webhooks are checked by their signature.
+
+There is one key. The app only knows its SHA-256, so a stored hash cannot be used to call the API. Create a key and its hash with:
+
+```bash
+API_KEY=$(openssl rand -hex 32)
+echo "$API_KEY"
+printf %s "$API_KEY" | openssl dgst -sha256 -r | cut -d' ' -f1
+```
+
+Keep the key in your secret store and set the last line's output as `API_KEY_SHA256`. To rotate the key, change the hash and restart. `.env.example` and `docker-compose.yml` hold the hash of `local-dev-api-key`, for local development only.
+
+Errors under `/api/` are JSON of one shape, with a stable `code`:
+
+```json
+{
+  "statusCode": 401,
+  "code": "unauthorized",
+  "message": "Invalid or missing API key"
+}
+```
+
+`GET /api/v1/payments/:id` returns `paymentId`, `status`, `provider`, `amountMinor`, `currency`, `createdAt` and `updatedAt` from our database, or 404 `payment_not_found`. It does not call the provider.
 
 ## Health routes
 
