@@ -1109,6 +1109,7 @@ describe('Payments ingest', () => {
         '/api/v1/payments',
         '/api/v1/payments/:id',
         '/api/v1/payments/:paymentId/refunds',
+        '/checkout/paddle',
         '/health/live',
         '/health/ready',
         '/webhooks/:provider',

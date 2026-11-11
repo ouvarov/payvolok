@@ -12,6 +12,7 @@ import { configureApp } from '@/app.setup';
 import { validateEnv, type Env } from '@/config/env.schema';
 import type { Database } from '@/database/drizzle';
 import { webhookEvents } from '@/database/schemas/webhook-events.schema';
+import { PaddleProvider } from '@/providers/paddle/paddle.provider';
 
 const PGLITE_POOL_MAX = 1;
 const REAL_POSTGRES_POOL_MAX = 5;
@@ -38,7 +39,13 @@ type E2eAppOptions = {
   pollIntervalMs?: number;
   fakeWebhookSecret?: string;
   extraControllers?: Type<unknown>[];
+  paddleEnv?: PaddleEnv;
+  paddleProvider?: PaddleProvider;
 };
+
+type PaddleEnv = Partial<
+  Pick<Env, 'PADDLE_API_KEY' | 'PADDLE_WEBHOOK_SECRET' | 'PADDLE_CLIENT_TOKEN'>
+>;
 
 type DatabaseCause = {
   code?: string;
@@ -53,6 +60,8 @@ const createE2eApp = async ({
   pollIntervalMs,
   fakeWebhookSecret,
   extraControllers = [],
+  paddleEnv = {},
+  paddleProvider,
 }: E2eAppOptions = {}): Promise<INestApplication> => {
   const env = validateEnv({
     ...process.env,
@@ -65,14 +74,18 @@ const createE2eApp = async ({
     ...(fakeWebhookSecret === undefined
       ? {}
       : { FAKE_WEBHOOK_SECRET: fakeWebhookSecret }),
+    ...paddleEnv,
   });
-  const moduleRef = await Test.createTestingModule({
+  const moduleBuilder = Test.createTestingModule({
     imports: [AppModule],
     controllers: extraControllers,
   })
     .overrideProvider(ConfigService)
-    .useValue({ get: (key: keyof Env) => env[key] })
-    .compile();
+    .useValue({ get: (key: keyof Env) => env[key] });
+  if (paddleProvider) {
+    moduleBuilder.overrideProvider(PaddleProvider).useValue(paddleProvider);
+  }
+  const moduleRef = await moduleBuilder.compile();
   const app = moduleRef.createNestApplication();
   configureApp(app);
   await app.init();
