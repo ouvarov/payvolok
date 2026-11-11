@@ -11,6 +11,7 @@ import {
   transactionResponseFixture,
   type ErrorBodyName,
 } from './fixtures/paddle-fixtures';
+import { PADDLE_MAX_REQUESTS_PER_CALL } from './paddle-http';
 import { PaddleProvider } from './paddle.provider';
 
 type FetchMock = jest.Mock<Promise<Response>, Parameters<typeof fetch>>;
@@ -350,6 +351,7 @@ describe('PaddleProvider', () => {
         providerRefundId: ADJUSTMENT_ID,
         status: 'pending',
       });
+      expect(fetchFn).toHaveBeenCalledTimes(PADDLE_MAX_REQUESTS_PER_CALL);
       expect(requestOf(fetchFn, 0)).toEqual({
         url: `https://sandbox-api.paddle.com/transactions/${TRANSACTION_ID}`,
         method: 'GET',
