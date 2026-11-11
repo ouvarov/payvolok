@@ -425,20 +425,38 @@ describe('PaddleProvider', () => {
     });
 
     it('counts approved refunds and ignores rejected ones', async () => {
-      const fetchFn = fetchAnswering(
+      const adjustments = [
+        { status: 'approved', total: '300' },
+        { status: 'rejected', total: '700' },
+        { status: 'pending_approval', total: '300' },
+      ];
+      const tooMuchFetchFn = fetchAnswering(
         jsonResponse(completedTransaction()),
-        refundAdjustmentsPage([
-          { status: 'approved', total: '300' },
-          { status: 'rejected', total: '700' },
-          { status: 'pending_approval', total: '300' },
-        ]),
+        refundAdjustmentsPage(adjustments),
+        jsonResponse(adjustmentResponseFixture(), 201),
+      );
+      const restFetchFn = fetchAnswering(
+        jsonResponse(completedTransaction()),
+        refundAdjustmentsPage(adjustments),
         jsonResponse(adjustmentResponseFixture(), 201),
       );
 
       await expect(
-        providerWith(fetchFn).refund({ ...REFUND_INPUT, amountMinor: 401 }),
+        providerWith(tooMuchFetchFn).refund({
+          ...REFUND_INPUT,
+          amountMinor: 401,
+        }),
       ).rejects.toMatchObject({ kind: 'rejected' });
-      expect(postsOf(fetchFn)).toHaveLength(0);
+      await providerWith(restFetchFn).refund({
+        ...REFUND_INPUT,
+        amountMinor: 400,
+      });
+
+      expect(postsOf(tooMuchFetchFn)).toHaveLength(0);
+      expect(postsOf(restFetchFn)).toHaveLength(1);
+      expect(requestOf(restFetchFn, 2).body).toMatchObject({
+        items: [{ amount: '400' }],
+      });
     });
 
     it.each([
