@@ -23,7 +23,7 @@ import { webhookEvents } from '@/database/schemas/webhook-events.schema';
 import { IDEMPOTENCY_LEASE_SECONDS } from '@/idempotency/idempotency.constants';
 import { IdempotencyRepository } from '@/idempotency/idempotency.repository';
 import { PaymentsRepository } from '@/payments/payments.repository';
-import { encodeFakeId } from '@/providers/fake/fake-scenarios';
+import { encodeFakeId } from '@/providers/fake/fake-wire-format';
 import { FakeProvider } from '@/providers/fake/fake.provider';
 import {
   ProviderError,
