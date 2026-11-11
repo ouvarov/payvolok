@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { FakeProvider } from './fake/fake.provider';
+import { PaddleProvider } from './paddle/paddle.provider';
 import type { PaymentProvider, RefundIdentity } from './payment-provider.port';
 import { isProviderCode, type ProviderCode } from './provider.constants';
 
@@ -8,8 +9,8 @@ import { isProviderCode, type ProviderCode } from './provider.constants';
 export class ProviderRegistry {
   private readonly providers: Record<ProviderCode, PaymentProvider>;
 
-  constructor(fakeProvider: FakeProvider) {
-    this.providers = { fake: fakeProvider };
+  constructor(fakeProvider: FakeProvider, paddleProvider: PaddleProvider) {
+    this.providers = { fake: fakeProvider, paddle: paddleProvider };
   }
 
   get(code: ProviderCode): PaymentProvider {

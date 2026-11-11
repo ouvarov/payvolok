@@ -1,0 +1,52 @@
+{
+  "event_id": "evt_01jcsyntheticevent00000004",
+  "event_type": "transaction.paid",
+  "occurred_at": "2026-11-11T10:02:06.000000Z",
+  "notification_id": "ntf_01jcsyntheticnotification4",
+  "data": {
+    "id": "txn_01jcsyntheticpayment000001",
+    "status": "paid",
+    "customer_id": "ctm_01jcsyntheticcustomer00001",
+    "custom_data": {
+      "reference": "5b0b3a0e-6f0c-4c43-9d5e-0a8a7d5e1c11"
+    },
+    "origin": "api",
+    "collection_mode": "automatic",
+    "subscription_id": null,
+    "currency_code": "USD",
+    "created_at": "2026-11-11T10:00:00.000000Z",
+    "updated_at": "2026-11-11T10:02:06.000000Z",
+    "billed_at": "2026-11-11T10:02:05.000000Z",
+    "details": {
+      "totals": {
+        "subtotal": "1000",
+        "tax": "0",
+        "discount": "0",
+        "total": "1000",
+        "grand_total": "1000",
+        "balance": "0",
+        "currency_code": "USD"
+      },
+      "line_items": [
+        {
+          "id": "txnitm_01jcsyntheticlineitem00001",
+          "price_id": "pri_01jcsyntheticprice00000001",
+          "quantity": 1
+        }
+      ]
+    },
+    "payments": [
+      {
+        "payment_attempt_id": "1f0e5c8a-7d3b-4b8e-9c2a-5d6e7f8a9b0c",
+        "amount": "1000",
+        "status": "captured",
+        "error_code": null,
+        "created_at": "2026-11-11T10:02:00.000000Z",
+        "captured_at": "2026-11-11T10:02:05.000000Z"
+      }
+    ],
+    "checkout": {
+      "url": "https://payvolok.example.test/checkout/paddle?_ptxn=txn_01jcsyntheticpayment000001"
+    }
+  }
+}

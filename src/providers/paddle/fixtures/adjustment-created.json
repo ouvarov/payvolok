@@ -1,0 +1,48 @@
+{
+  "data": {
+    "id": "adj_01jcsyntheticrefund0000001",
+    "action": "refund",
+    "type": "partial",
+    "transaction_id": "txn_01jcsyntheticpayment000001",
+    "subscription_id": null,
+    "customer_id": "ctm_01jcsyntheticcustomer00001",
+    "reason": "api_refund",
+    "credit_applied_to_balance": null,
+    "currency_code": "USD",
+    "status": "pending_approval",
+    "items": [
+      {
+        "id": "adjitm_01jcsyntheticrefunditem001",
+        "item_id": "txnitm_01jcsyntheticlineitem00001",
+        "type": "partial",
+        "amount": "400",
+        "proration": null,
+        "totals": { "subtotal": "400", "tax": "0", "total": "400" }
+      }
+    ],
+    "totals": {
+      "subtotal": "400",
+      "tax": "0",
+      "total": "400",
+      "fee": "40",
+      "earnings": "360",
+      "currency_code": "USD",
+      "retained_fee": "0"
+    },
+    "payout_totals": {
+      "subtotal": "400",
+      "tax": "0",
+      "total": "400",
+      "fee": "40",
+      "retained_fee": "0",
+      "earnings": "360",
+      "currency_code": "USD"
+    },
+    "tax_rates_used": [],
+    "created_at": "2026-11-11T10:05:00.000000Z",
+    "updated_at": "2026-11-11T10:05:00.000000Z"
+  },
+  "meta": {
+    "request_id": "8e1f0a2b-3c4d-4e5f-8a6b-7c8d9e0f1a03"
+  }
+}

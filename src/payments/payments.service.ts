@@ -1,6 +1,7 @@
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
 
+import { CURRENCY_PATTERN } from '@/common/currency';
 import { ApiException } from '@/common/errors/api-exception';
 import type { DatabaseTransaction } from '@/database/drizzle';
 import { isUniqueViolationOf } from '@/database/postgres-errors';
@@ -10,7 +11,6 @@ import type { ProviderCode } from '@/providers/provider.constants';
 
 import { PaymentResponseDto } from './dto/payment-response.dto';
 import {
-  CURRENCY_PATTERN,
   PAYMENTS_PROVIDER_REF_UNIQUE,
   type PaymentPurpose,
   type PaymentStatus,

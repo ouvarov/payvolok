@@ -10,12 +10,11 @@ import {
   Min,
 } from 'class-validator';
 
+import { CURRENCY_PATTERN } from '@/common/currency';
 import {
   PROVIDER_CODES,
   type ProviderCode,
 } from '@/providers/provider.constants';
-
-import { CURRENCY_PATTERN } from '../payment.constants';
 
 const DESCRIPTION_MAX_LENGTH = 255;
 const RETURN_URL_MAX_LENGTH = 2048;

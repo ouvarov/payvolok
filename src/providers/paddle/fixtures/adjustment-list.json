@@ -1,0 +1,48 @@
+{
+  "data": [
+    {
+      "id": "adj_01jcsyntheticrefund0000001",
+      "action": "refund",
+      "type": "partial",
+      "transaction_id": "txn_01jcsyntheticpayment000001",
+      "subscription_id": null,
+      "customer_id": "ctm_01jcsyntheticcustomer00001",
+      "reason": "api_refund",
+      "credit_applied_to_balance": null,
+      "currency_code": "USD",
+      "status": "approved",
+      "items": [
+        {
+          "id": "adjitm_01jcsyntheticrefunditem001",
+          "item_id": "txnitm_01jcsyntheticlineitem00001",
+          "type": "partial",
+          "amount": "400",
+          "proration": null,
+          "totals": { "subtotal": "400", "tax": "0", "total": "400" }
+        }
+      ],
+      "totals": {
+        "subtotal": "400",
+        "tax": "0",
+        "total": "400",
+        "fee": "40",
+        "earnings": "360",
+        "currency_code": "USD",
+        "retained_fee": "0"
+      },
+      "payout_totals": null,
+      "tax_rates_used": [],
+      "created_at": "2026-11-11T10:05:00.000000Z",
+      "updated_at": "2026-11-11T10:15:00.000000Z"
+    }
+  ],
+  "meta": {
+    "request_id": "9f2a1b3c-4d5e-4f6a-9b7c-8d9e0f1a2b04",
+    "pagination": {
+      "per_page": 10,
+      "next": "https://sandbox-api.paddle.com/adjustments?after=adj_01jcsyntheticrefund0000001",
+      "has_more": false,
+      "estimated_total": 1
+    }
+  }
+}

@@ -1,14 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
 
+import { CURRENCY_PATTERN } from '@/common/currency';
 import type { DatabaseTransaction } from '@/database/drizzle';
 import { isUniqueViolationOf } from '@/database/postgres-errors';
 import type { Payment } from '@/database/schemas/payments.schema';
 import type { Refund } from '@/database/schemas/refunds.schema';
-import {
-  CURRENCY_PATTERN,
-  type PaymentOrigin,
-} from '@/payments/payment.constants';
+import type { PaymentOrigin } from '@/payments/payment.constants';
 import type { TransitionDecision } from '@/payments/payment-state-machine';
 import {
   IngestRejectedError,

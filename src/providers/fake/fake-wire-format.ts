@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { CURRENCY_PATTERN } from '@/common/currency';
+
 import type {
   ProviderErrorKind,
   ProviderPaymentStatus,
@@ -106,7 +108,7 @@ const refundScenarioFor = (amountMinor: number): FakeRefundScenario =>
   DEFAULT_REFUND_SCENARIO;
 
 const amountMinorSchema = z.int().nonnegative();
-const currencySchema = z.string().regex(/^[A-Z]{3}$/);
+const currencySchema = z.string().regex(CURRENCY_PATTERN);
 
 const fakePaymentIdentitySchema = z.strictObject({
   reference: z.string(),

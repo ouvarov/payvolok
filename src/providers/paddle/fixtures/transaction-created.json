@@ -1,0 +1,120 @@
+{
+  "data": {
+    "id": "txn_01jcsyntheticpayment000001",
+    "status": "draft",
+    "customer_id": null,
+    "address_id": null,
+    "business_id": null,
+    "custom_data": {
+      "reference": "5b0b3a0e-6f0c-4c43-9d5e-0a8a7d5e1c11"
+    },
+    "origin": "api",
+    "collection_mode": "automatic",
+    "subscription_id": null,
+    "invoice_id": null,
+    "invoice_number": null,
+    "billing_details": null,
+    "billing_period": null,
+    "currency_code": "USD",
+    "discount_id": null,
+    "created_at": "2026-11-11T10:00:00.000000Z",
+    "updated_at": "2026-11-11T10:00:00.000000Z",
+    "billed_at": null,
+    "revised_at": null,
+    "items": [
+      {
+        "price": {
+          "id": "pri_01jcsyntheticprice00000001",
+          "description": "e2e order",
+          "type": "custom",
+          "name": null,
+          "product_id": "pro_01jcsyntheticproduct000001",
+          "billing_cycle": null,
+          "trial_period": null,
+          "tax_mode": "internal",
+          "unit_price": { "amount": "1000", "currency_code": "USD" },
+          "unit_price_overrides": [],
+          "custom_data": null,
+          "quantity": { "minimum": 1, "maximum": 100 },
+          "status": "active",
+          "created_at": "2026-11-11T10:00:00.000000Z",
+          "updated_at": "2026-11-11T10:00:00.000000Z",
+          "import_meta": null
+        },
+        "quantity": 1,
+        "proration": null
+      }
+    ],
+    "details": {
+      "tax_rates_used": [],
+      "totals": {
+        "subtotal": "1000",
+        "tax": "0",
+        "discount": "0",
+        "total": "1000",
+        "grand_total": "1000",
+        "grand_total_tax": "0",
+        "fee": null,
+        "credit": "0",
+        "credit_to_balance": "0",
+        "balance": "1000",
+        "earnings": null,
+        "currency_code": "USD"
+      },
+      "adjusted_totals": {
+        "subtotal": "1000",
+        "tax": "0",
+        "total": "1000",
+        "grand_total": "1000",
+        "grand_total_tax": "0",
+        "fee": "0",
+        "earnings": "0",
+        "currency_code": "USD",
+        "retained_fee": "0"
+      },
+      "payout_totals": null,
+      "adjusted_payout_totals": null,
+      "line_items": [
+        {
+          "id": "txnitm_01jcsyntheticlineitem00001",
+          "price_id": "pri_01jcsyntheticprice00000001",
+          "quantity": 1,
+          "totals": {
+            "subtotal": "1000",
+            "tax": "0",
+            "discount": "0",
+            "total": "1000"
+          },
+          "product": {
+            "id": "pro_01jcsyntheticproduct000001",
+            "name": "e2e order",
+            "description": null,
+            "type": "custom",
+            "tax_category": "standard",
+            "image_url": null,
+            "custom_data": null,
+            "status": "active",
+            "created_at": "2026-11-11T10:00:00.000000Z",
+            "updated_at": "2026-11-11T10:00:00.000000Z",
+            "import_meta": null
+          },
+          "tax_rate": "0",
+          "unit_totals": {
+            "subtotal": "1000",
+            "tax": "0",
+            "discount": "0",
+            "total": "1000"
+          },
+          "proration": null
+        }
+      ]
+    },
+    "payments": [],
+    "checkout": {
+      "url": "https://payvolok.example.test/checkout/paddle?_ptxn=txn_01jcsyntheticpayment000001"
+    }
+  },
+  "meta": {
+    "request_id": "6d2b1c0e-0b6a-4f3c-9a51-2f0e8c1d7a01"
+  }
+}

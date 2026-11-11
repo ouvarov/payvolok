@@ -1,0 +1,41 @@
+{
+  "event_id": "evt_01jcsyntheticevent00000003",
+  "event_type": "transaction.canceled",
+  "occurred_at": "2026-11-11T11:00:00.000000Z",
+  "notification_id": "ntf_01jcsyntheticnotification3",
+  "data": {
+    "id": "txn_01jcsyntheticpayment000001",
+    "status": "canceled",
+    "customer_id": null,
+    "custom_data": {
+      "reference": "5b0b3a0e-6f0c-4c43-9d5e-0a8a7d5e1c11"
+    },
+    "origin": "api",
+    "collection_mode": "automatic",
+    "subscription_id": null,
+    "currency_code": "USD",
+    "created_at": "2026-11-11T10:00:00.000000Z",
+    "updated_at": "2026-11-11T11:00:00.000000Z",
+    "billed_at": null,
+    "details": {
+      "totals": {
+        "subtotal": "1000",
+        "tax": "0",
+        "discount": "0",
+        "total": "1000",
+        "grand_total": "1000",
+        "balance": "1000",
+        "currency_code": "USD"
+      },
+      "line_items": [
+        {
+          "id": "txnitm_01jcsyntheticlineitem00001",
+          "price_id": "pri_01jcsyntheticprice00000001",
+          "quantity": 1
+        }
+      ]
+    },
+    "payments": [],
+    "checkout": null
+  }
+}
