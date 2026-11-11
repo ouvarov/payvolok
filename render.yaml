@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: payvolok-api
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health/live
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: API_KEY_SHA256
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: PADDLE_API_KEY
+        sync: false
+      - key: PADDLE_WEBHOOK_SECRET
+        sync: false
+      - key: PADDLE_CLIENT_TOKEN
+        sync: false
