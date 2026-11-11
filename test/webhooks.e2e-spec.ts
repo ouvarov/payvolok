@@ -109,6 +109,15 @@ const RETRY_DELAY_TOLERANCE_SECONDS = 5;
 const DRAINED_ROWS = 50;
 const CLIENT_END_TIMEOUT_SECONDS = 5;
 
+type PaymentFlow = {
+  amountMinor: number;
+  eventCount: number;
+  finalStatus: PaymentStatus;
+  path: PaymentStatus[];
+};
+
+type RunOverrides = Partial<Pick<ExpectedEnd, 'statuses' | 'attemptsOf'>>;
+
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -1817,12 +1826,7 @@ describe('Webhooks route', () => {
         ...API_PATH,
         'partially_refunded',
       ];
-      const PAYMENT_FLOWS: {
-        amountMinor: number;
-        eventCount: number;
-        finalStatus: PaymentStatus;
-        path: PaymentStatus[];
-      }[] = [
+      const PAYMENT_FLOWS: PaymentFlow[] = [
         {
           amountMinor: 1000,
           eventCount: 2,
@@ -1954,7 +1958,7 @@ describe('Webhooks route', () => {
         );
 
       const paymentFlowEnd = (
-        flow: (typeof PAYMENT_FLOWS)[number],
+        flow: PaymentFlow,
         providerPaymentId: string,
         statuses: number[] = okStatuses(flow.eventCount),
       ): ExpectedEnd => ({
@@ -1975,7 +1979,7 @@ describe('Webhooks route', () => {
         {
           statuses = okStatuses(REFUNDED_EVENT_COUNT),
           attemptsOf = {},
-        }: { statuses?: number[]; attemptsOf?: Record<string, number> } = {},
+        }: RunOverrides = {},
       ): ExpectedEnd => ({
         amountMinor: PAYMENT_AMOUNT_MINOR,
         providerPaymentId: opened.providerPaymentId,
