@@ -178,7 +178,7 @@ It signs webhooks with `FAKE_WEBHOOK_SECRET`, at least 32 characters, so several
 
 A payment answers with Paddle's own `checkout.url`: the account's default payment link plus `?_ptxn=txn_…`. The default payment link must point to `GET /checkout/paddle`, a small public page that loads Paddle.js in sandbox mode; Paddle.js opens the checkout for `_ptxn` by itself and shows its own success screen. The page is temporary, until the web frontend replaces it.
 
-A refund is a Paddle adjustment: it stays `pending` until Paddle approves it (the sandbox approves every ten minutes) and the `adjustment.updated` webhook arrives.
+A refund is a Paddle adjustment: it stays `pending` until Paddle approves it (the sandbox approves every ten minutes) and the `adjustment.updated` webhook arrives. Before each refund the adapter reads the transaction's refund adjustments from Paddle and refuses (`422 refund_rejected`) an amount above what pending and approved refunds leave, so a retry after a timed-out refund cannot refund the same money twice.
 
 Manual sandbox setup:
 

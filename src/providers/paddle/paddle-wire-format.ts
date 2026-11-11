@@ -122,6 +122,11 @@ const paddleAdjustmentSchema = z.object({
   totals: z.object({ total: amountMinorSchema }),
 });
 
+const paddleAdjustmentPageSchema = z.object({
+  data: z.array(paddleAdjustmentSchema),
+  meta: z.object({ pagination: z.object({ has_more: z.boolean() }) }),
+});
+
 const paddleEnvelopeSchema = z.object({
   event_id: z.string().startsWith('evt_'),
   event_type: z.string(),
@@ -264,6 +269,7 @@ export {
   ADJUSTMENT_ID_PATTERN,
   ADJUSTMENT_STATUSES,
   amountMinorOf,
+  paddleAdjustmentPageSchema,
   paddleAdjustmentSchema,
   paddleCreatedTransactionSchema,
   paddleEnvelopeSchema,

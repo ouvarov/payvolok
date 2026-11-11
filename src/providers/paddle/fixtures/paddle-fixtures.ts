@@ -90,7 +90,9 @@ const adjustmentResponseFixture =
 
 const adjustmentListFixture = (): PaddleResponseFixture<
   PaddleAdjustmentFixture[]
-> => jsonFixtureOf('adjustment-list');
+> & {
+  meta: { pagination: { per_page: number; next: string; has_more: boolean } };
+} => jsonFixtureOf('adjustment-list');
 
 const errorBodyFixture = (name: ErrorBodyName): unknown =>
   jsonFixtureOf<Record<ErrorBodyName, unknown>>('error-bodies')[name];

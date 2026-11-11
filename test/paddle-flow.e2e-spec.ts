@@ -14,6 +14,7 @@ import {
 } from '@/database/schemas/webhook-events.schema';
 import {
   adjustmentEventFixture,
+  adjustmentListFixture,
   adjustmentResponseFixture,
   PADDLE_SIGNATURE_HEADER,
   signedPaddleWebhook,
@@ -237,6 +238,11 @@ describe('Paddle provider', () => {
     transaction.data.details.totals.grand_total = String(amountMinor);
     fetchHandlers.set(`GET ${PADDLE_API}/transactions/${transactionId}`, () =>
       Promise.resolve(jsonResponse(transaction)),
+    );
+    fetchHandlers.set(
+      `GET ${PADDLE_API}/adjustments?transaction_id=${transactionId}&action=refund&per_page=50`,
+      () =>
+        Promise.resolve(jsonResponse({ ...adjustmentListFixture(), data: [] })),
     );
     fetchHandlers.set(`POST ${PADDLE_API}/adjustments`, async (init) => {
       const { items } = requestBodyOf(init) as {

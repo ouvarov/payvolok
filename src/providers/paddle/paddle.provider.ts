@@ -29,6 +29,7 @@ import { isSignatureValid } from './paddle-signature';
 import {
   ADJUSTMENT_ID_PATTERN,
   ADJUSTMENT_STATUSES,
+  paddleAdjustmentPageSchema,
   paddleAdjustmentSchema,
   paddleCreatedTransactionSchema,
   paddleEnvelopeSchema,
@@ -51,6 +52,11 @@ const SIGNATURE_HEADER = 'paddle-signature';
 const PRODUCT_NAME_MAX_LENGTH = 200;
 const REFUND_REASON = 'api_refund';
 const HTTP_NOT_FOUND = 404;
+const ADJUSTMENTS_PAGE_SIZE = 50;
+const RESERVING_ADJUSTMENT_STATUSES: readonly string[] = [
+  'pending_approval',
+  'approved',
+];
 
 const PADDLE_CAPABILITIES: ProviderCapabilities = {
   recurring: 'managed',
@@ -94,8 +100,12 @@ const transactionBodyOf = (input: CreatePaymentInput) => ({
 const adjustmentBodyOf = (
   transaction: PaddleRefundableTransaction,
   amountMinor: number,
+  refundedMinor: number,
 ) => {
-  if (amountMinor === transaction.details.totals.grand_total) {
+  if (
+    refundedMinor === 0 &&
+    amountMinor === transaction.details.totals.grand_total
+  ) {
     return {
       action: 'refund',
       type: 'full',
@@ -137,23 +147,39 @@ const adjustmentStatusOf = (
 
 const dataEnvelopeSchema = z.object({ data: z.unknown() });
 
-const dataOf = <Output>(
+const bodyOf = <Output>(
   schema: z.ZodType<Output>,
   response: PaddleResponse,
 ): Output => {
   if (!isOk(response)) throw paddleErrorOf(response);
 
-  const envelope = dataEnvelopeSchema.safeParse(response.body);
-  const data = envelope.success ? schema.safeParse(envelope.data.data) : null;
-  if (!data?.success) {
+  const body = schema.safeParse(response.body);
+  if (!body.success) {
     throw paddleError(
       `paddle ${response.status} answer does not match the expected shape`,
       'unavailable',
     );
   }
 
-  return data.data;
+  return body.data;
 };
+
+const dataOf = <Output>(
+  schema: z.ZodType<Output>,
+  response: PaddleResponse,
+): Output => {
+  const { data } = bodyOf(dataEnvelopeSchema, response);
+
+  return bodyOf(schema, { status: response.status, body: data });
+};
+
+const reservedRefundMinorOf = (adjustments: PaddleAdjustment[]): number =>
+  adjustments
+    .filter(
+      ({ action, status }) =>
+        action === 'refund' && RESERVING_ADJUSTMENT_STATUSES.includes(status),
+    )
+    .reduce((sum, { totals }) => sum + totals.total, 0);
 
 const unknownBodyEvents = (rawBody: Buffer): ProviderEvents => [
   {
@@ -233,12 +259,21 @@ export class PaddleProvider implements PaymentProvider {
       throw rejectedError('Refund currency differs');
     }
 
+    // Our refund rows miss an adjustment whose POST timed out, so Paddle's own list decides.
+    const refundedMinor = await this.refundedMinorOf(transaction.id);
+    if (
+      input.amountMinor >
+      transaction.details.totals.grand_total - refundedMinor
+    ) {
+      throw rejectedError('Refund exceeds the amount Paddle has left');
+    }
+
     const adjustment = dataOf(
       paddleAdjustmentSchema,
       await this.send({
         method: 'POST',
         path: '/adjustments',
-        body: adjustmentBodyOf(transaction, input.amountMinor),
+        body: adjustmentBodyOf(transaction, input.amountMinor, refundedMinor),
       }),
     );
 
@@ -278,6 +313,29 @@ export class PaddleProvider implements PaymentProvider {
     if (!envelope.success) return unknownBodyEvents(request.rawBody);
 
     return [toProviderEvent(envelope.data)];
+  }
+
+  private async refundedMinorOf(transactionId: string): Promise<number> {
+    const page = bodyOf(
+      paddleAdjustmentPageSchema,
+      await this.send({
+        method: 'GET',
+        path: '/adjustments',
+        query: {
+          transaction_id: transactionId,
+          action: 'refund',
+          per_page: String(ADJUSTMENTS_PAGE_SIZE),
+        },
+      }),
+    );
+    if (page.meta.pagination.has_more) {
+      throw paddleError(
+        `paddle transaction ${transactionId} has more refund adjustments than one page`,
+        'unavailable',
+      );
+    }
+
+    return reservedRefundMinorOf(page.data);
   }
 
   private async paymentStatusOf(

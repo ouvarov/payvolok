@@ -309,9 +309,35 @@ describe('PaddleProvider', () => {
   });
 
   describe('refund', () => {
-    it('reads the transaction, then refunds it in full when the amount is the grand total', async () => {
+    const refundAdjustmentsPage = (
+      adjustments: { status: string; total: string }[] = [],
+      hasMore = false,
+    ) => {
+      const fixture = adjustmentListFixture();
+      const [template] = fixture.data;
+
+      return jsonResponse({
+        ...fixture,
+        data: adjustments.map(({ status, total }, index) => ({
+          ...template,
+          id: `adj_01jcsyntheticrefund000000${index + 2}`,
+          status,
+          totals: { ...template.totals, total },
+        })),
+        meta: {
+          ...fixture.meta,
+          pagination: { ...fixture.meta.pagination, has_more: hasMore },
+        },
+      });
+    };
+
+    const postsOf = (fetchFn: FetchMock) =>
+      fetchFn.mock.calls.filter(([, init]) => init?.method === 'POST');
+
+    it('reads the transaction and its refunds, then refunds it in full when nothing was refunded', async () => {
       const fetchFn = fetchAnswering(
         jsonResponse(completedTransaction()),
+        refundAdjustmentsPage(),
         jsonResponse(adjustmentResponseFixture(), 201),
       );
 
@@ -330,6 +356,11 @@ describe('PaddleProvider', () => {
         body: undefined,
       });
       expect(requestOf(fetchFn, 1)).toEqual({
+        url: `https://sandbox-api.paddle.com/adjustments?transaction_id=${TRANSACTION_ID}&action=refund&per_page=50`,
+        method: 'GET',
+        body: undefined,
+      });
+      expect(requestOf(fetchFn, 2)).toEqual({
         url: 'https://sandbox-api.paddle.com/adjustments',
         method: 'POST',
         body: {
@@ -344,12 +375,13 @@ describe('PaddleProvider', () => {
     it('refunds part of the only line item', async () => {
       const fetchFn = fetchAnswering(
         jsonResponse(completedTransaction()),
+        refundAdjustmentsPage(),
         jsonResponse(adjustmentResponseFixture(), 201),
       );
 
       await providerWith(fetchFn).refund(REFUND_INPUT);
 
-      expect(requestOf(fetchFn, 1).body).toEqual({
+      expect(requestOf(fetchFn, 2).body).toEqual({
         action: 'refund',
         type: 'partial',
         tax_mode: 'internal',
@@ -359,6 +391,70 @@ describe('PaddleProvider', () => {
       });
     });
 
+    it('rejects a retry for an amount a pending refund already holds, without a POST', async () => {
+      const fetchFn = fetchAnswering(
+        jsonResponse(completedTransaction()),
+        refundAdjustmentsPage([{ status: 'pending_approval', total: '600' }]),
+      );
+
+      const rejection = await rejectionOf(
+        providerWith(fetchFn).refund({ ...REFUND_INPUT, amountMinor: 600 }),
+      );
+
+      expect(rejection.kind).toBe('rejected');
+      expect(postsOf(fetchFn)).toHaveLength(0);
+    });
+
+    it('refunds the rest partially after a pending refund', async () => {
+      const fetchFn = fetchAnswering(
+        jsonResponse(completedTransaction()),
+        refundAdjustmentsPage([{ status: 'pending_approval', total: '600' }]),
+        jsonResponse(adjustmentResponseFixture(), 201),
+      );
+
+      await providerWith(fetchFn).refund({ ...REFUND_INPUT, amountMinor: 400 });
+
+      expect(requestOf(fetchFn, 2).body).toMatchObject({
+        type: 'partial',
+        items: [{ item_id: LINE_ITEM_ID, type: 'partial', amount: '400' }],
+      });
+    });
+
+    it('counts approved refunds and ignores rejected ones', async () => {
+      const fetchFn = fetchAnswering(
+        jsonResponse(completedTransaction()),
+        refundAdjustmentsPage([
+          { status: 'approved', total: '300' },
+          { status: 'rejected', total: '700' },
+          { status: 'pending_approval', total: '300' },
+        ]),
+        jsonResponse(adjustmentResponseFixture(), 201),
+      );
+
+      await expect(
+        providerWith(fetchFn).refund({ ...REFUND_INPUT, amountMinor: 401 }),
+      ).rejects.toMatchObject({ kind: 'rejected' });
+      expect(postsOf(fetchFn)).toHaveLength(0);
+    });
+
+    it.each([
+      ['a failed list', jsonResponse(errorBodyFixture('internal_error'), 500)],
+      ['a list with more pages', refundAdjustmentsPage([], true)],
+      ['a list that fails the schema', jsonResponse({ data: 'none' })],
+    ])('treats %s as unavailable without a POST', async (_case, response) => {
+      const fetchFn = fetchAnswering(
+        jsonResponse(completedTransaction()),
+        response,
+      );
+
+      const rejection = await rejectionOf(
+        providerWith(fetchFn).refund(REFUND_INPUT),
+      );
+
+      expect(rejection.kind).toBe('unavailable');
+      expect(postsOf(fetchFn)).toHaveLength(0);
+    });
+
     it.each([
       ['pending_approval', 'pending'],
       ['approved', 'succeeded'],
@@ -366,6 +462,7 @@ describe('PaddleProvider', () => {
     ])('maps a created %s adjustment to %s', async (status, refundStatus) => {
       const fetchFn = fetchAnswering(
         jsonResponse(completedTransaction()),
+        refundAdjustmentsPage(),
         jsonResponse(adjustmentWithStatus(status), 201),
       );
 
@@ -380,6 +477,7 @@ describe('PaddleProvider', () => {
     it('treats an adjustment status it does not know as unavailable', async () => {
       const fetchFn = fetchAnswering(
         jsonResponse(completedTransaction()),
+        refundAdjustmentsPage(),
         jsonResponse(adjustmentWithStatus('reversed'), 201),
       );
 
@@ -425,15 +523,14 @@ describe('PaddleProvider', () => {
         jsonResponse(errorBodyFixture('not_found'), 404),
       ],
     ])('rejects %s without creating an adjustment', async (_case, response) => {
-      const fetchFn = fetchAnswering(response);
+      const fetchFn = fetchAnswering(response, refundAdjustmentsPage());
 
       const rejection = await rejectionOf(
         providerWith(fetchFn).refund(REFUND_INPUT),
       );
 
       expect(rejection.kind).toBe('rejected');
-      expect(fetchFn).toHaveBeenCalledTimes(1);
-      expect(requestOf(fetchFn, 0).method).toBe('GET');
+      expect(postsOf(fetchFn)).toHaveLength(0);
     });
 
     it.each([

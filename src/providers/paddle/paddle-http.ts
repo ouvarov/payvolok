@@ -17,7 +17,7 @@ type PaddleResponse = { status: number; body: unknown };
 const PADDLE_API_BASE_URL = 'https://sandbox-api.paddle.com';
 const PADDLE_API_VERSION = '1';
 const PADDLE_REQUEST_TIMEOUT_MS = 8000;
-const PADDLE_MAX_REQUESTS_PER_CALL = 2;
+const PADDLE_MAX_REQUESTS_PER_CALL = 3;
 const DEFAULT_CHECKOUT_URL_NOT_SET_CODE =
   'transaction_default_checkout_url_not_set';
 
