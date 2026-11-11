@@ -8,7 +8,7 @@ Pet project at an early stage. Sandbox only, no real money: it only talks to pro
 
 ## Status
 
-What exists: the payment and refund ingest core, the fake provider, the health routes, the webhook route, the webhook worker, `POST /api/v1/payments`, `GET /api/v1/payments/:id` and `POST /api/v1/payments/:paymentId/refunds`. `POST /webhooks/:provider` verifies the signature and stores the delivery in `webhook_events`; the worker then applies it to payments and refunds. Everything else is planned, including reconciliation and real providers.
+What exists: the payment and refund ingest core, the fake provider, the health routes, the webhook route, the webhook worker, `POST /api/v1/payments`, `GET /api/v1/payments/:id` and `POST /api/v1/payments/:paymentId/refunds`. `POST /webhooks/:provider` verifies the signature and stores the delivery in `webhook_events`; the worker then applies it to payments and refunds. The first real provider is Paddle, sandbox only, for one-off payments and refunds. Everything else is planned, including reconciliation and more providers.
 
 ## Stack
 
@@ -20,7 +20,7 @@ The repository root is the API. A web frontend will live in `web/` later.
 
 - **Admin panel:** password protected; view everything and set up subscriptions.
 - **Open test page:** try a sandbox checkout without logging in.
-- **Providers:** Monobank first, then Paddle, then the rest one at a time.
+- **Providers:** Paddle first (one-off payments and refunds exist, see below), then the rest one at a time.
 
 ## Run locally
 
@@ -75,7 +75,7 @@ Git hooks (simple-git-hooks): pre-commit runs lint-staged, pre-push runs `check`
 
 ## API access
 
-Routes under `/api/v1` need `Authorization: Bearer <key>`. Every route declares its access with `@RouteAccess`; a route that declares nothing answers 401, even with a valid key. `/health/*` and `/webhooks/:provider` are public: webhooks are checked by their signature.
+Routes under `/api/v1` need `Authorization: Bearer <key>`. Every route declares its access with `@RouteAccess`; a route that declares nothing answers 401, even with a valid key. `/health/*`, `/webhooks/:provider` and `/checkout/paddle` are public: webhooks are checked by their signature.
 
 There is one key. The app only knows its SHA-256, so a stored hash cannot be used to call the API. Create a key and its hash with:
 
@@ -167,6 +167,32 @@ A row ends `processed` when at least one payment or refund event was applied, `i
 Creating a payment fails at once for three endings: `97` is rejected (`422 order_rejected`), `98` is an outage and `99` a misconfiguration (both `503 provider_unavailable`). A refund amount with those endings fails the same way, with `422 refund_rejected` for `97`, once the amount is within the payment.
 
 It signs webhooks with `FAKE_WEBHOOK_SECRET`, at least 32 characters, so several instances verify each other. When it is unset, each process makes a random secret at boot.
+
+## Paddle
+
+`paddle` uses the Paddle Billing sandbox only (`https://sandbox-api.paddle.com`); a live key is refused at boot. All three variables are optional, and an empty value in `.env` counts as unset:
+
+- `PADDLE_API_KEY` (`pdl_sdbx_apikey_…`), with transaction and adjustment read and write. Without it a `paddle` payment or refund answers `503 provider_unavailable`.
+- `PADDLE_WEBHOOK_SECRET` (`pdl_ntfset_…`), the secret of the notification destination. Without it `POST /webhooks/paddle` answers 503, so Paddle retries.
+- `PADDLE_CLIENT_TOKEN` (`test_…`), the client-side token for the checkout page. Without it the page answers 503.
+
+A payment answers with Paddle's own `checkout.url`: the account's default payment link plus `?_ptxn=txn_…`. The default payment link must point to `GET /checkout/paddle`, a small public page that loads Paddle.js in sandbox mode; Paddle.js opens the checkout for `_ptxn` by itself and shows its own success screen. The page is temporary, until the web frontend replaces it.
+
+A refund is a Paddle adjustment: it stays `pending` until Paddle approves it (the sandbox approves every ten minutes) and the `adjustment.updated` webhook arrives.
+
+Manual sandbox setup:
+
+1. Sign up at sandbox-vendors.paddle.com.
+2. Create the API key and the client-side token. In our sandbox dashboard both are under **My account settings**; Paddle's docs call the place **Developer tools > Authentication**. Put them in `.env`.
+3. Expose the local port with a tunnel (ngrok or cloudflared), or deploy, and set `PUBLIC_BASE_URL` to that URL.
+4. **Checkout > Checkout settings** (Paddle's docs: **Checkout configuration**): set the default payment link to `<PUBLIC_BASE_URL>/checkout/paddle`. Paddle creates no transaction without a default payment link.
+5. **Developer tools > Notifications**: add the destination `<PUBLIC_BASE_URL>/webhooks/paddle` with the events `transaction.completed`, `transaction.payment_failed`, `transaction.canceled`, `transaction.paid`, `adjustment.created` and `adjustment.updated`, then put its secret in `PADDLE_WEBHOOK_SECRET`.
+
+`scripts/paddle-sandbox-check.ts` calls the sandbox by hand (never in tests or CI): it creates a payment, prints the checkout URL and the status, tries a refund of the unpaid payment, a bad currency, an empty description and an invalid key, and prints Paddle's answers without the key:
+
+```bash
+node --env-file=.env -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/paddle-sandbox-check.ts
+```
 
 ## License
 

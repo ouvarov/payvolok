@@ -37,7 +37,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['src/database/migrate.ts'],
+    files: ['src/database/migrate.ts', 'scripts/**/*.ts'],
     rules: { 'no-console': 'off' },
   },
   prettier,
