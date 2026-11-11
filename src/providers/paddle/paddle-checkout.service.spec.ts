@@ -36,12 +36,13 @@ describe('PaddleCheckoutService', () => {
     );
   });
 
-  it('answers 503 and logs an error without a client token', () => {
+  it('answers 503 on every request without a client token but logs the error once', () => {
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    const service = new PaddleCheckoutService(null);
 
-    expect(() => new PaddleCheckoutService(null).render()).toThrow(
-      ServiceUnavailableException,
-    );
+    for (let request = 0; request < 3; request += 1) {
+      expect(() => service.render()).toThrow(ServiceUnavailableException);
+    }
     expect(error).toHaveBeenCalledTimes(1);
   });
 });
