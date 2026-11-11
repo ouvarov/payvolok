@@ -1,0 +1,71 @@
+{
+  "invalid_field": {
+    "error": {
+      "type": "request_error",
+      "code": "invalid_field",
+      "detail": "Request does not pass validation.",
+      "documentation_url": "https://developer.paddle.com/errors/shared/invalid_field",
+      "errors": [
+        {
+          "field": "items[0].price.unit_price.currency_code",
+          "message": "must be a supported currency code"
+        }
+      ]
+    },
+    "meta": { "request_id": "a0b1c2d3-e4f5-4a6b-8c7d-9e0f1a2b3c05" }
+  },
+  "transaction_default_checkout_url_not_set": {
+    "error": {
+      "type": "request_error",
+      "code": "transaction_default_checkout_url_not_set",
+      "detail": "A Default Payment Link has not yet been defined within the Paddle Dashboard",
+      "documentation_url": "https://developer.paddle.com/errors/transactions/transaction_default_checkout_url_not_set"
+    },
+    "meta": { "request_id": "b1c2d3e4-f5a6-4b7c-9d8e-0f1a2b3c4d06" }
+  },
+  "invalid_token": {
+    "error": {
+      "type": "request_error",
+      "code": "invalid_token",
+      "detail": "Authentication token is invalid. Check the API key or rotate it.",
+      "documentation_url": "https://developer.paddle.com/errors/shared/invalid_token"
+    },
+    "meta": { "request_id": "c2d3e4f5-a6b7-4c8d-8e9f-1a2b3c4d5e07" }
+  },
+  "forbidden": {
+    "error": {
+      "type": "request_error",
+      "code": "forbidden",
+      "detail": "You aren't permitted to perform this request.",
+      "documentation_url": "https://developer.paddle.com/errors/shared/forbidden"
+    },
+    "meta": { "request_id": "d3e4f5a6-b7c8-4d9e-9f0a-2b3c4d5e6f08" }
+  },
+  "not_found": {
+    "error": {
+      "type": "request_error",
+      "code": "not_found",
+      "detail": "Entity txn_01jcsyntheticpayment000001 not found",
+      "documentation_url": "https://developer.paddle.com/errors/shared/not_found"
+    },
+    "meta": { "request_id": "e4f5a6b7-c8d9-4e0f-8a1b-3c4d5e6f7a09" }
+  },
+  "too_many_requests": {
+    "error": {
+      "type": "request_error",
+      "code": "too_many_requests",
+      "detail": "IP address exceeded the allowed rate limit. Retry after the number of seconds in the Retry-After header.",
+      "documentation_url": "https://developer.paddle.com/errors/shared/too_many_requests"
+    },
+    "meta": { "request_id": "f5a6b7c8-d9e0-4f1a-9b2c-4d5e6f7a8b10" }
+  },
+  "internal_error": {
+    "error": {
+      "type": "api_error",
+      "code": "internal_error",
+      "detail": "An internal error has occurred, our team has been notified.",
+      "documentation_url": "https://developer.paddle.com/errors/shared/internal_error"
+    },
+    "meta": { "request_id": "a6b7c8d9-e0f1-4a2b-8c3d-5e6f7a8b9c11" }
+  }
+}

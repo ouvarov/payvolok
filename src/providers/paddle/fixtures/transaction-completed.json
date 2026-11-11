@@ -1,0 +1,138 @@
+{
+  "data": {
+    "id": "txn_01jcsyntheticpayment000001",
+    "status": "completed",
+    "customer_id": "ctm_01jcsyntheticcustomer00001",
+    "address_id": "add_01jcsyntheticaddress000001",
+    "business_id": null,
+    "custom_data": {
+      "reference": "5b0b3a0e-6f0c-4c43-9d5e-0a8a7d5e1c11"
+    },
+    "origin": "api",
+    "collection_mode": "automatic",
+    "subscription_id": null,
+    "invoice_id": "inv_01jcsyntheticinvoice000001",
+    "invoice_number": "325-10566",
+    "billing_details": null,
+    "billing_period": null,
+    "currency_code": "USD",
+    "discount_id": null,
+    "created_at": "2026-11-11T10:00:00.000000Z",
+    "updated_at": "2026-11-11T10:02:10.000000Z",
+    "billed_at": "2026-11-11T10:02:05.000000Z",
+    "revised_at": null,
+    "items": [
+      {
+        "price": {
+          "id": "pri_01jcsyntheticprice00000001",
+          "description": "e2e order",
+          "type": "custom",
+          "name": null,
+          "product_id": "pro_01jcsyntheticproduct000001",
+          "billing_cycle": null,
+          "trial_period": null,
+          "tax_mode": "internal",
+          "unit_price": { "amount": "1000", "currency_code": "USD" },
+          "unit_price_overrides": [],
+          "custom_data": null,
+          "quantity": { "minimum": 1, "maximum": 100 },
+          "status": "active",
+          "created_at": "2026-11-11T10:00:00.000000Z",
+          "updated_at": "2026-11-11T10:00:00.000000Z",
+          "import_meta": null
+        },
+        "quantity": 1,
+        "proration": null
+      }
+    ],
+    "details": {
+      "tax_rates_used": [
+        {
+          "tax_rate": "0",
+          "totals": {
+            "subtotal": "1000",
+            "discount": "0",
+            "tax": "0",
+            "total": "1000"
+          }
+        }
+      ],
+      "totals": {
+        "subtotal": "1000",
+        "tax": "0",
+        "discount": "0",
+        "total": "1000",
+        "grand_total": "1000",
+        "grand_total_tax": "0",
+        "fee": "100",
+        "credit": "0",
+        "credit_to_balance": "0",
+        "balance": "0",
+        "earnings": "900",
+        "currency_code": "USD"
+      },
+      "line_items": [
+        {
+          "id": "txnitm_01jcsyntheticlineitem00001",
+          "price_id": "pri_01jcsyntheticprice00000001",
+          "quantity": 1,
+          "totals": {
+            "subtotal": "1000",
+            "tax": "0",
+            "discount": "0",
+            "total": "1000"
+          },
+          "product": {
+            "id": "pro_01jcsyntheticproduct000001",
+            "name": "e2e order",
+            "description": null,
+            "type": "custom",
+            "tax_category": "standard",
+            "image_url": null,
+            "custom_data": null,
+            "status": "active",
+            "created_at": "2026-11-11T10:00:00.000000Z",
+            "updated_at": "2026-11-11T10:00:00.000000Z",
+            "import_meta": null
+          },
+          "tax_rate": "0",
+          "unit_totals": {
+            "subtotal": "1000",
+            "tax": "0",
+            "discount": "0",
+            "total": "1000"
+          },
+          "proration": null
+        }
+      ]
+    },
+    "payments": [
+      {
+        "payment_attempt_id": "1f0e5c8a-7d3b-4b8e-9c2a-5d6e7f8a9b0c",
+        "stored_payment_method_id": "2a1b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+        "payment_method_id": "paymtd_01jcsyntheticmethod0000001",
+        "amount": "1000",
+        "status": "captured",
+        "error_code": null,
+        "method_details": {
+          "type": "card",
+          "card": {
+            "type": "visa",
+            "last4": "5556",
+            "expiry_month": 1,
+            "expiry_year": 2030,
+            "cardholder_name": "Test Buyer"
+          }
+        },
+        "created_at": "2026-11-11T10:02:00.000000Z",
+        "captured_at": "2026-11-11T10:02:05.000000Z"
+      }
+    ],
+    "checkout": {
+      "url": "https://payvolok.example.test/checkout/paddle?_ptxn=txn_01jcsyntheticpayment000001"
+    }
+  },
+  "meta": {
+    "request_id": "0c7c2b9e-9d4f-4f1e-8b3a-6e2d1c0b9a02"
+  }
+}
