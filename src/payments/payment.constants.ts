@@ -18,8 +18,6 @@ const PAYMENT_ORIGINS = ['api', 'admin', 'demo', 'provider'] as const;
 
 const PAYMENT_EVENT_OUTCOMES = ['applied', 'stale', 'conflict'] as const;
 
-const CURRENCY_PATTERN = /^[A-Z]{3}$/;
-
 const PAYMENTS_PROVIDER_REF_UNIQUE =
   'payments_provider_provider_payment_id_unique';
 
@@ -29,7 +27,6 @@ type PaymentOrigin = (typeof PAYMENT_ORIGINS)[number];
 type PaymentEventOutcome = (typeof PAYMENT_EVENT_OUTCOMES)[number];
 
 export {
-  CURRENCY_PATTERN,
   PAYMENT_EVENT_OUTCOMES,
   PAYMENT_ORIGINS,
   PAYMENT_PURPOSES,
