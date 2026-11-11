@@ -2070,7 +2070,10 @@ describe('Webhooks route', () => {
         webhook: WebhookRequest,
         error: Error,
       ) => {
-        const realFinish = WebhooksRepository.prototype.finish;
+        const realFinish: WebhooksRepository['finish'] = Reflect.get(
+          WebhooksRepository.prototype,
+          'finish',
+        );
         let isSpent = false;
         jest
           .spyOn(WebhooksRepository.prototype, 'finish')
@@ -2092,8 +2095,14 @@ describe('Webhooks route', () => {
         webhook: WebhookRequest,
         error: Error,
       ) => {
-        const realProcess = WebhookEventProcessor.prototype.process;
-        const realIngest = PaymentsService.prototype.runIngestTransaction;
+        const realProcess: WebhookEventProcessor['process'] = Reflect.get(
+          WebhookEventProcessor.prototype,
+          'process',
+        );
+        const realIngest: PaymentsService['runIngestTransaction'] = Reflect.get(
+          PaymentsService.prototype,
+          'runIngestTransaction',
+        );
         let isInRow = false;
         let isSpent = false;
         jest
