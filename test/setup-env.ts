@@ -15,3 +15,6 @@ process.env.PUBLIC_BASE_URL = 'https://payvolok.e2e.test';
 process.env.PADDLE_API_KEY = '';
 process.env.PADDLE_WEBHOOK_SECRET = '';
 process.env.PADDLE_CLIENT_TOKEN = '';
+
+globalThis.fetch = () =>
+  Promise.reject(new Error('e2e tests make no network calls'));
