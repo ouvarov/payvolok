@@ -2525,6 +2525,7 @@ describe('Webhooks route', () => {
 
             const log = await deliverInOrder(app, opened.webhooks, order, {
               isTickedEach: true,
+              isTickFailureExpected: true,
               beforeDelivery: (position) => {
                 if (position !== failingPosition) return;
 

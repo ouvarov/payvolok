@@ -44,6 +44,7 @@ const REPLAY_SEED = Number(process.env.REPLAY_SEED ?? DEFAULT_REPLAY_SEED);
 
 type DeliveryOptions = {
   isTickedEach: boolean;
+  isTickFailureExpected?: boolean;
   beforeDelivery?: (
     position: number,
     webhookIndex: number,
@@ -220,12 +221,17 @@ const deliverWebhook = async (
 const tick = (app: INestApplication): Promise<number> =>
   app.get(WebhookWorker).drain();
 
-const tickOrError = async (app: INestApplication): Promise<string | null> => {
+const tickOrError = async (
+  app: INestApplication,
+  isFailureExpected: boolean,
+): Promise<string | null> => {
   try {
     await tick(app);
 
     return null;
   } catch (error) {
+    if (!isFailureExpected) throw error;
+
     return error instanceof Error ? error.message : String(error);
   }
 };
@@ -234,14 +240,20 @@ const deliverInOrder = async (
   app: INestApplication,
   webhooks: WebhookRequest[],
   order: number[],
-  { isTickedEach, beforeDelivery }: DeliveryOptions,
+  {
+    isTickedEach,
+    isTickFailureExpected = false,
+    beforeDelivery,
+  }: DeliveryOptions,
 ): Promise<DeliveryLog> => {
   const log: DeliveryLog = { statuses: [], tickErrors: [] };
 
   for (const [position, webhookIndex] of order.entries()) {
     await beforeDelivery?.(position, webhookIndex);
     log.statuses.push(await deliverWebhook(app, webhooks[webhookIndex]));
-    log.tickErrors.push(isTickedEach ? await tickOrError(app) : null);
+    log.tickErrors.push(
+      isTickedEach ? await tickOrError(app, isTickFailureExpected) : null,
+    );
   }
 
   return log;
