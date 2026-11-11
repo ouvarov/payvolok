@@ -42,6 +42,8 @@ const PADDLE_API = 'https://sandbox-api.paddle.com';
 const PAYMENTS_PATH = `/${API_V1_PREFIX}/payments`;
 const CHECKOUT_PAGE_BASE = 'https://payvolok.e2e.test/checkout/paddle';
 const SLOW_TEST_TIMEOUT_MS = 60000;
+const PROCESS_DEADLINE_MS = 15000;
+const PROCESS_POLL_MS = 100;
 
 const uniqueAmountMinor = (): number => randomInt(10_000, 10_000_000) * 100;
 
@@ -134,6 +136,24 @@ describe('Paddle provider', () => {
     );
   };
 
+  // Another spec file's drain may claim the row first, so wait for its outcome.
+  const deliverAndProcess = async (event: {
+    event_id: string;
+  }): Promise<void> => {
+    await deliverSigned(event).expect(200);
+    const deadline = Date.now() + PROCESS_DEADLINE_MS;
+
+    for (;;) {
+      await tick(app);
+      const [row] = await inboxRowsWithKey(event.event_id);
+      if (row && row.status !== 'received') return;
+      if (Date.now() > deadline) {
+        throw new Error(`Inbox row ${event.event_id} was not processed`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, PROCESS_POLL_MS));
+    }
+  };
+
   const authorizedPost = (path: string) =>
     request(serverOf(app))
       .post(path)
@@ -197,10 +217,9 @@ describe('Paddle provider', () => {
     amountMinor: number,
   ): Promise<CreatedPaddlePayment> => {
     const payment = await createPaddlePayment(amountMinor);
-    await deliverSigned(
+    await deliverAndProcess(
       completedEventFor(payment.transactionId, payment.paymentId, amountMinor),
-    ).expect(200);
-    await tick(app);
+    );
 
     return payment;
   };
@@ -318,10 +337,9 @@ describe('Paddle provider', () => {
         const payment = await createPaddlePayment(
           amountMinor,
           async (reference, transactionId) => {
-            await deliverSigned(
+            await deliverAndProcess(
               completedEventFor(transactionId, reference, amountMinor),
-            ).expect(200);
-            await tick(app);
+            );
           },
         );
 
@@ -347,8 +365,7 @@ describe('Paddle provider', () => {
         amountMinor + 1,
       );
 
-      await deliverSigned(event).expect(200);
-      await tick(app);
+      await deliverAndProcess(event);
 
       const [row] = await inboxRowsWithKey(event.event_id);
       expect(row).toMatchObject({
@@ -384,15 +401,14 @@ describe('Paddle provider', () => {
         });
         expect((await paymentOf(payment.paymentId)).status).toBe('succeeded');
 
-        await deliverSigned(
+        await deliverAndProcess(
           adjustmentEventFor(
             'event-adjustment-updated-approved',
             adjustmentId,
             payment.transactionId,
             400,
           ),
-        ).expect(200);
-        await tick(app);
+        );
 
         const refundRows = await refundsOf(payment.paymentId);
         expect(refundRows).toHaveLength(1);
@@ -417,15 +433,14 @@ describe('Paddle provider', () => {
           payment.transactionId,
           amountMinor,
           async (createdAdjustmentId) => {
-            await deliverSigned(
+            await deliverAndProcess(
               adjustmentEventFor(
                 'event-adjustment-created',
                 createdAdjustmentId,
                 payment.transactionId,
                 400,
               ),
-            ).expect(200);
-            await tick(app);
+            );
           },
         );
 
