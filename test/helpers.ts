@@ -5,6 +5,7 @@ import type { INestApplication, Type } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { sql } from 'drizzle-orm';
+import request from 'supertest';
 
 import { AppModule } from '@/app.module';
 import { configureApp } from '@/app.setup';
@@ -18,6 +19,8 @@ const LOCK_WAIT_POLL_MS = 100;
 const LOCK_WAIT_DEADLINE_MS = 8000;
 // setup-env.ts configures the SHA-256 of this key.
 const TEST_API_KEY = 'e2e-test-api-key-with-enough-length-0001';
+
+const FAKE_SIGNATURE_HEADER = 'x-fake-signature';
 
 const databaseUrl = process.env.E2E_DATABASE_URL as string;
 const isRealPostgres = process.env.E2E_REAL_POSTGRES === 'true';
@@ -79,6 +82,21 @@ const createE2eApp = async ({
 
 const serverOf = (app: INestApplication): Server =>
   app.getHttpServer() as Server;
+
+// Otherwise superagent JSON-encodes a Buffer sent under a JSON or form type.
+const sendBytesAsTheyAre = (rawBody: unknown): string => rawBody as string;
+
+const deliverTo = (
+  target: INestApplication,
+  rawBody: Buffer,
+  signature: string,
+  providerCode = 'fake',
+) =>
+  request(serverOf(target))
+    .post(`/webhooks/${providerCode}`)
+    .set(FAKE_SIGNATURE_HEADER, signature)
+    .serialize(sendBytesAsTheyAre)
+    .send(rawBody);
 
 const databaseCauseOf = async (
   query: () => PromiseLike<unknown>,
@@ -145,7 +163,9 @@ export {
   databaseCauseOf,
   databasePoolMax,
   databaseUrl,
+  deliverTo,
   describeOnRealPostgres,
+  FAKE_SIGNATURE_HEADER,
   insertInboxEvent,
   serverOf,
   TEST_API_KEY,

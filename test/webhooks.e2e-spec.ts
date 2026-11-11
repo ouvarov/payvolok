@@ -41,6 +41,8 @@ import {
   type NewWebhookEvent,
   type WebhookEvent,
 } from '@/database/schemas/webhook-events.schema';
+import type { PaymentStatus } from '@/payments/payment.constants';
+import { PaymentsService } from '@/payments/payments.service';
 import { FakeProvider } from '@/providers/fake/fake.provider';
 import {
   ProviderError,
@@ -63,12 +65,32 @@ import {
   databaseCauseOf,
   databasePoolMax,
   databaseUrl,
+  deliverTo,
   describeOnRealPostgres,
+  FAKE_SIGNATURE_HEADER,
   insertInboxEvent,
   serverOf,
 } from './helpers';
+import {
+  createApiPayment,
+  createApiRefund,
+  deliverInOrder,
+  deliverWebhook,
+  expectSettled,
+  identityOrderOf,
+  moneyStateOf,
+  orderLabel,
+  originalRowsOf,
+  permutationsOf,
+  REPLAY_SEED,
+  replayRowsOf,
+  sampledOrdersOf,
+  settle,
+  tick,
+  type ExpectedEnd,
+  type MoneyState,
+} from './webhook-replay';
 
-const SIGNATURE_HEADER = 'x-fake-signature';
 const WRONG_SIGNATURE = '0'.repeat(64);
 const INVALID_ROWS_CAP = 20;
 const MIGRATIONS_BEFORE_INBOX = 5;
@@ -144,28 +166,13 @@ const nonJsonBody = (): Buffer =>
 const invalidKeyOf = (rawBody: Buffer): string =>
   `invalid:${createHash('sha256').update(rawBody).digest('hex')}`;
 
-// Otherwise superagent JSON-encodes a Buffer sent under a JSON or form type.
-const sendBytesAsTheyAre = (rawBody: unknown): string => rawBody as string;
-
 describe('Webhooks route', () => {
   let app: INestApplication;
   let db: Database;
   let fakeProvider: FakeProvider;
 
   const signatureOf = (rawBody: Buffer): string =>
-    fakeProvider.signRawBody(rawBody).headers[SIGNATURE_HEADER] as string;
-
-  const deliverTo = (
-    target: INestApplication,
-    rawBody: Buffer,
-    signature: string,
-    providerCode = 'fake',
-  ) =>
-    request(serverOf(target))
-      .post(`/webhooks/${providerCode}`)
-      .set(SIGNATURE_HEADER, signature)
-      .serialize(sendBytesAsTheyAre)
-      .send(rawBody);
+    fakeProvider.signRawBody(rawBody).headers[FAKE_SIGNATURE_HEADER] as string;
 
   const deliver = (rawBody: Buffer, providerCode?: string) =>
     deliverTo(app, rawBody, signatureOf(rawBody), providerCode);
@@ -271,7 +278,7 @@ describe('Webhooks route', () => {
       });
       expect(row.rawBody?.equals(rawBody)).toBe(true);
       expect(row.headers).toEqual({
-        [SIGNATURE_HEADER]: signatureOf(rawBody),
+        [FAKE_SIGNATURE_HEADER]: signatureOf(rawBody),
         'content-type': 'application/json',
         'content-length': String(rawBody.length),
         'user-agent': 'e2e-agent',
@@ -312,7 +319,7 @@ describe('Webhooks route', () => {
 
       await request(serverOf(app))
         .post('/webhooks/fake')
-        .set(SIGNATURE_HEADER, signatureOf(rawBody))
+        .set(FAKE_SIGNATURE_HEADER, signatureOf(rawBody))
         .expect(200);
 
       const [row] = await rowsWithKey(dedupKeyFromBody(rawBody));
@@ -449,7 +456,7 @@ describe('Webhooks route', () => {
     it('rejects an empty body with a signature that is not for zero bytes', async () => {
       await request(serverOf(app))
         .post('/webhooks/fake')
-        .set(SIGNATURE_HEADER, WRONG_SIGNATURE)
+        .set(FAKE_SIGNATURE_HEADER, WRONG_SIGNATURE)
         .expect(401);
     });
 
@@ -525,9 +532,9 @@ describe('Webhooks route', () => {
           await request(serverOf(freshApp))
             .post('/webhooks/fake')
             .set(
-              SIGNATURE_HEADER,
+              FAKE_SIGNATURE_HEADER,
               freshProvider.signRawBody(lastBody).headers[
-                SIGNATURE_HEADER
+                FAKE_SIGNATURE_HEADER
               ] as string,
             )
             .send(lastBody)
@@ -1024,7 +1031,7 @@ describe('Webhooks route', () => {
       deliverTo(
         target,
         webhook.rawBody,
-        webhook.headers[SIGNATURE_HEADER] as string,
+        webhook.headers[FAKE_SIGNATURE_HEADER] as string,
       ).expect(200);
 
     const postAndDrain = async (webhooks: WebhookRequest[]): Promise<void> => {
@@ -1343,38 +1350,6 @@ describe('Webhooks route', () => {
           { toStatus: 'pending', reason: 'payment.pending' },
           { toStatus: 'failed', reason: 'fake_declined' },
         ]);
-      });
-
-      it('brings a partial fake refund to partially_refunded through the inbox', async () => {
-        const { payment, providerPaymentId } = await succeededRowFirstPayment();
-        const { providerRefundId } = await fakeProvider.refund({
-          reference: randomUUID(),
-          providerPaymentId,
-          amountMinor: 400,
-          currency: 'USD',
-        });
-        const refundWebhooks = fakeProvider.buildRefundWebhooks(
-          providerRefundId as string,
-          new Date(),
-        );
-
-        await postAndDrain(refundWebhooks);
-
-        const succeededRow = await inboxRowFor(refundWebhooks[1]);
-        const events = await paymentEventsOf(payment.id);
-        expect((await paymentOf(payment.id)).status).toBe('partially_refunded');
-        expect(await refundsOf(payment.id)).toMatchObject([
-          { status: 'succeeded', amountMinor: 400, providerRefundId },
-        ]);
-        expect(succeededRow).toMatchObject({
-          status: 'processed',
-          paymentIds: [payment.id],
-          lastError: null,
-        });
-        expect(events[events.length - 1]).toMatchObject({
-          toStatus: 'partially_refunded',
-          webhookEventId: succeededRow.id,
-        });
       });
 
       it('applies a row-first event with a reference at the first attempt', async () => {
@@ -1819,6 +1794,856 @@ describe('Webhooks route', () => {
       });
     });
 
+    describe(`replay harness (seed ${REPLAY_SEED})`, () => {
+      const PAYMENT_AMOUNT_MINOR = 1000;
+      const PARTIAL_REFUND_MINOR = 400;
+      const REST_REFUND_MINOR = 600;
+      const SEEDED_ORDERS = 4;
+      const SPLIT_EVENT_COUNT = 6;
+      const REFUNDED_EVENT_COUNT = 4;
+      const INJECTED_DELIVERIES = [0, 3];
+      const PAYMENT_SUCCEEDED_INDEX = 1;
+      const PARTIAL_REFUND_SUCCEEDED_INDEX = 3;
+      const REST_REFUND_SUCCEEDED_INDEX = 5;
+      // A reference that is no uuid leaves the provider refund id as the only key to the refund.
+      const PROVIDER_REFUND_REFERENCE = 'provider-side-refund';
+      const API_PATH: PaymentStatus[] = ['created', 'pending'];
+      const PATH_THROUGH_SUCCEEDED: PaymentStatus[] = [
+        ...API_PATH,
+        'succeeded',
+        'partially_refunded',
+      ];
+      const PATH_SKIPPING_SUCCEEDED: PaymentStatus[] = [
+        ...API_PATH,
+        'partially_refunded',
+      ];
+      const PAYMENT_FLOWS: {
+        amountMinor: number;
+        eventCount: number;
+        finalStatus: PaymentStatus;
+        path: PaymentStatus[];
+      }[] = [
+        {
+          amountMinor: 1000,
+          eventCount: 2,
+          finalStatus: 'succeeded',
+          path: ['created', 'pending', 'succeeded'],
+        },
+        {
+          amountMinor: 1001,
+          eventCount: 2,
+          finalStatus: 'failed',
+          path: ['created', 'pending', 'failed'],
+        },
+        {
+          amountMinor: 1002,
+          eventCount: 3,
+          finalStatus: 'succeeded',
+          path: ['created', 'pending', 'succeeded'],
+        },
+        {
+          amountMinor: 1003,
+          eventCount: 3,
+          finalStatus: 'failed',
+          path: ['created', 'pending', 'failed'],
+        },
+        {
+          amountMinor: 1004,
+          eventCount: 2,
+          finalStatus: 'expired',
+          path: ['created', 'pending', 'expired'],
+        },
+        {
+          amountMinor: 1005,
+          eventCount: 1,
+          finalStatus: 'pending',
+          path: ['created', 'pending'],
+        },
+      ];
+
+      const okStatuses = (count: number): number[] =>
+        Array.from({ length: count }, () => 200);
+
+      const reversedOrderOf = (count: number): number[] =>
+        identityOrderOf(count).reverse();
+
+      const paymentFlowCases = PAYMENT_FLOWS.flatMap((flow) =>
+        permutationsOf(flow.eventCount).map(
+          (order) =>
+            [flow.amountMinor, orderLabel(order), flow, order] as const,
+        ),
+      );
+
+      const splitRefundOrders = [
+        identityOrderOf(SPLIT_EVENT_COUNT),
+        reversedOrderOf(SPLIT_EVENT_COUNT),
+        ...sampledOrdersOf(SPLIT_EVENT_COUNT, SEEDED_ORDERS, REPLAY_SEED),
+      ];
+
+      const startProviderRefund = async (
+        providerPaymentId: string,
+        amountMinor: number,
+      ): Promise<string> => {
+        const { providerRefundId } = await fakeProvider.refund({
+          reference: PROVIDER_REFUND_REFERENCE,
+          providerPaymentId,
+          amountMinor,
+          currency: 'USD',
+        });
+
+        return providerRefundId as string;
+      };
+
+      const openRefundedPayment = async () => {
+        const { paymentId, providerPaymentId } = await createApiPayment(
+          app,
+          PAYMENT_AMOUNT_MINOR,
+        );
+        const providerRefundId = await startProviderRefund(
+          providerPaymentId,
+          PARTIAL_REFUND_MINOR,
+        );
+        const startedAt = new Date();
+
+        return {
+          paymentId,
+          providerPaymentId,
+          providerRefundId,
+          webhooks: [
+            ...fakeProvider.buildPaymentWebhooks(providerPaymentId, startedAt),
+            ...fakeProvider.buildRefundWebhooks(providerRefundId, startedAt),
+          ],
+        };
+      };
+
+      const openSplitRefundPayment = async () => {
+        const { paymentId, providerPaymentId } = await createApiPayment(
+          app,
+          PAYMENT_AMOUNT_MINOR,
+        );
+        const partialRefundId = await startProviderRefund(
+          providerPaymentId,
+          PARTIAL_REFUND_MINOR,
+        );
+        const restRefundId = await startProviderRefund(
+          providerPaymentId,
+          REST_REFUND_MINOR,
+        );
+        const startedAt = new Date();
+
+        return {
+          paymentId,
+          providerPaymentId,
+          partialRefundId,
+          restRefundId,
+          webhooks: [
+            ...fakeProvider.buildPaymentWebhooks(providerPaymentId, startedAt),
+            ...fakeProvider.buildRefundWebhooks(partialRefundId, startedAt),
+            ...fakeProvider.buildRefundWebhooks(restRefundId, startedAt),
+          ],
+        };
+      };
+
+      const isPaymentSucceededFirst = (
+        order: number[],
+        refundSucceededIndexes: number[],
+      ): boolean =>
+        order.indexOf(PAYMENT_SUCCEEDED_INDEX) <
+        Math.min(
+          ...refundSucceededIndexes.map((index) => order.indexOf(index)),
+        );
+
+      const paymentFlowEnd = (
+        flow: (typeof PAYMENT_FLOWS)[number],
+        providerPaymentId: string,
+        statuses: number[] = okStatuses(flow.eventCount),
+      ): ExpectedEnd => ({
+        amountMinor: flow.amountMinor,
+        providerPaymentId,
+        finalStatus: flow.finalStatus,
+        path: flow.path,
+        apiPath: API_PATH,
+        eventCount: flow.eventCount,
+        refunds: [],
+        succeededMinor: 0,
+        statuses,
+      });
+
+      const refundedEnd = (
+        opened: Awaited<ReturnType<typeof openRefundedPayment>>,
+        processedOrder: number[],
+        {
+          statuses = okStatuses(REFUNDED_EVENT_COUNT),
+          attemptsOf = {},
+        }: { statuses?: number[]; attemptsOf?: Record<string, number> } = {},
+      ): ExpectedEnd => ({
+        amountMinor: PAYMENT_AMOUNT_MINOR,
+        providerPaymentId: opened.providerPaymentId,
+        finalStatus: 'partially_refunded',
+        path: isPaymentSucceededFirst(processedOrder, [
+          PARTIAL_REFUND_SUCCEEDED_INDEX,
+        ])
+          ? PATH_THROUGH_SUCCEEDED
+          : PATH_SKIPPING_SUCCEEDED,
+        apiPath: API_PATH,
+        eventCount: REFUNDED_EVENT_COUNT,
+        refunds: [
+          {
+            origin: 'provider',
+            status: 'succeeded',
+            amountMinor: PARTIAL_REFUND_MINOR,
+            providerRefundId: opened.providerRefundId,
+          },
+        ],
+        succeededMinor: PARTIAL_REFUND_MINOR,
+        statuses,
+        attemptsOf,
+      });
+
+      const settleRun = async (
+        webhooks: WebhookRequest[],
+      ): Promise<WebhookEvent[]> => {
+        const started = await originalRowsOf(app, webhooks);
+        await settle(
+          app,
+          started.map(({ id }) => id),
+        );
+
+        return originalRowsOf(app, webhooks);
+      };
+
+      const expectRun = async (
+        paymentId: string,
+        webhooks: WebhookRequest[],
+        statuses: number[],
+        expected: ExpectedEnd,
+      ): Promise<MoneyState> => {
+        const originals = await settleRun(webhooks);
+        const state = await moneyStateOf(db, paymentId);
+        expectSettled(state, { originals, replays: [], statuses }, expected);
+
+        return state;
+      };
+
+      const deliverStorm = async (
+        webhooks: WebhookRequest[],
+      ): Promise<number[]> => {
+        const order = identityOrderOf(webhooks.length);
+        const first = await deliverInOrder(app, webhooks, order, {
+          isTickedEach: false,
+        });
+        const second = await deliverInOrder(
+          app,
+          webhooks,
+          [...order].reverse(),
+          { isTickedEach: false },
+        );
+
+        return [...first.statuses, ...second.statuses];
+      };
+
+      const expectUntouchedByWorker = async (
+        webhooks: WebhookRequest[],
+      ): Promise<void> => {
+        const rows = await originalRowsOf(app, webhooks);
+
+        expect(rows).toHaveLength(webhooks.length);
+        for (const row of rows) {
+          expect(row).toMatchObject({ status: 'received', attempts: 0 });
+        }
+      };
+
+      const movedLast = (order: number[], index: number): number[] => [
+        ...order.filter((other) => other !== index),
+        index,
+      ];
+
+      const openApiRefundedPayment = async () => {
+        const { paymentId, providerPaymentId } = await createApiPayment(
+          app,
+          PAYMENT_AMOUNT_MINOR,
+        );
+        const startedAt = new Date();
+
+        return {
+          paymentId,
+          providerPaymentId,
+          paymentWebhooks: fakeProvider.buildPaymentWebhooks(
+            providerPaymentId,
+            startedAt,
+          ),
+          refundWebhooksAfter: async (): Promise<{
+            providerRefundId: string;
+            refundWebhooks: WebhookRequest[];
+          }> => {
+            const { refundId } = await createApiRefund(
+              app,
+              paymentId,
+              PARTIAL_REFUND_MINOR,
+            );
+            const [{ providerRefundId }] = await db
+              .select({ providerRefundId: refunds.providerRefundId })
+              .from(refunds)
+              .where(eq(refunds.id, refundId));
+
+            return {
+              providerRefundId: providerRefundId as string,
+              refundWebhooks: fakeProvider.buildRefundWebhooks(
+                providerRefundId as string,
+                startedAt,
+              ),
+            };
+          },
+        };
+      };
+
+      const apiRefundEnd = (
+        providerPaymentId: string,
+        providerRefundId: string,
+        statuses: number[],
+      ): ExpectedEnd => ({
+        amountMinor: PAYMENT_AMOUNT_MINOR,
+        providerPaymentId,
+        finalStatus: 'partially_refunded',
+        path: PATH_THROUGH_SUCCEEDED,
+        apiPath: [...API_PATH, 'partially_refunded'],
+        eventCount: REFUNDED_EVENT_COUNT,
+        refunds: [
+          {
+            origin: 'api',
+            status: 'succeeded',
+            amountMinor: PARTIAL_REFUND_MINOR,
+            providerRefundId,
+          },
+        ],
+        succeededMinor: PARTIAL_REFUND_MINOR,
+        statuses,
+      });
+
+      describe('payment in every order', () => {
+        it.each(paymentFlowCases)(
+          'brings amount %i to its final status in order %s',
+          async (amountMinor, _label, flow, order) => {
+            const { paymentId, providerPaymentId } = await createApiPayment(
+              app,
+              amountMinor,
+            );
+            const webhooks = fakeProvider.buildPaymentWebhooks(
+              providerPaymentId,
+              new Date(),
+            );
+
+            const log = await deliverInOrder(app, webhooks, order, {
+              isTickedEach: true,
+            });
+
+            await expectRun(
+              paymentId,
+              webhooks,
+              log.statuses,
+              paymentFlowEnd(flow, providerPaymentId),
+            );
+          },
+          SLOW_TEST_TIMEOUT_MS,
+        );
+      });
+
+      describe('provider refund in every order', () => {
+        it.each(
+          permutationsOf(REFUNDED_EVENT_COUNT).map(
+            (order) => [orderLabel(order), order] as const,
+          ),
+        )(
+          'brings the payment to partially_refunded in order %s',
+          async (_label, order) => {
+            const opened = await openRefundedPayment();
+
+            const log = await deliverInOrder(app, opened.webhooks, order, {
+              isTickedEach: true,
+            });
+
+            const state = await expectRun(
+              opened.paymentId,
+              opened.webhooks,
+              log.statuses,
+              refundedEnd(opened, order),
+            );
+            const [refundSucceededRow] = await originalRowsOf(app, [
+              opened.webhooks[PARTIAL_REFUND_SUCCEEDED_INDEX],
+            ]);
+            expect(
+              state.events.find(
+                ({ outcome, toStatus }) =>
+                  outcome === 'applied' && toStatus === 'partially_refunded',
+              )?.webhookEventId,
+            ).toBe(refundSucceededRow.id);
+          },
+          SLOW_TEST_TIMEOUT_MS,
+        );
+      });
+
+      describe('two refunds that add up to the payment', () => {
+        it.each(
+          splitRefundOrders.map((order) => [orderLabel(order), order] as const),
+        )(
+          'brings the payment to refunded in order %s',
+          async (_label, order) => {
+            const opened = await openSplitRefundPayment();
+
+            const log = await deliverInOrder(app, opened.webhooks, order, {
+              isTickedEach: true,
+            });
+
+            const state = await expectRun(
+              opened.paymentId,
+              opened.webhooks,
+              log.statuses,
+              {
+                amountMinor: PAYMENT_AMOUNT_MINOR,
+                providerPaymentId: opened.providerPaymentId,
+                finalStatus: 'refunded',
+                path: isPaymentSucceededFirst(order, [
+                  PARTIAL_REFUND_SUCCEEDED_INDEX,
+                  REST_REFUND_SUCCEEDED_INDEX,
+                ])
+                  ? [...PATH_THROUGH_SUCCEEDED, 'refunded']
+                  : [...PATH_SKIPPING_SUCCEEDED, 'refunded'],
+                apiPath: API_PATH,
+                eventCount: SPLIT_EVENT_COUNT,
+                refunds: [
+                  {
+                    origin: 'provider',
+                    status: 'succeeded',
+                    amountMinor: PARTIAL_REFUND_MINOR,
+                    providerRefundId: opened.partialRefundId,
+                  },
+                  {
+                    origin: 'provider',
+                    status: 'succeeded',
+                    amountMinor: REST_REFUND_MINOR,
+                    providerRefundId: opened.restRefundId,
+                  },
+                ],
+                succeededMinor: PAYMENT_AMOUNT_MINOR,
+                statuses: okStatuses(SPLIT_EVENT_COUNT),
+              },
+            );
+
+            expect(
+              state.events.filter(
+                ({ outcome, toStatus }) =>
+                  outcome === 'applied' && toStatus === 'refunded',
+              ),
+            ).toHaveLength(1);
+          },
+          SLOW_TEST_TIMEOUT_MS,
+        );
+      });
+
+      describe('webhooks of an api refund', () => {
+        it.each([
+          [orderLabel(identityOrderOf(2)), identityOrderOf(2)],
+          [orderLabel(reversedOrderOf(2)), reversedOrderOf(2)],
+        ])(
+          'keep one api refund in order %s',
+          async (_label, order) => {
+            const opened = await openApiRefundedPayment();
+            const paymentLog = await deliverInOrder(
+              app,
+              opened.paymentWebhooks,
+              identityOrderOf(2),
+              { isTickedEach: true },
+            );
+            const { providerRefundId, refundWebhooks } =
+              await opened.refundWebhooksAfter();
+
+            const refundLog = await deliverInOrder(app, refundWebhooks, order, {
+              isTickedEach: true,
+            });
+
+            await expectRun(
+              opened.paymentId,
+              [...opened.paymentWebhooks, ...refundWebhooks],
+              [...paymentLog.statuses, ...refundLog.statuses],
+              apiRefundEnd(
+                opened.providerPaymentId,
+                providerRefundId,
+                okStatuses(REFUNDED_EVENT_COUNT),
+              ),
+            );
+          },
+          SLOW_TEST_TIMEOUT_MS,
+        );
+      });
+
+      describe('duplicate storm', () => {
+        it(
+          'keeps one inbox row per event of a payment delivered twice before any tick',
+          async () => {
+            const [flow] = PAYMENT_FLOWS;
+            const { paymentId, providerPaymentId } = await createApiPayment(
+              app,
+              flow.amountMinor,
+            );
+            const webhooks = fakeProvider.buildPaymentWebhooks(
+              providerPaymentId,
+              new Date(),
+            );
+
+            const statuses = await deliverStorm(webhooks);
+
+            await expectUntouchedByWorker(webhooks);
+            await expectRun(
+              paymentId,
+              webhooks,
+              statuses,
+              paymentFlowEnd(
+                flow,
+                providerPaymentId,
+                okStatuses(flow.eventCount * 2),
+              ),
+            );
+          },
+          SLOW_TEST_TIMEOUT_MS,
+        );
+
+        it(
+          'keeps one inbox row per event of a provider refund delivered twice before any tick',
+          async () => {
+            const opened = await openRefundedPayment();
+
+            const statuses = await deliverStorm(opened.webhooks);
+
+            await expectUntouchedByWorker(opened.webhooks);
+            await expectRun(
+              opened.paymentId,
+              opened.webhooks,
+              statuses,
+              refundedEnd(opened, identityOrderOf(REFUNDED_EVENT_COUNT), {
+                statuses: okStatuses(REFUNDED_EVENT_COUNT * 2),
+              }),
+            );
+          },
+          SLOW_TEST_TIMEOUT_MS,
+        );
+
+        it(
+          'keeps one inbox row per event of an api refund delivered twice before any tick',
+          async () => {
+            const opened = await openApiRefundedPayment();
+            const paymentStatuses = await deliverStorm(opened.paymentWebhooks);
+            await expectUntouchedByWorker(opened.paymentWebhooks);
+            await settleRun(opened.paymentWebhooks);
+            const { providerRefundId, refundWebhooks } =
+              await opened.refundWebhooksAfter();
+
+            const refundStatuses = await deliverStorm(refundWebhooks);
+
+            await expectUntouchedByWorker(refundWebhooks);
+            await expectRun(
+              opened.paymentId,
+              [...opened.paymentWebhooks, ...refundWebhooks],
+              [...paymentStatuses, ...refundStatuses],
+              apiRefundEnd(
+                opened.providerPaymentId,
+                providerRefundId,
+                okStatuses(REFUNDED_EVENT_COUNT * 2),
+              ),
+            );
+          },
+          SLOW_TEST_TIMEOUT_MS,
+        );
+      });
+
+      describe('inbox insert that fails once', () => {
+        it.each(INJECTED_DELIVERIES)(
+          'answers 503 for delivery %i, stores nothing, and ends as if it came last',
+          async (failingPosition) => {
+            errorAndWarnLogs();
+            const opened = await openRefundedPayment();
+            const order = identityOrderOf(REFUNDED_EVENT_COUNT);
+
+            const log = await deliverInOrder(app, opened.webhooks, order, {
+              isTickedEach: true,
+              beforeDelivery: (position) => {
+                if (position !== failingPosition) return;
+
+                jest
+                  .spyOn(WebhooksRepository.prototype, 'insertReceivedIfAbsent')
+                  .mockRejectedValueOnce(new Error('inbox down'));
+              },
+            });
+            expect(
+              await originalRowsOf(app, [opened.webhooks[failingPosition]]),
+            ).toHaveLength(0);
+            const redeliveryStatus = await deliverWebhook(
+              app,
+              opened.webhooks[failingPosition],
+            );
+            await tick(app);
+
+            const expectedStatuses = okStatuses(REFUNDED_EVENT_COUNT + 1);
+            expectedStatuses[failingPosition] = 503;
+            await expectRun(
+              opened.paymentId,
+              opened.webhooks,
+              [...log.statuses, redeliveryStatus],
+              refundedEnd(opened, movedLast(order, failingPosition), {
+                statuses: expectedStatuses,
+              }),
+            );
+          },
+          SLOW_TEST_TIMEOUT_MS,
+        );
+      });
+
+      describe('transient ingest error', () => {
+        it.each(INJECTED_DELIVERIES)(
+          'leaves delivery %i received at attempt 1 and applies it last after a settle',
+          async (failingPosition) => {
+            const opened = await openRefundedPayment();
+            const order = identityOrderOf(REFUNDED_EVENT_COUNT);
+
+            const log = await deliverInOrder(app, opened.webhooks, order, {
+              isTickedEach: true,
+              beforeDelivery: (position) => {
+                if (position !== failingPosition) return;
+
+                jest
+                  .spyOn(PaymentsService.prototype, 'runIngestTransaction')
+                  .mockRejectedValueOnce(new Error('connection reset'));
+              },
+            });
+
+            const [failedRow] = await originalRowsOf(app, [
+              opened.webhooks[failingPosition],
+            ]);
+            expect(failedRow).toMatchObject({
+              status: 'received',
+              attempts: 1,
+              lastError: 'Error',
+              paymentIds: [],
+            });
+            await expectRun(
+              opened.paymentId,
+              opened.webhooks,
+              log.statuses,
+              refundedEnd(opened, movedLast(order, failingPosition), {
+                attemptsOf: { [failedRow.id]: 2 },
+              }),
+            );
+          },
+          SLOW_TEST_TIMEOUT_MS,
+        );
+      });
+
+      describe('finish that fails after the commit', () => {
+        it.each(INJECTED_DELIVERIES)(
+          'reclaims delivery %i at attempt 2 and changes nothing twice',
+          async (failingPosition) => {
+            const opened = await openRefundedPayment();
+            const order = identityOrderOf(REFUNDED_EVENT_COUNT);
+
+            const log = await deliverInOrder(app, opened.webhooks, order, {
+              isTickedEach: true,
+              beforeDelivery: (position) => {
+                if (position !== failingPosition) return;
+
+                jest
+                  .spyOn(WebhooksRepository.prototype, 'finish')
+                  .mockRejectedValueOnce(new Error('connection lost'));
+              },
+            });
+
+            expect(log.tickErrors).toEqual(
+              order.map((position) =>
+                position === failingPosition ? 'connection lost' : null,
+              ),
+            );
+            const [failedRow] = await originalRowsOf(app, [
+              opened.webhooks[failingPosition],
+            ]);
+            expect(failedRow).toMatchObject({
+              status: 'received',
+              attempts: 1,
+            });
+            await expectRun(
+              opened.paymentId,
+              opened.webhooks,
+              log.statuses,
+              refundedEnd(opened, order, {
+                attemptsOf: { [failedRow.id]: 2 },
+              }),
+            );
+          },
+          SLOW_TEST_TIMEOUT_MS,
+        );
+      });
+
+      describe('forged signatures', () => {
+        beforeEach(async () => {
+          await app.close();
+          await startApp();
+        }, SLOW_TEST_TIMEOUT_MS);
+
+        it(
+          'answers 401 before each valid delivery and links nothing to the ignored rows',
+          async () => {
+            const opened = await openRefundedPayment();
+            const forgedBodies: Buffer[] = [];
+
+            const log = await deliverInOrder(
+              app,
+              opened.webhooks,
+              identityOrderOf(REFUNDED_EVENT_COUNT),
+              {
+                isTickedEach: true,
+                beforeDelivery: async (_position, webhookIndex) => {
+                  const { rawBody, headers } = opened.webhooks[webhookIndex];
+                  const tamperedBody = Buffer.concat([
+                    rawBody,
+                    Buffer.from(' '),
+                  ]);
+                  forgedBodies.push(rawBody, tamperedBody);
+
+                  await deliverTo(app, rawBody, WRONG_SIGNATURE).expect(401);
+                  await deliverTo(
+                    app,
+                    tamperedBody,
+                    headers[FAKE_SIGNATURE_HEADER] as string,
+                  ).expect(401);
+                  await request(serverOf(app))
+                    .post('/webhooks/fake')
+                    .send(rawBody)
+                    .expect(401);
+                },
+              },
+            );
+
+            const forgedRows = await rowsWithKey(
+              ...forgedBodies.map(invalidKeyOf),
+            );
+            expect(forgedRows).toHaveLength(REFUNDED_EVENT_COUNT * 2);
+            for (const row of forgedRows) {
+              expect(row).toMatchObject({
+                status: 'ignored',
+                signatureValid: false,
+                rawBody: null,
+              });
+            }
+            expect(
+              await db
+                .select({ id: paymentEvents.id })
+                .from(paymentEvents)
+                .where(
+                  inArray(
+                    paymentEvents.webhookEventId,
+                    forgedRows.map(({ id }) => id),
+                  ),
+                ),
+            ).toHaveLength(0);
+            await expectRun(
+              opened.paymentId,
+              opened.webhooks,
+              log.statuses,
+              refundedEnd(opened, identityOrderOf(REFUNDED_EVENT_COUNT)),
+            );
+          },
+          SLOW_TEST_TIMEOUT_MS,
+        );
+      });
+
+      describe('late redelivery and replay', () => {
+        it.each(
+          [
+            identityOrderOf(REFUNDED_EVENT_COUNT),
+            reversedOrderOf(REFUNDED_EVENT_COUNT),
+          ].map((order) => [orderLabel(order), order] as const),
+        )(
+          'changes nothing after a redelivery and a replay of every original in order %s',
+          async (_label, order) => {
+            const opened = await openRefundedPayment();
+            const log = await deliverInOrder(app, opened.webhooks, order, {
+              isTickedEach: true,
+            });
+            const originalsBefore = await settleRun(opened.webhooks);
+
+            const lateStatuses = await Promise.all(
+              opened.webhooks.map((webhook) => deliverWebhook(app, webhook)),
+            );
+            const originals = await originalRowsOf(app, opened.webhooks);
+            const replayIds = await Promise.all(
+              originals.map(({ id }) => app.get(WebhooksService).replay(id)),
+            );
+            const replayOfReplayIds = await Promise.all(
+              replayIds.map((replayId) =>
+                app.get(WebhooksService).replay(replayId as string),
+              ),
+            );
+            const replayRowIds = [
+              ...replayIds,
+              ...replayOfReplayIds,
+            ] as string[];
+            await settle(app, replayRowIds);
+
+            const replays = await replayRowsOf(
+              app,
+              originals.map(({ id }) => id),
+            );
+            expect(originals).toEqual(originalsBefore);
+            expect(replays.map(({ replayOf }) => replayOf).sort()).toEqual(
+              [...originals, ...originals].map(({ id }) => id).sort(),
+            );
+            expect(replays.map(({ id }) => id).sort()).toEqual(
+              [...replayRowIds].sort(),
+            );
+            expectSettled(
+              await moneyStateOf(db, opened.paymentId),
+              {
+                originals,
+                replays,
+                statuses: [...log.statuses, ...lateStatuses],
+              },
+              refundedEnd(opened, order, {
+                statuses: okStatuses(REFUNDED_EVENT_COUNT * 2),
+              }),
+            );
+          },
+          SLOW_TEST_TIMEOUT_MS,
+        );
+      });
+
+      describe('order helpers', () => {
+        it('lists every permutation once, from the identity to its reverse', () => {
+          const orders = permutationsOf(4);
+
+          expect(orders).toHaveLength(24);
+          expect(new Set(orders.map(orderLabel)).size).toBe(24);
+          expect(orders[0]).toEqual([0, 1, 2, 3]);
+          expect(orders[23]).toEqual([3, 2, 1, 0]);
+          for (const order of orders) {
+            expect([...order].sort()).toEqual([0, 1, 2, 3]);
+          }
+          expect(permutationsOf(1)).toEqual([[0]]);
+        });
+
+        it('samples distinct orders without the identity and the reverse, the same ones for one seed', () => {
+          const sample = sampledOrdersOf(6, 6, REPLAY_SEED);
+
+          expect(sample).toEqual(sampledOrdersOf(6, 6, REPLAY_SEED));
+          expect(sample).not.toEqual(sampledOrdersOf(6, 6, REPLAY_SEED + 1));
+          expect(new Set(sample.map(orderLabel)).size).toBe(6);
+          for (const order of sample) {
+            expect([...order].sort()).toEqual([0, 1, 2, 3, 4, 5]);
+            expect(orderLabel(order)).not.toBe('0-1-2-3-4-5');
+            expect(orderLabel(order)).not.toBe('5-4-3-2-1-0');
+          }
+          expect(sampledOrdersOf(3, 4, REPLAY_SEED)).toHaveLength(4);
+          expect(() => sampledOrdersOf(3, 5, REPLAY_SEED)).toThrow();
+        });
+      });
+    });
+
     describe('enabled worker', () => {
       it(
         'processes a row a closed app left received once a new enabled app boots',
@@ -1833,7 +2658,7 @@ describe('Webhooks route', () => {
             closedApp,
             pendingWebhook.rawBody,
             closedApp.get(FakeProvider).signRawBody(pendingWebhook.rawBody)
-              .headers[SIGNATURE_HEADER] as string,
+              .headers[FAKE_SIGNATURE_HEADER] as string,
           ).expect(200);
           await closedApp.close();
           const { id } = await inboxRowFor(pendingWebhook);
@@ -1994,7 +2819,7 @@ describe('Webhooks route', () => {
                 deliverTo(
                   workerApp,
                   pendingWebhook.rawBody,
-                  pendingWebhook.headers[SIGNATURE_HEADER] as string,
+                  pendingWebhook.headers[FAKE_SIGNATURE_HEADER] as string,
                 ),
               ),
             );
