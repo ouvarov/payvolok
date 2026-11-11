@@ -198,7 +198,7 @@ export class PaddleProvider implements PaymentProvider {
   constructor(
     private readonly config: PaddleConfig,
     private readonly fetchFn: typeof fetch = fetch,
-    private readonly nowMs: () => number = Date.now,
+    private readonly nowEpochMs: () => number = Date.now,
   ) {}
 
   async createPayment(input: CreatePaymentInput): Promise<CreatedPayment> {
@@ -301,7 +301,7 @@ export class PaddleProvider implements PaymentProvider {
         request.headers[SIGNATURE_HEADER],
         request.rawBody,
         this.config.webhookSecret,
-        this.nowMs(),
+        this.nowEpochMs(),
       ),
     );
   }

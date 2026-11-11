@@ -8,8 +8,8 @@ import {
 
 const SECRET = 'pdl_ntfset_01jcsyntheticsecret00000001_AbCdEf';
 const OTHER_SECRET = 'pdl_ntfset_01jcsyntheticsecret00000002_XyZ';
-const NOW_MS = 1_762_855_200_000;
-const NOW_SECONDS = NOW_MS / 1000;
+const NOW_EPOCH_MS = 1_762_855_200_000;
+const NOW_SECONDS = NOW_EPOCH_MS / 1000;
 const RAW_BODY = Buffer.from(
   '{"event_id":"evt_01jcsyntheticevent00000001","event_type":"transaction.completed"}',
 );
@@ -22,7 +22,7 @@ const hmacOf = (timestamp: number, rawBody: Buffer, secret = SECRET): string =>
 const isValid = (
   header: string | readonly string[] | undefined,
   rawBody = RAW_BODY,
-): boolean => isSignatureValid(header, rawBody, SECRET, NOW_MS);
+): boolean => isSignatureValid(header, rawBody, SECRET, NOW_EPOCH_MS);
 
 describe('isSignatureValid', () => {
   it('accepts a correctly signed body', () => {
@@ -32,7 +32,9 @@ describe('isSignatureValid', () => {
   });
 
   it('accepts a header built by signatureHeaderOf', () => {
-    expect(isValid(signatureHeaderOf(RAW_BODY, SECRET, NOW_MS))).toBe(true);
+    expect(isValid(signatureHeaderOf(RAW_BODY, SECRET, NOW_EPOCH_MS))).toBe(
+      true,
+    );
   });
 
   it('accepts timestamps 300 s in the past and in the future', () => {

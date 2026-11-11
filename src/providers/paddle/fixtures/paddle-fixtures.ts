@@ -108,14 +108,14 @@ const syntheticPaddleId = (prefix: string): string =>
 const signedPaddleWebhook = (
   body: unknown,
   secret: string,
-  nowMs: number,
+  nowEpochMs: number,
 ): WebhookRequest => {
   const rawBody = Buffer.from(JSON.stringify(body));
 
   return {
     rawBody,
     headers: {
-      [PADDLE_SIGNATURE_HEADER]: signatureHeaderOf(rawBody, secret, nowMs),
+      [PADDLE_SIGNATURE_HEADER]: signatureHeaderOf(rawBody, secret, nowEpochMs),
     },
   };
 };

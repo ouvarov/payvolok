@@ -38,7 +38,7 @@ type CreatedPaddlePayment = {
 const API_KEY = `pdl_sdbx_apikey_${'e2e0'.repeat(13)}`;
 const WEBHOOK_SECRET = 'pdl_ntfset_01jce2esecret000000000000001_E2eSecret';
 const CLIENT_TOKEN = 'test_E2eClientToken0123456789abc';
-const FIXED_NOW_MS = 1_762_855_200_000;
+const FIXED_NOW_EPOCH_MS = 1_762_855_200_000;
 const PADDLE_API = 'https://sandbox-api.paddle.com';
 const PAYMENTS_PATH = `/${API_V1_PREFIX}/payments`;
 const CHECKOUT_PAGE_BASE = 'https://payvolok.e2e.test/checkout/paddle';
@@ -128,7 +128,11 @@ describe('Paddle provider', () => {
   };
 
   const deliverSigned = (body: unknown) => {
-    const webhook = signedPaddleWebhook(body, WEBHOOK_SECRET, FIXED_NOW_MS);
+    const webhook = signedPaddleWebhook(
+      body,
+      WEBHOOK_SECRET,
+      FIXED_NOW_EPOCH_MS,
+    );
 
     return deliver(
       app,
@@ -300,7 +304,7 @@ describe('Paddle provider', () => {
       paddleProvider: new PaddleProvider(
         { apiKey: API_KEY, webhookSecret: WEBHOOK_SECRET },
         stubFetch,
-        () => FIXED_NOW_MS,
+        () => FIXED_NOW_EPOCH_MS,
       ),
     });
     await app.listen(0);
@@ -476,7 +480,7 @@ describe('Paddle provider', () => {
       const webhook = signedPaddleWebhook(
         event,
         'pdl_ntfset_wrong',
-        FIXED_NOW_MS,
+        FIXED_NOW_EPOCH_MS,
       );
 
       await deliver(

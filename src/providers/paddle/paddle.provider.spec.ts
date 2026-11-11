@@ -18,7 +18,7 @@ type FetchMock = jest.Mock<Promise<Response>, Parameters<typeof fetch>>;
 
 const API_KEY = `pdl_sdbx_apikey_${'k'.repeat(53)}`;
 const WEBHOOK_SECRET = 'pdl_ntfset_01jcsyntheticsecret00000001_AbCdEf';
-const NOW_MS = 1_762_855_200_000;
+const NOW_EPOCH_MS = 1_762_855_200_000;
 const TRANSACTION_ID = 'txn_01jcsyntheticpayment000001';
 const LINE_ITEM_ID = 'txnitm_01jcsyntheticlineitem00001';
 const ADJUSTMENT_ID = 'adj_01jcsyntheticrefund0000001';
@@ -65,7 +65,7 @@ const providerWith = (
   new PaddleProvider(
     { apiKey: API_KEY, webhookSecret: WEBHOOK_SECRET, ...config },
     fetchFn,
-    () => NOW_MS,
+    () => NOW_EPOCH_MS,
   );
 
 const requestOf = (fetchFn: FetchMock, index: number) => {
@@ -114,7 +114,9 @@ const adjustmentWithStatus = (status: string) => {
 };
 
 const parse = (provider: PaddleProvider, body: unknown) =>
-  provider.parseWebhook(signedPaddleWebhook(body, WEBHOOK_SECRET, NOW_MS));
+  provider.parseWebhook(
+    signedPaddleWebhook(body, WEBHOOK_SECRET, NOW_EPOCH_MS),
+  );
 
 describe('PaddleProvider', () => {
   it('declares provider refund identity and the signature header', () => {
@@ -682,7 +684,7 @@ describe('PaddleProvider', () => {
     it('accepts a delivery signed with the secret', async () => {
       await expect(
         providerWith(fetchAnswering()).verifyWebhook(
-          signedPaddleWebhook(body, WEBHOOK_SECRET, NOW_MS),
+          signedPaddleWebhook(body, WEBHOOK_SECRET, NOW_EPOCH_MS),
         ),
       ).resolves.toBe(true);
     });
@@ -690,7 +692,7 @@ describe('PaddleProvider', () => {
     it('refuses a delivery signed with another secret', async () => {
       await expect(
         providerWith(fetchAnswering()).verifyWebhook(
-          signedPaddleWebhook(body, 'pdl_ntfset_other', NOW_MS),
+          signedPaddleWebhook(body, 'pdl_ntfset_other', NOW_EPOCH_MS),
         ),
       ).resolves.toBe(false);
     });
@@ -698,7 +700,7 @@ describe('PaddleProvider', () => {
     it('rejects when no secret is configured, so the delivery gets a 503', async () => {
       const rejection = await rejectionOf(
         providerWith(fetchAnswering(), { webhookSecret: null }).verifyWebhook(
-          signedPaddleWebhook(body, WEBHOOK_SECRET, NOW_MS),
+          signedPaddleWebhook(body, WEBHOOK_SECRET, NOW_EPOCH_MS),
         ),
       );
 

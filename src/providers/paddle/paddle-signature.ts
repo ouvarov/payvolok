@@ -55,15 +55,17 @@ const isSignatureValid = (
   header: string | readonly string[] | undefined,
   rawBody: Buffer,
   secret: string,
-  nowMs: number,
+  nowEpochMs: number,
 ): boolean => {
   if (typeof header !== 'string') return false;
 
   const parsed = parseSignatureHeader(header);
   if (!parsed) return false;
 
-  const signedAtMs = Number(parsed.timestamp) * MS_PER_SECOND;
-  if (Math.abs(nowMs - signedAtMs) > SIGNATURE_TOLERANCE_MS) return false;
+  const signedAtEpochMs = Number(parsed.timestamp) * MS_PER_SECOND;
+  if (Math.abs(nowEpochMs - signedAtEpochMs) > SIGNATURE_TOLERANCE_MS) {
+    return false;
+  }
 
   const expected = signatureOf(parsed.timestamp, rawBody, secret);
 
@@ -75,9 +77,9 @@ const isSignatureValid = (
 const signatureHeaderOf = (
   rawBody: Buffer,
   secret: string,
-  nowMs: number,
+  nowEpochMs: number,
 ): string => {
-  const timestamp = String(Math.floor(nowMs / MS_PER_SECOND));
+  const timestamp = String(Math.floor(nowEpochMs / MS_PER_SECOND));
 
   return `ts=${timestamp};h1=${signatureOf(timestamp, rawBody, secret)}`;
 };
