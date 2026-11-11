@@ -200,14 +200,14 @@ node --env-file=.env -r ts-node/register/transpile-only -r tsconfig-paths/regist
 
 - `DATABASE_URL`: the pooled Postgres address (the client does not use prepared statements, so a pooler works).
 - `API_KEY_SHA256`: the hash of a new key, made as in API access. Do not reuse the local development key.
-- `PUBLIC_BASE_URL`: the service URL Render shows after the first deploy; set it and redeploy.
-- `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET`, `PADDLE_CLIENT_TOKEN`: as in Paddle above.
+- `PUBLIC_BASE_URL`: required to boot, so enter the expected service URL up front: `https://payvolok-api.onrender.com`. If the name is taken Render adds a suffix; then correct the value and redeploy.
+- `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET`, `PADDLE_CLIENT_TOKEN`: as in Paddle above. `PADDLE_WEBHOOK_SECRET` may stay blank on the first deploy (blank counts as unset): Paddle webhooks answer 503 until it is set.
 
 `PORT` is set by Render and read by the app; the other variables keep their defaults. `FAKE_WEBHOOK_SECRET` is left unset: each process then makes its own random secret.
 
 Migrations do not run on boot. Before a deploy that adds one, apply it from a machine that can reach the production database: `npm run db:migrate` with `DATABASE_URL` pointing at it. Prefer a direct connection over the pooler for this.
 
-After the first deploy, point Paddle at the service URL: the default payment link to `<url>/checkout/paddle`, and a new notification destination `<url>/webhooks/paddle` with the same six events. Put its secret in `PADDLE_WEBHOOK_SECRET` and redeploy. Check `/health/ready`.
+After the first deploy, point Paddle at the final service URL: the default payment link to `<url>/checkout/paddle`, and a new notification destination `<url>/webhooks/paddle` with the same six events. Put its secret in `PADDLE_WEBHOOK_SECRET` and redeploy. Check `/health/ready`.
 
 The free plan stops the service when idle, so the first request after a pause takes about 50 seconds.
 
