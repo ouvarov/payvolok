@@ -174,6 +174,68 @@ describe('validateEnv', () => {
     });
   });
 
+  describe('Paddle variables', () => {
+    const VALID_PADDLE_ENV = {
+      PADDLE_API_KEY: `pdl_sdbx_apikey_${'a1'.repeat(26)}`,
+      PADDLE_WEBHOOK_SECRET: 'pdl_ntfset_01jcsyntheticsecret00000001_AbC',
+      PADDLE_CLIENT_TOKEN: `test_${'a1B'.repeat(9)}`,
+    };
+
+    const errorMessageFor = (config: Record<string, unknown>): string => {
+      try {
+        validateEnv(config);
+      } catch (caught) {
+        return (caught as Error).message;
+      }
+
+      return '';
+    };
+
+    it('boots with none of them set', () => {
+      const env = validateEnv(VALID_ENV);
+
+      expect(env.PADDLE_API_KEY).toBeUndefined();
+      expect(env.PADDLE_WEBHOOK_SECRET).toBeUndefined();
+      expect(env.PADDLE_CLIENT_TOKEN).toBeUndefined();
+    });
+
+    it('reads each of them when valid', () => {
+      expect(validateEnv({ ...VALID_ENV, ...VALID_PADDLE_ENV })).toMatchObject(
+        VALID_PADDLE_ENV,
+      );
+    });
+
+    it.each(Object.keys(VALID_PADDLE_ENV))(
+      'treats an empty %s as unset',
+      (key) => {
+        expect(
+          validateEnv({ ...VALID_ENV, ...VALID_PADDLE_ENV, [key]: '' })[
+            key as keyof typeof VALID_PADDLE_ENV
+          ],
+        ).toBeUndefined();
+      },
+    );
+
+    it.each([
+      ['PADDLE_API_KEY', `pdl_live_apikey_${'a1'.repeat(26)}`],
+      ['PADDLE_API_KEY', 'a1'.repeat(30)],
+      ['PADDLE_API_KEY', 'pdl_sdbx_apikey_with space'],
+      ['PADDLE_WEBHOOK_SECRET', 'ntfset_01jcsyntheticsecret00000001'],
+      ['PADDLE_WEBHOOK_SECRET', 'pdl_ntfset_with space'],
+      ['PADDLE_CLIENT_TOKEN', `live_${'a1B'.repeat(9)}`],
+      ['PADDLE_CLIENT_TOKEN', 'test_abc</script>'],
+      ['PADDLE_CLIENT_TOKEN', "test_abc'+alert(1)+'"],
+    ])(
+      'rejects %s %j, naming the key without echoing the value',
+      (key, value) => {
+        const message = errorMessageFor({ ...VALID_ENV, [key]: value });
+
+        expect(message).toContain(key);
+        expect(message).not.toContain(value);
+      },
+    );
+  });
+
   describe('WEBHOOK_POLL_INTERVAL_MS', () => {
     it('accepts 100 and 3600000', () => {
       for (const interval of ['100', '3600000']) {

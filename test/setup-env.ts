@@ -11,3 +11,7 @@ process.env.NODE_ENV = 'test';
 process.env.API_KEY_SHA256 =
   '12ec8503ce99db70ceda90b0bb73acc059cd5bcacbb9bc7e175e9845a0186338';
 process.env.PUBLIC_BASE_URL = 'https://payvolok.e2e.test';
+// Blank, not deleted: ConfigModule would refill a missing key from .env, and blank reads as unset.
+process.env.PADDLE_API_KEY = '';
+process.env.PADDLE_WEBHOOK_SECRET = '';
+process.env.PADDLE_CLIENT_TOKEN = '';
