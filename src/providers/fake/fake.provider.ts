@@ -33,7 +33,7 @@ import {
   paymentScenarioFor,
   refundScenarioFor,
   type FakeWireBody,
-} from './fake-scenarios';
+} from './fake-wire-format';
 
 type EventContext = { dedupKey: string; occurredAt: string | null };
 
