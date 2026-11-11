@@ -176,9 +176,9 @@ It signs webhooks with `FAKE_WEBHOOK_SECRET`, at least 32 characters, so several
 - `PADDLE_WEBHOOK_SECRET` (`pdl_ntfset_…`), the secret of the notification destination. Without it `POST /webhooks/paddle` answers 503, so Paddle retries.
 - `PADDLE_CLIENT_TOKEN` (`test_…`), the client-side token for the checkout page. Without it the page answers 503.
 
-A payment answers with Paddle's own `checkout.url`: the account's default payment link plus `?_ptxn=txn_…`. The default payment link must point to `GET /checkout/paddle`, a small public page that loads Paddle.js in sandbox mode; Paddle.js opens the checkout for `_ptxn` by itself and shows its own success screen. The page is temporary, until the web frontend replaces it.
+A payment answers with Paddle's own `checkout.url`: the account's default payment link plus `?_ptxn=txn_…`. The default payment link must point to `GET /checkout/paddle`, a small public page that loads Paddle.js in sandbox mode; Paddle.js opens the checkout for `_ptxn` by itself and shows its own success screen. The page is temporary, until the web frontend replaces it. Paddle's hosted checkout is not used. Copy the checkout link exactly: extra characters after `_ptxn=txn_…` make Paddle.js fail with "transaction id must be a valid paddle id". Pay with the test card `4242 4242 4242 4242`.
 
-A refund is a Paddle adjustment: it stays `pending` until Paddle approves it (the sandbox approves every ten minutes) and the `adjustment.updated` webhook arrives. Before each refund the adapter reads the transaction's refund adjustments from Paddle and refuses (`422 refund_rejected`) an amount above what pending and approved refunds leave, so a retry after a timed-out refund cannot refund the same money twice.
+A refund is a Paddle adjustment: it stays `pending` until Paddle approves it (the sandbox approves in about ten minutes) and the `adjustment.updated` webhook arrives. Before each refund the adapter reads the transaction's refund adjustments from Paddle and refuses (`422 refund_rejected`) an amount above what pending and approved refunds leave, so a retry after a timed-out refund cannot refund the same money twice.
 
 Manual sandbox setup:
 
@@ -186,7 +186,7 @@ Manual sandbox setup:
 2. Create the API key and the client-side token. In our sandbox dashboard both are under **My account settings**; Paddle's docs call the place **Developer tools > Authentication**. Put them in `.env`.
 3. Expose the local port with a tunnel (ngrok or cloudflared), or deploy, and set `PUBLIC_BASE_URL` to that URL.
 4. **Checkout > Checkout settings** (Paddle's docs: **Checkout configuration**): set the default payment link to `<PUBLIC_BASE_URL>/checkout/paddle`. Paddle creates no transaction without a default payment link.
-5. **Developer tools > Notifications**: add the destination `<PUBLIC_BASE_URL>/webhooks/paddle` with the events `transaction.completed`, `transaction.payment_failed`, `transaction.canceled`, `transaction.paid`, `adjustment.created` and `adjustment.updated`, then put its secret in `PADDLE_WEBHOOK_SECRET`.
+5. **Developer tools > Notifications** (in the sandbox dashboard: **Events > Notifications**): add the destination `<PUBLIC_BASE_URL>/webhooks/paddle` with the events `transaction.completed`, `transaction.payment_failed`, `transaction.canceled`, `transaction.paid`, `adjustment.created` and `adjustment.updated`, then put its secret (under **Edit destination**) in `PADDLE_WEBHOOK_SECRET`.
 
 `scripts/paddle-sandbox-check.ts` calls the sandbox by hand (never in tests or CI): it creates a payment, prints the checkout URL and the status, tries a refund of the unpaid payment, a bad currency, an empty description and an invalid key, and prints Paddle's answers without the key:
 

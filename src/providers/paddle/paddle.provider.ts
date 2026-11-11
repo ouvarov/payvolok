@@ -100,12 +100,8 @@ const transactionBodyOf = (input: CreatePaymentInput) => ({
 const adjustmentBodyOf = (
   transaction: PaddleRefundableTransaction,
   amountMinor: number,
-  refundedMinor: number,
 ) => {
-  if (
-    refundedMinor === 0 &&
-    amountMinor === transaction.details.totals.grand_total
-  ) {
+  if (amountMinor === transaction.details.totals.grand_total) {
     return {
       action: 'refund',
       type: 'full',
@@ -273,7 +269,7 @@ export class PaddleProvider implements PaymentProvider {
       await this.send({
         method: 'POST',
         path: '/adjustments',
-        body: adjustmentBodyOf(transaction, input.amountMinor, refundedMinor),
+        body: adjustmentBodyOf(transaction, input.amountMinor),
       }),
     );
 
