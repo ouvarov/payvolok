@@ -2058,6 +2058,66 @@ describe('Webhooks route', () => {
         index,
       ];
 
+      // Other spec files insert due rows too, so a once-only spy must match the row of its own delivery.
+      const rowIdOf = async (webhook: WebhookRequest): Promise<string | null> =>
+        (await originalRowsOf(app, [webhook]))[0]?.id ?? null;
+
+      const failFinishOnceForRowOf = (
+        webhook: WebhookRequest,
+        error: Error,
+      ) => {
+        const realFinish = WebhooksRepository.prototype.finish;
+        let isSpent = false;
+        jest
+          .spyOn(WebhooksRepository.prototype, 'finish')
+          .mockImplementation(async function (
+            this: WebhooksRepository,
+            claimed,
+            finish,
+          ) {
+            if (!isSpent && claimed.id === (await rowIdOf(webhook))) {
+              isSpent = true;
+              throw error;
+            }
+
+            return realFinish.call(this, claimed, finish);
+          });
+      };
+
+      const failIngestOnceForRowOf = (
+        webhook: WebhookRequest,
+        error: Error,
+      ) => {
+        const realProcess = WebhookEventProcessor.prototype.process;
+        const realIngest = PaymentsService.prototype.runIngestTransaction;
+        let isInRow = false;
+        let isSpent = false;
+        jest
+          .spyOn(WebhookEventProcessor.prototype, 'process')
+          .mockImplementation(async function (
+            this: WebhookEventProcessor,
+            claimed,
+            delivery,
+          ) {
+            isInRow = claimed.id === (await rowIdOf(webhook));
+            try {
+              return await realProcess.call(this, claimed, delivery);
+            } finally {
+              isInRow = false;
+            }
+          });
+        jest
+          .spyOn(PaymentsService.prototype, 'runIngestTransaction')
+          .mockImplementation(function (this: PaymentsService, received, work) {
+            if (isInRow && !isSpent) {
+              isSpent = true;
+              return Promise.reject(error);
+            }
+
+            return realIngest.call(this, received, work);
+          });
+      };
+
       const openApiRefundedPayment = async () => {
         const { paymentId, providerPaymentId } = await createApiPayment(
           app,
@@ -2376,6 +2436,11 @@ describe('Webhooks route', () => {
             expect(
               await originalRowsOf(app, [opened.webhooks[failingPosition]]),
             ).toHaveLength(0);
+            expect(
+              await rowsWithKey(
+                invalidKeyOf(opened.webhooks[failingPosition].rawBody),
+              ),
+            ).toHaveLength(0);
             const redeliveryStatus = await deliverWebhook(
               app,
               opened.webhooks[failingPosition],
@@ -2409,9 +2474,10 @@ describe('Webhooks route', () => {
               beforeDelivery: (position) => {
                 if (position !== failingPosition) return;
 
-                jest
-                  .spyOn(PaymentsService.prototype, 'runIngestTransaction')
-                  .mockRejectedValueOnce(new Error('connection reset'));
+                failIngestOnceForRowOf(
+                  opened.webhooks[failingPosition],
+                  new Error('connection reset'),
+                );
               },
             });
 
@@ -2449,9 +2515,10 @@ describe('Webhooks route', () => {
               beforeDelivery: (position) => {
                 if (position !== failingPosition) return;
 
-                jest
-                  .spyOn(WebhooksRepository.prototype, 'finish')
-                  .mockRejectedValueOnce(new Error('connection lost'));
+                failFinishOnceForRowOf(
+                  opened.webhooks[failingPosition],
+                  new Error('connection lost'),
+                );
               },
             });
 
@@ -2504,7 +2571,11 @@ describe('Webhooks route', () => {
                     rawBody,
                     Buffer.from(' '),
                   ]);
-                  forgedBodies.push(rawBody, tamperedBody);
+                  const unsignedBody = Buffer.concat([
+                    rawBody,
+                    Buffer.from('  '),
+                  ]);
+                  forgedBodies.push(rawBody, tamperedBody, unsignedBody);
 
                   await deliverTo(app, rawBody, WRONG_SIGNATURE).expect(401);
                   await deliverTo(
@@ -2514,7 +2585,7 @@ describe('Webhooks route', () => {
                   ).expect(401);
                   await request(serverOf(app))
                     .post('/webhooks/fake')
-                    .send(rawBody)
+                    .send(unsignedBody)
                     .expect(401);
                 },
               },
@@ -2523,7 +2594,7 @@ describe('Webhooks route', () => {
             const forgedRows = await rowsWithKey(
               ...forgedBodies.map(invalidKeyOf),
             );
-            expect(forgedRows).toHaveLength(REFUNDED_EVENT_COUNT * 2);
+            expect(forgedRows).toHaveLength(REFUNDED_EVENT_COUNT * 3);
             for (const row of forgedRows) {
               expect(row).toMatchObject({
                 status: 'ignored',
