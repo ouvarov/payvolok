@@ -341,46 +341,61 @@ const byAmountMinor = (
   right: { amountMinor: number },
 ): number => left.amountMinor - right.amountMinor;
 
-const expectSettled = (
-  state: MoneyState,
-  { originals, replays, statuses }: SettledRows,
+const expectPaymentRow = (
+  { payment, paymentsWithProviderRef }: MoneyState,
   expected: ExpectedEnd,
 ): void => {
-  const { payment, events } = state;
-  const appliedEvents = events.filter(({ outcome }) => outcome === 'applied');
-  const runRowIds = [...originals, ...replays].map(({ id }) => id);
-
-  expect(state.paymentsWithProviderRef).toBe(1);
+  expect(paymentsWithProviderRef).toBe(1);
   expect(payment).toMatchObject({
     amountMinor: expected.amountMinor,
     currency: 'USD',
     providerPaymentId: expected.providerPaymentId,
   });
+};
+
+const expectStatusPath = (
+  { payment, events }: MoneyState,
+  expected: ExpectedEnd,
+): void => {
+  const appliedEvents = events.filter(({ outcome }) => outcome === 'applied');
 
   expect(payment.status).toBe(expected.finalStatus);
   expect(appliedEvents.map(({ toStatus }) => toStatus)).toEqual(expected.path);
-
   expect(appliedEvents.map(({ fromStatus }) => fromStatus)).toEqual([
     null,
     ...expected.path.slice(0, -1),
   ]);
+};
+
+const expectEventLinks = (
+  { events }: MoneyState,
+  runRowIds: string[],
+  expected: ExpectedEnd,
+): void => {
+  const appliedEvents = events.filter(({ outcome }) => outcome === 'applied');
+  const linkedIdsOf = (linkedEvents: typeof events): string[] =>
+    linkedEvents.flatMap(({ webhookEventId }) =>
+      webhookEventId === null ? [] : [webhookEventId],
+    );
 
   expect(
     events
       .filter(({ webhookEventId }) => webhookEventId === null)
       .map(({ toStatus }) => toStatus),
   ).toEqual(expected.apiPath);
-  const linkedIds = events.flatMap(({ webhookEventId }) =>
-    webhookEventId === null ? [] : [webhookEventId],
-  );
-  for (const linkedId of linkedIds) expect(runRowIds).toContain(linkedId);
-  const appliedLinkedIds = appliedEvents.flatMap(({ webhookEventId }) =>
-    webhookEventId === null ? [] : [webhookEventId],
-  );
+  for (const linkedId of linkedIdsOf(events)) {
+    expect(runRowIds).toContain(linkedId);
+  }
+  const appliedLinkedIds = linkedIdsOf(appliedEvents);
   expect(new Set(appliedLinkedIds).size).toBe(appliedLinkedIds.length);
+};
 
+const expectRefunds = (
+  { refunds: refundRows }: MoneyState,
+  expected: ExpectedEnd,
+): void => {
   expect(
-    [...state.refunds]
+    [...refundRows]
       .sort(byAmountMinor)
       .map(({ origin, status, amountMinor, providerRefundId }) => ({
         origin,
@@ -390,11 +405,17 @@ const expectSettled = (
       })),
   ).toEqual([...expected.refunds].sort(byAmountMinor));
   expect(
-    state.refunds
+    refundRows
       .filter(({ status }) => status === 'succeeded')
       .reduce((sum, { amountMinor }) => sum + amountMinor, 0),
   ).toBe(expected.succeededMinor);
+};
 
+const expectInboxRows = (
+  { payment }: MoneyState,
+  { originals, replays }: SettledRows,
+  expected: ExpectedEnd,
+): void => {
   expect(originals).toHaveLength(expected.eventCount);
   for (const row of originals) {
     expect(row).toMatchObject({
@@ -413,8 +434,21 @@ const expectSettled = (
     });
     expect(originals.map(({ id }) => id)).toContain(row.replayOf);
   }
+};
 
-  expect(statuses).toEqual(expected.statuses);
+const expectSettled = (
+  state: MoneyState,
+  rows: SettledRows,
+  expected: ExpectedEnd,
+): void => {
+  const runRowIds = [...rows.originals, ...rows.replays].map(({ id }) => id);
+
+  expectPaymentRow(state, expected);
+  expectStatusPath(state, expected);
+  expectEventLinks(state, runRowIds, expected);
+  expectRefunds(state, expected);
+  expectInboxRows(state, rows, expected);
+  expect(rows.statuses).toEqual(expected.statuses);
 };
 
 export {
