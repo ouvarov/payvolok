@@ -289,6 +289,13 @@ export class PaymentsService {
     }
   }
 
+  lockPayment(
+    tx: DatabaseTransaction,
+    paymentId: string,
+  ): Promise<Payment | null> {
+    return this.paymentsRepository.findByIdForUpdate(tx, paymentId);
+  }
+
   async lockPaymentForRefund(
     tx: DatabaseTransaction,
     lookup: PaymentLookup,

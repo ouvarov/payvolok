@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 
 import {
   DRIZZLE,
@@ -41,13 +41,15 @@ const storedResponseOf = (
 const keyOf = ({ scope, key }: IdempotentRequest) =>
   and(eq(idempotencyKeys.scope, scope), eq(idempotencyKeys.key, key));
 
+const leaseCutoff = sql`clock_timestamp() - ${IDEMPOTENCY_LEASE_SECONDS}::integer * interval '1 second'`;
+
 const stateColumns = {
   requestHash: idempotencyKeys.requestHash,
   status: idempotencyKeys.status,
   paymentId: idempotencyKeys.paymentId,
   responseStatus: idempotencyKeys.responseStatus,
   responseBody: idempotencyKeys.responseBody,
-  isLeaseExpired: sql<boolean>`${idempotencyKeys.createdAt} <= clock_timestamp() - ${IDEMPOTENCY_LEASE_SECONDS}::integer * interval '1 second'`,
+  isLeaseExpired: sql<boolean>`${idempotencyKeys.createdAt} <= ${leaseCutoff}`,
 };
 
 @Injectable()
@@ -122,6 +124,29 @@ export class IdempotencyRepository {
       .for('update');
 
     return state ?? null;
+  }
+
+  // The status is a literal so the planner can use the partial in-progress index.
+  async hasOtherLiveInProgressKey(
+    tx: DatabaseTransaction,
+    request: IdempotentRequest,
+    paymentId: string,
+  ): Promise<boolean> {
+    const [otherKey] = await tx
+      .select({ key: idempotencyKeys.key })
+      .from(idempotencyKeys)
+      .where(
+        and(
+          eq(idempotencyKeys.paymentId, paymentId),
+          sql`${idempotencyKeys.status} = 'in_progress'`,
+          eq(idempotencyKeys.scope, request.scope),
+          ne(idempotencyKeys.key, request.key),
+          sql`${idempotencyKeys.createdAt} > ${leaseCutoff}`,
+        ),
+      )
+      .limit(1);
+
+    return otherKey !== undefined;
   }
 
   // Fenced by status and payment: a request whose lease was recovered stores nothing.

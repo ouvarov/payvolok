@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 
 import type { DatabaseTransaction } from '@/database/drizzle';
 import {
@@ -10,6 +10,23 @@ import {
 import type { ProviderCode } from '@/providers/provider.constants';
 
 import type { RefundStatus } from './refund.constants';
+
+const sumMinorWithStatus = async (
+  tx: DatabaseTransaction,
+  paymentId: string,
+  statuses: readonly RefundStatus[],
+): Promise<number> => {
+  const [{ totalMinor }] = await tx
+    .select({
+      totalMinor: sql`coalesce(sum(${refunds.amountMinor}), 0)`.mapWith(Number),
+    })
+    .from(refunds)
+    .where(
+      and(eq(refunds.paymentId, paymentId), inArray(refunds.status, statuses)),
+    );
+
+  return totalMinor;
+};
 
 @Injectable()
 export class RefundsRepository {
@@ -97,21 +114,17 @@ export class RefundsRepository {
     return refund ?? null;
   }
 
-  async sumSucceededMinor(
+  sumSucceededMinor(
     tx: DatabaseTransaction,
     paymentId: string,
   ): Promise<number> {
-    const [{ totalMinor }] = await tx
-      .select({
-        totalMinor: sql`coalesce(sum(${refunds.amountMinor}), 0)`.mapWith(
-          Number,
-        ),
-      })
-      .from(refunds)
-      .where(
-        and(eq(refunds.paymentId, paymentId), eq(refunds.status, 'succeeded')),
-      );
+    return sumMinorWithStatus(tx, paymentId, ['succeeded']);
+  }
 
-    return totalMinor;
+  sumReservedMinor(
+    tx: DatabaseTransaction,
+    paymentId: string,
+  ): Promise<number> {
+    return sumMinorWithStatus(tx, paymentId, ['succeeded', 'pending']);
   }
 }

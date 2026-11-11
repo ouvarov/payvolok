@@ -984,7 +984,7 @@ describe('Refunds ingest', () => {
   });
 
   describe('application wiring', () => {
-    it('boots with RefundsModule and adds no route of its own', () => {
+    it('boots with RefundsModule and adds only the refund route', () => {
       const httpInstance = app.getHttpAdapter().getInstance() as {
         router: { stack: { route?: { path: string } }[] };
       };
@@ -997,6 +997,7 @@ describe('Refunds ingest', () => {
       expect(routePaths).toEqual([
         '/api/v1/payments',
         '/api/v1/payments/:id',
+        '/api/v1/payments/:paymentId/refunds',
         '/health/live',
         '/health/ready',
         '/webhooks/:provider',

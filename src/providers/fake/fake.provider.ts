@@ -7,6 +7,7 @@ import {
   type CreatePaymentInput,
   type PaymentProvider,
   type ProviderCapabilities,
+  type ProviderErrorKind,
   type RefundInput,
   type ResourceStatus,
   type StatusQuery,
@@ -20,7 +21,7 @@ import {
 } from '../provider-events';
 
 import {
-  createFailureFor,
+  callFailureFor,
   decodeFakePaymentId,
   decodeFakeRefundId,
   encodeFakeId,
@@ -50,6 +51,12 @@ const FAKE_CAPABILITIES: ProviderCapabilities = {
 
 const rejectedError = (message: string): ProviderError =>
   new ProviderError(message, { providerCode: 'fake', kind: 'rejected' });
+
+const amountFailureError = (kind: ProviderErrorKind): ProviderError =>
+  new ProviderError(`Fake ${kind} failure chosen by the amount`, {
+    providerCode: 'fake',
+    kind,
+  });
 
 const eventIdOf = (
   resourceId: string,
@@ -137,15 +144,8 @@ export class FakeProvider implements PaymentProvider {
       );
     }
 
-    const failureKind = createFailureFor(identity.data.amountMinor);
-    if (failureKind) {
-      return Promise.reject(
-        new ProviderError(`Fake ${failureKind} failure chosen by the amount`, {
-          providerCode: 'fake',
-          kind: failureKind,
-        }),
-      );
-    }
+    const failureKind = callFailureFor(identity.data.amountMinor);
+    if (failureKind) return Promise.reject(amountFailureError(failureKind));
 
     return Promise.resolve({
       providerPaymentId: encodeFakeId(identity.data),
@@ -173,6 +173,9 @@ export class FakeProvider implements PaymentProvider {
     ) {
       return Promise.reject(rejectedError('Refund amount is out of range'));
     }
+
+    const failureKind = callFailureFor(input.amountMinor);
+    if (failureKind) return Promise.reject(amountFailureError(failureKind));
 
     return Promise.resolve({
       providerRefundId: encodeFakeId({

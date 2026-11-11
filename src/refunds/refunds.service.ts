@@ -5,7 +5,10 @@ import type { DatabaseTransaction } from '@/database/drizzle';
 import { isUniqueViolationOf } from '@/database/postgres-errors';
 import type { Payment } from '@/database/schemas/payments.schema';
 import type { Refund } from '@/database/schemas/refunds.schema';
-import { CURRENCY_PATTERN } from '@/payments/payment.constants';
+import {
+  CURRENCY_PATTERN,
+  type PaymentOrigin,
+} from '@/payments/payment.constants';
 import type { TransitionDecision } from '@/payments/payment-state-machine';
 import {
   IngestRejectedError,
@@ -40,6 +43,16 @@ type IngestRefundInput = {
   reason: string;
   webhookEventId: string | null;
 };
+
+type RefundOrigin = Extract<PaymentOrigin, 'api' | 'provider'>;
+
+type RequestedApiRefund = {
+  refundId: string;
+  payment: Pick<Payment, 'id' | 'provider' | 'currency'>;
+  amountMinor: number;
+};
+
+type ApiRefundRef = { paymentId: string; refundId: string };
 
 type RefundOutcome =
   'created' | 'applied' | Exclude<TransitionDecision, 'apply'>;
@@ -166,12 +179,77 @@ export class RefundsService {
     return result;
   }
 
+  // Runs in the caller's transaction, which already holds the idempotency key.
+  async recordApiRefund(
+    tx: DatabaseTransaction,
+    input: IngestRefundInput,
+  ): Promise<IngestRefundResult> {
+    assertValidRefundEvent(input);
+
+    const result = await this.ingestInTransaction(tx, input, 'api');
+    this.warnAboutResult(result, input);
+
+    return result;
+  }
+
+  async recordApiRefundRequested(
+    tx: DatabaseTransaction,
+    requested: RequestedApiRefund,
+  ): Promise<Refund> {
+    const refund = await this.refundsRepository.insertIfAbsent(tx, {
+      id: requested.refundId,
+      paymentId: requested.payment.id,
+      provider: requested.payment.provider,
+      providerRefundId: null,
+      origin: 'api',
+      status: 'pending',
+      amountMinor: requested.amountMinor,
+      currency: requested.payment.currency,
+    });
+    if (!refund) throw new Error(`Refund ${requested.refundId} already exists`);
+
+    return refund;
+  }
+
+  // Only our own untouched pending row fails: a status or id the provider
+  // already reported wins over our failure signal, as for payments.
+  async recordApiRefundFailed(
+    tx: DatabaseTransaction,
+    ref: ApiRefundRef,
+  ): Promise<void> {
+    const payment = await this.paymentsService.lockPayment(tx, ref.paymentId);
+    if (!payment) throw new Error(`Payment ${ref.paymentId} disappeared`);
+
+    const refund = await this.refundsRepository.findByIdAndPayment(
+      tx,
+      ref.refundId,
+      payment.id,
+    );
+    if (!refund) throw new Error(`Refund ${ref.refundId} disappeared`);
+
+    if (refund.status !== 'pending' || refund.providerRefundId !== null) {
+      this.logger.warn(
+        `Refund ${refund.id} keeps ${refund.status}: the provider reported it before the call failed`,
+      );
+      return;
+    }
+
+    await this.refundsRepository.updateStatus(tx, refund.id, 'failed');
+  }
+
+  sumReservedMinor(
+    tx: DatabaseTransaction,
+    paymentId: string,
+  ): Promise<number> {
+    return this.refundsRepository.sumReservedMinor(tx, paymentId);
+  }
+
   private async runTransaction(
     input: IngestRefundInput,
   ): Promise<IngestRefundResult> {
     try {
       return await this.paymentsService.runIngestTransaction(input, (tx) =>
-        this.ingestInTransaction(tx, input),
+        this.ingestInTransaction(tx, input, 'provider'),
       );
     } catch (error) {
       if (isUniqueViolationOf(error, REFUNDS_PROVIDER_REF_UNIQUE)) {
@@ -189,6 +267,7 @@ export class RefundsService {
   private async ingestInTransaction(
     tx: DatabaseTransaction,
     input: IngestRefundInput,
+    origin: RefundOrigin,
   ): Promise<IngestRefundResult> {
     const payment = await this.paymentsService.lockPaymentForRefund(tx, input);
     if (!payment) throw new RefundPaymentNotFoundError(input.providerPaymentId);
@@ -204,6 +283,7 @@ export class RefundsService {
       tx,
       payment,
       input,
+      origin,
     );
     const refundedTotalMinor = await this.refundsRepository.sumSucceededMinor(
       tx,
@@ -243,9 +323,10 @@ export class RefundsService {
     tx: DatabaseTransaction,
     payment: Payment,
     input: IngestRefundInput,
+    origin: RefundOrigin,
   ): Promise<Pick<IngestRefundResult, 'refund' | 'refundOutcome'>> {
     const existingRefund = await this.findRefund(tx, payment, input);
-    if (!existingRefund) return this.insertRefund(tx, payment, input);
+    if (!existingRefund) return this.insertRefund(tx, payment, input, origin);
 
     const problem = mismatchProblemOf(existingRefund, payment, input);
     if (problem) throw new RefundMismatchError(payment.id, problem);
@@ -316,6 +397,7 @@ export class RefundsService {
     tx: DatabaseTransaction,
     payment: Payment,
     input: IngestRefundInput,
+    origin: RefundOrigin,
   ): Promise<Pick<IngestRefundResult, 'refund' | 'refundOutcome'>> {
     const refundId = refundIdOf(input.refundReference);
     // The reference becomes the row id so a reference-only redelivery finds this row.
@@ -324,7 +406,7 @@ export class RefundsService {
       paymentId: payment.id,
       provider: input.provider,
       providerRefundId: input.providerRefundId,
-      origin: 'provider',
+      origin,
       status: input.status,
       amountMinor: input.amountMinor,
       currency: input.currency,
@@ -403,4 +485,9 @@ export class RefundsService {
   }
 }
 
-export type { IngestRefundInput, IngestRefundResult };
+export type {
+  ApiRefundRef,
+  IngestRefundInput,
+  IngestRefundResult,
+  RequestedApiRefund,
+};
