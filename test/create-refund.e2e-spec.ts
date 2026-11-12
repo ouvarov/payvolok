@@ -368,7 +368,7 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
       const rows = await refundRowsOf(payment.id);
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({
-        origin: 'provider',
+        origin: 'api',
         status: 'succeeded',
       });
       expect(response.body).toEqual({
