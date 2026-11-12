@@ -10,6 +10,7 @@ import {
   transactionEventFixture,
   transactionResponseFixture,
   type ErrorBodyName,
+  type PaddleAdjustmentFixture,
 } from './fixtures/paddle-fixtures';
 import { PADDLE_MAX_REQUESTS_PER_CALL } from './paddle-http';
 import { PaddleProvider } from './paddle.provider';
@@ -693,6 +694,138 @@ describe('PaddleProvider', () => {
       await expect(
         providerWith(fetchFn).getStatus(refundQuery(ADJUSTMENT_ID)),
       ).resolves.toBeNull();
+    });
+  });
+
+  describe('listRefunds', () => {
+    const adjustmentsPage = (
+      changes: ((adjustment: PaddleAdjustmentFixture) => void)[],
+      hasMore = false,
+    ) => {
+      const fixture = adjustmentListFixture();
+      const [template] = fixture.data;
+
+      return jsonResponse({
+        ...fixture,
+        data: changes.map((change, index) => {
+          const adjustment = {
+            ...template,
+            id: `adj_01jcsyntheticrefund000000${index + 2}`,
+            totals: { ...template.totals },
+          };
+          change(adjustment);
+
+          return adjustment;
+        }),
+        meta: {
+          ...fixture.meta,
+          pagination: { ...fixture.meta.pagination, has_more: hasMore },
+        },
+      });
+    };
+
+    const withStatus =
+      (status: string) => (adjustment: PaddleAdjustmentFixture) => {
+        adjustment.status = status;
+      };
+
+    it('lists the one-off refunds of the transaction in one request', async () => {
+      const fetchFn = fetchAnswering(
+        adjustmentsPage([
+          withStatus('approved'),
+          withStatus('pending_approval'),
+          (adjustment) => {
+            adjustment.status = 'rejected';
+            adjustment.totals.total = '250';
+          },
+        ]),
+      );
+
+      await expect(
+        providerWith(fetchFn).listRefunds(TRANSACTION_ID),
+      ).resolves.toEqual([
+        {
+          providerRefundId: 'adj_01jcsyntheticrefund0000002',
+          status: 'succeeded',
+          amountMinor: 400,
+          currency: 'USD',
+        },
+        {
+          providerRefundId: 'adj_01jcsyntheticrefund0000003',
+          status: 'pending',
+          amountMinor: 400,
+          currency: 'USD',
+        },
+        {
+          providerRefundId: 'adj_01jcsyntheticrefund0000004',
+          status: 'failed',
+          amountMinor: 250,
+          currency: 'USD',
+        },
+      ]);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(requestOf(fetchFn, 0)).toEqual({
+        url: `https://sandbox-api.paddle.com/adjustments?transaction_id=${TRANSACTION_ID}&action=refund&per_page=50`,
+        method: 'GET',
+        body: undefined,
+      });
+    });
+
+    it.each([
+      ['a reversed refund', withStatus('reversed')],
+      [
+        'a credit',
+        (adjustment: PaddleAdjustmentFixture) => {
+          adjustment.action = 'credit';
+        },
+      ],
+      [
+        'a subscription refund',
+        (adjustment: PaddleAdjustmentFixture) => {
+          adjustment.subscription_id = 'sub_01jcsyntheticsubscription';
+        },
+      ],
+      [
+        'an adjustment of another transaction',
+        (adjustment: PaddleAdjustmentFixture) => {
+          adjustment.transaction_id = 'txn_01jcsyntheticpayment000002';
+        },
+      ],
+    ])('skips %s and keeps the rest', async (_case, change) => {
+      const fetchFn = fetchAnswering(
+        adjustmentsPage([change, withStatus('approved')]),
+      );
+
+      await expect(
+        providerWith(fetchFn).listRefunds(TRANSACTION_ID),
+      ).resolves.toEqual([
+        expect.objectContaining({
+          providerRefundId: 'adj_01jcsyntheticrefund0000003',
+        }),
+      ]);
+    });
+
+    it.each([
+      ['a list with more pages', adjustmentsPage([], true)],
+      ['a failed list', jsonResponse(errorBodyFixture('internal_error'), 500)],
+      ['a list that fails the schema', jsonResponse({ data: 'none' })],
+    ])('treats %s as unavailable', async (_case, response) => {
+      const rejection = await rejectionOf(
+        providerWith(fetchAnswering(response)).listRefunds(TRANSACTION_ID),
+      );
+
+      expect(rejection.kind).toBe('unavailable');
+    });
+
+    it('rejects a payment id that is not a transaction, calling nothing', async () => {
+      const fetchFn = fetchAnswering();
+
+      const rejection = await rejectionOf(
+        providerWith(fetchFn).listRefunds('txn_1/../../customers'),
+      );
+
+      expect(rejection.kind).toBe('rejected');
+      expect(fetchFn).not.toHaveBeenCalled();
     });
   });
 

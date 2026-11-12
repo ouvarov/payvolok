@@ -638,6 +638,20 @@ describe('FakeProvider', () => {
     });
   });
 
+  describe('listRefunds', () => {
+    it('lists no refunds, even for a payment it refunded', async () => {
+      const providerPaymentId = await createdPaymentId(1000);
+      await fakeProvider.refund({
+        reference: 'refund-reference',
+        providerPaymentId,
+        amountMinor: 400,
+        currency: 'USD',
+      });
+
+      await expect(fakeProvider.listRefunds()).resolves.toEqual([]);
+    });
+  });
+
   describe('reference', () => {
     it.each(['attempt-1', '', '  spaced / "quoted" кирилиця '])(
       'round-trips the opaque value %j unchanged',

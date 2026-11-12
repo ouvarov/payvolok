@@ -213,14 +213,20 @@ const paymentEventOf = (
   };
 };
 
-const refundEventTypeOf = (
+const oneOffRefundStatusOf = (
   adjustment: PaddleAdjustment,
-): ProviderRefundEvent['type'] | null => {
+): ProviderRefundStatus | null => {
   if (adjustment.action !== 'refund' || adjustment.subscription_id !== null) {
     return null;
   }
 
-  const status = ADJUSTMENT_STATUSES.get(adjustment.status);
+  return ADJUSTMENT_STATUSES.get(adjustment.status) ?? null;
+};
+
+const refundEventTypeOf = (
+  adjustment: PaddleAdjustment,
+): ProviderRefundEvent['type'] | null => {
+  const status = oneOffRefundStatusOf(adjustment);
 
   return status ? (REFUND_EVENT_TYPES.get(status) ?? null) : null;
 };
@@ -269,6 +275,7 @@ export {
   ADJUSTMENT_ID_PATTERN,
   ADJUSTMENT_STATUSES,
   amountMinorOf,
+  oneOffRefundStatusOf,
   paddleAdjustmentPageSchema,
   paddleAdjustmentSchema,
   paddleCreatedTransactionSchema,
