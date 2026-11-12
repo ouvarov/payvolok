@@ -83,7 +83,7 @@ const serviceWith = ({
       sumSucceededMinor: jest.fn().mockResolvedValue(300),
       sumReservedMinor: jest.fn().mockResolvedValue(300),
       ...refunds,
-    },
+    } as unknown as RefundsRepository,
   );
 
 describe('RefundsService', () => {

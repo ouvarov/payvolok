@@ -242,6 +242,10 @@ export class RefundsService {
     return this.refundsRepository.sumReservedMinor(tx, paymentId);
   }
 
+  findPendingRefunds(paymentId: string): Promise<Refund[]> {
+    return this.refundsRepository.findPendingByPayment(paymentId);
+  }
+
   private async runTransaction(
     input: IngestRefundInput,
   ): Promise<IngestRefundResult> {
