@@ -1,3 +1,5 @@
+import { Logger } from '@nestjs/common';
+
 import type { DatabaseTransaction } from '@/database/drizzle';
 import type { Payment } from '@/database/schemas/payments.schema';
 import type { ProviderPaymentStatus } from '@/providers/payment-provider.port';
@@ -123,6 +125,29 @@ describe('PaymentsService', () => {
         expect(requestReconciliation).toHaveBeenCalledWith(REFERENCE);
       },
     );
+
+    it('still returns the payment when the reconciliation request fails', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      const service = new PaymentsService(
+        repositoryWith({
+          findById: jest
+            .fn()
+            .mockResolvedValue(paymentWith({ status: 'pending' })),
+          requestReconciliation: jest
+            .fn()
+            .mockRejectedValue(
+              new Error('canceling statement due to lock timeout'),
+            ),
+        }),
+      );
+
+      await expect(service.getPayment(REFERENCE)).resolves.toMatchObject({
+        paymentId: REFERENCE,
+        status: 'pending',
+      });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining(REFERENCE));
+      warn.mockRestore();
+    });
 
     it.each([
       'succeeded',
