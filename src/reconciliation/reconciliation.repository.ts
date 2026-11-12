@@ -4,12 +4,11 @@ import { and, eq, sql, type SQL } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '@/database/drizzle';
 import { payments, type Payment } from '@/database/schemas/payments.schema';
 import { quotedList } from '@/database/schemas/schema-helpers';
-import type { ProviderCode } from '@/providers/provider.constants';
-
 import {
   RECONCILABLE_PAYMENT_STATUSES,
   RECONCILE_LEASE_SECONDS,
-} from './reconciliation.constants';
+} from '@/payments/payment.constants';
+import type { ProviderCode } from '@/providers/provider.constants';
 
 // The unit a provider outage is skipped by; a provider account once there is more than one.
 type ReconciliationScopeKey = ProviderCode;

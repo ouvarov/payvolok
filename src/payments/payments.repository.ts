@@ -15,13 +15,13 @@ import {
 } from '@/database/schemas/payments.schema';
 import { quotedList } from '@/database/schemas/schema-helpers';
 import type { ProviderCode } from '@/providers/provider.constants';
+
 import {
   NUDGEABLE_PAYMENT_STATUSES,
   RECONCILE_NUDGE_MIN_AGE_SECONDS,
   RECONCILE_NUDGE_THROTTLE_SECONDS,
-} from '@/reconciliation/reconciliation.constants';
-
-import type { PaymentStatus } from './payment.constants';
+  type PaymentStatus,
+} from './payment.constants';
 
 @Injectable()
 export class PaymentsRepository {

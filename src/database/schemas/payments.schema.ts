@@ -17,12 +17,10 @@ import {
   PAYMENT_PURPOSES,
   PAYMENT_STATUSES,
   PAYMENTS_PROVIDER_REF_UNIQUE,
-} from '../../payments/payment.constants';
-import { PROVIDER_CODES } from '../../providers/provider.constants';
-import {
   RECONCILABLE_PAYMENT_STATUSES,
   RECONCILE_GRACE_SECONDS,
-} from '../../reconciliation/reconciliation.constants';
+} from '../../payments/payment.constants';
+import { PROVIDER_CODES } from '../../providers/provider.constants';
 
 import { quotedList } from './schema-helpers';
 import { webhookEvents } from './webhook-events.schema';

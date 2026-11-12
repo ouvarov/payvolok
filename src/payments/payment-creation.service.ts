@@ -24,10 +24,10 @@ import {
   type ProviderFailure,
 } from '@/providers/provider-failure';
 import { ProviderRegistry } from '@/providers/provider.registry';
-import { RECONCILIATION_INTERRUPTED_REASON } from '@/reconciliation/reconciliation.constants';
 
 import type { CreatePaymentDto } from './dto/create-payment.dto';
 import { CreatedPaymentResponseDto } from './dto/created-payment-response.dto';
+import { RECONCILIATION_INTERRUPTED_REASON } from './payment.constants';
 import {
   PaymentsService,
   type ApiPaymentRef,

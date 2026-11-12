@@ -1,3 +1,4 @@
+import { RECONCILE_LEASE_SECONDS } from '@/payments/payment.constants';
 import { PADDLE_REQUEST_TIMEOUT_MS } from '@/providers/paddle/paddle-http';
 
 import {
@@ -7,7 +8,6 @@ import {
 } from './reconciliation-schedule';
 import {
   PENDING_RECONCILE_DELAYS_SECONDS,
-  RECONCILE_LEASE_SECONDS,
   REFUNDABLE_RECONCILE_DELAY_SECONDS,
 } from './reconciliation.constants';
 

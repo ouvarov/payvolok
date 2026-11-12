@@ -35,6 +35,7 @@ import {
   IDEMPOTENCY_KEY_TTL_SECONDS,
   IDEMPOTENCY_LEASE_SECONDS,
 } from '@/idempotency/idempotency.constants';
+import { RECONCILE_GRACE_SECONDS } from '@/payments/payment.constants';
 import { PaymentsService } from '@/payments/payments.service';
 import { encodeFakeId } from '@/providers/fake/fake-wire-format';
 import { FakeProvider } from '@/providers/fake/fake.provider';
@@ -47,7 +48,6 @@ import {
 import {
   PENDING_RECONCILE_DELAYS_SECONDS,
   RECONCILE_BATCH_SIZE,
-  RECONCILE_GRACE_SECONDS,
   REFUNDABLE_RECONCILE_DELAY_SECONDS,
 } from '@/reconciliation/reconciliation.constants';
 import { ReconciliationRepository } from '@/reconciliation/reconciliation.repository';
