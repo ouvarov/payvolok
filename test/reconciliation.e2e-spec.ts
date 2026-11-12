@@ -328,9 +328,10 @@ describe('Reconciliation', () => {
       );
     });
 
-    it('backs a payment the provider still has pending off by its attempts, writing no event', async () => {
+    it('backs a payment the provider still has pending off by its age, writing no event', async () => {
       const payment = await insertDuePayment({
         amountMinor: 1005,
+        createdAgoSeconds: 3 * HOUR_SECONDS,
         attempts: 3,
       });
 
@@ -340,7 +341,7 @@ describe('Reconciliation', () => {
       expect(stored.status).toBe('pending');
       expect(stored.reconcileAttempts).toBe(4);
       expect(secondsScheduledAfterCheck(stored)).toBe(
-        PENDING_RECONCILE_DELAYS_SECONDS[3],
+        PENDING_RECONCILE_DELAYS_SECONDS[4],
       );
       expect(await eventsOf(payment.id)).toEqual([]);
     });
@@ -398,7 +399,7 @@ describe('Reconciliation', () => {
       const stored = await paymentOf(payment.id);
       expect(stored.status).toBe('pending');
       expect(secondsScheduledAfterCheck(stored)).toBe(
-        PENDING_RECONCILE_DELAYS_SECONDS[0],
+        PENDING_RECONCILE_DELAYS_SECONDS[3],
       );
       expect(await eventsOf(payment.id)).toEqual([]);
       expect(warn).toHaveBeenCalledWith(expect.stringContaining(payment.id));
@@ -420,7 +421,7 @@ describe('Reconciliation', () => {
       const stored = await paymentOf(mismatched.id);
       expect(stored.status).toBe('pending');
       expect(secondsScheduledAfterCheck(stored)).toBe(
-        PENDING_RECONCILE_DELAYS_SECONDS[0],
+        PENDING_RECONCILE_DELAYS_SECONDS[3],
       );
       expect(error).toHaveBeenCalledWith(
         expect.stringContaining(mismatched.id),
@@ -477,7 +478,6 @@ describe('Reconciliation', () => {
       const payment = await insertDuePayment({
         amountMinor: 1005,
         createdAgoSeconds: 29.9 * DAY_SECONDS,
-        attempts: 20,
       });
 
       await worker.drain();
@@ -679,6 +679,29 @@ describe('Reconciliation', () => {
         payment.updatedAt,
       );
       expect(getStatus).not.toHaveBeenCalled();
+    });
+
+    it('keeps the backoff of its age after several checks a GET brought forward', async () => {
+      const payment = await insertDuePayment({
+        amountMinor: 1005,
+        createdAgoSeconds: 20 * 60,
+        dueAgoSeconds: -600,
+      });
+
+      for (let check = 0; check < 4; check += 1) {
+        await db.execute(sql`
+          update payments set reconciled_at = reconciled_at - interval '20 seconds'
+          where id = ${payment.id}
+        `);
+        await getPayment(payment.id).expect(200);
+        await expect(worker.drain()).resolves.toBe(1);
+      }
+
+      const stored = await paymentOf(payment.id);
+      expect(stored.reconcileAttempts).toBe(4);
+      expect(secondsScheduledAfterCheck(stored)).toBe(
+        PENDING_RECONCILE_DELAYS_SECONDS[1],
+      );
     });
 
     it('leaves a payment checked a few seconds ago and a payment just created', async () => {

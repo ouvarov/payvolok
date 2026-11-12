@@ -10,7 +10,6 @@ import {
 
 type ScheduleInput = {
   status: PaymentStatus;
-  attempts: number;
   createdAt: Date;
   now: Date;
 };
@@ -26,17 +25,15 @@ const INGESTABLE_STATUS_BY_PROVIDER_STATUS = {
   refunded: 'succeeded',
 } as const satisfies Record<ProviderPaymentStatus, IngestablePaymentStatus>;
 
-const pendingDelaySecondsOf = (attempts: number): number => {
-  const lastIndex = PENDING_RECONCILE_DELAYS_SECONDS.length - 1;
-
-  return PENDING_RECONCILE_DELAYS_SECONDS[
-    Math.min(Math.max(attempts - 1, 0), lastIndex)
-  ];
-};
+// By age, not by attempts: checks a GET brings forward must not stretch the backoff.
+const pendingDelaySecondsOf = (ageSeconds: number): number =>
+  PENDING_RECONCILE_DELAYS_SECONDS.findLast(
+    (delaySeconds) => delaySeconds <= ageSeconds,
+  ) ?? PENDING_RECONCILE_DELAYS_SECONDS[0];
 
 const RECONCILE_DELAY_SECONDS_BY_STATUS: Record<
   PaymentStatus,
-  ((attempts: number) => number) | null
+  ((ageSeconds: number) => number) | null
 > = {
   created: pendingDelaySecondsOf,
   pending: pendingDelaySecondsOf,
@@ -53,14 +50,14 @@ const ingestableStatusOf = (
 
 const nextReconcileAfterOf = ({
   status,
-  attempts,
   createdAt,
   now,
 }: ScheduleInput): Date | null => {
   const delaySecondsOf = RECONCILE_DELAY_SECONDS_BY_STATUS[status];
   if (!delaySecondsOf) return null;
 
-  const nextEpochMs = now.getTime() + delaySecondsOf(attempts) * 1000;
+  const ageSeconds = (now.getTime() - createdAt.getTime()) / 1000;
+  const nextEpochMs = now.getTime() + delaySecondsOf(ageSeconds) * 1000;
   if (nextEpochMs > createdAt.getTime() + RECONCILE_WINDOW_MS) return null;
 
   return new Date(nextEpochMs);

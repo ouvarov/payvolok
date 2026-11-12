@@ -235,7 +235,6 @@ export class ReconciliationService {
 
     const nextReconcileAfter = nextReconcileAfterOf({
       status: check.status,
-      attempts: claimed.reconcileAttempts,
       createdAt: claimed.createdAt,
       now: claimed.reconciledAt,
     });

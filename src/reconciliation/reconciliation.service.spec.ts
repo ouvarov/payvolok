@@ -25,7 +25,8 @@ import type {
 } from './reconciliation.repository';
 import { ReconciliationService } from './reconciliation.service';
 
-const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
 const RECONCILED_AT = new Date('2026-11-12T12:00:00.000Z');
 const PAYMENT_ID = '0b9d6f0e-5a4b-4c1e-9f3a-111111111111';
 
@@ -37,7 +38,7 @@ const claimedWith = (
   providerPaymentId: 'provider-1',
   status: 'pending',
   purpose: 'one_off',
-  createdAt: new Date(RECONCILED_AT.getTime() - 60 * 60 * 1000),
+  createdAt: new Date(RECONCILED_AT.getTime() - HOUR_MS),
   reconcileAttempts: 1,
   reconciledAt: RECONCILED_AT,
   ...overrides,
@@ -64,6 +65,8 @@ const ingestedWith = (
 
 const secondsAfterClaim = (next: Date | null): number | null =>
   next === null ? null : (next.getTime() - RECONCILED_AT.getTime()) / 1000;
+
+const ONE_HOUR_OLD_DELAY_SECONDS = PENDING_RECONCILE_DELAYS_SECONDS[3];
 
 describe('ReconciliationService', () => {
   let getStatus: jest.Mock<Promise<ResourceStatus | null>, []>;
@@ -155,16 +158,19 @@ describe('ReconciliationService', () => {
       expect(scheduledSeconds()).toBe(REFUNDABLE_RECONCILE_DELAY_SECONDS);
     });
 
-    it('backs a still pending payment off by its attempt count', async () => {
+    it('backs a still pending payment off by its age, not by how often it was checked', async () => {
       getStatus.mockResolvedValue(paymentStatusWith({ status: 'pending' }));
       ingestPayment.mockResolvedValue(ingestedWith('pending', 'duplicate'));
 
       const result = await service.reconcile(
-        claimedWith({ reconcileAttempts: 4 }),
+        claimedWith({
+          reconcileAttempts: 40,
+          createdAt: new Date(RECONCILED_AT.getTime() - 3 * HOUR_MS),
+        }),
       );
 
       expect(result).toMatchObject({ isChanged: false });
-      expect(scheduledSeconds()).toBe(PENDING_RECONCILE_DELAYS_SECONDS[3]);
+      expect(scheduledSeconds()).toBe(PENDING_RECONCILE_DELAYS_SECONDS[4]);
     });
 
     it('stops checking once the payment reaches a final status', async () => {
@@ -183,7 +189,7 @@ describe('ReconciliationService', () => {
 
       expect(ingestPayment).not.toHaveBeenCalled();
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(scheduledSeconds()).toBe(PENDING_RECONCILE_DELAYS_SECONDS[0]);
+      expect(scheduledSeconds()).toBe(ONE_HOUR_OLD_DELAY_SECONDS);
     });
 
     it('logs a rejected ingest with the payment id and backs off', async () => {
@@ -199,7 +205,7 @@ describe('ReconciliationService', () => {
         isChanged: false,
       });
       expect(error).toHaveBeenCalledWith(expect.stringContaining(PAYMENT_ID));
-      expect(scheduledSeconds()).toBe(PENDING_RECONCILE_DELAYS_SECONDS[0]);
+      expect(scheduledSeconds()).toBe(ONE_HOUR_OLD_DELAY_SECONDS);
     });
 
     it('lets any other ingest error through', async () => {
@@ -224,7 +230,7 @@ describe('ReconciliationService', () => {
           scopeKey: 'fake',
           failure: { kind, detail: 'down' },
         });
-        expect(scheduledSeconds()).toBe(PENDING_RECONCILE_DELAYS_SECONDS[0]);
+        expect(scheduledSeconds()).toBe(ONE_HOUR_OLD_DELAY_SECONDS);
       },
     );
 
@@ -245,7 +251,6 @@ describe('ReconciliationService', () => {
 
       await service.reconcile(
         claimedWith({
-          reconcileAttempts: 20,
           createdAt: new Date(RECONCILED_AT.getTime() - 29.9 * DAY_MS),
         }),
       );
@@ -284,7 +289,7 @@ describe('ReconciliationService', () => {
         claimedWith({ status: 'created', providerPaymentId: null }),
       );
 
-      expect(scheduledSeconds()).toBe(PENDING_RECONCILE_DELAYS_SECONDS[0]);
+      expect(scheduledSeconds()).toBe(ONE_HOUR_OLD_DELAY_SECONDS);
     });
 
     it('logs a pending one as an error and stops', async () => {

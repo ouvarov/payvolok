@@ -11,15 +11,19 @@ import {
   REFUNDABLE_RECONCILE_DELAY_SECONDS,
 } from './reconciliation.constants';
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 const NOW = new Date('2026-11-12T12:00:00.000Z');
+
+const HOUR_SECONDS = 60 * 60;
+const DAY_SECONDS = 24 * HOUR_SECONDS;
+
+const createdAgo = (seconds: number): Date =>
+  new Date(NOW.getTime() - seconds * 1000);
 
 const scheduleWith = (
   overrides: Partial<ScheduleInput> = {},
 ): ScheduleInput => ({
   status: 'pending',
-  attempts: 1,
-  createdAt: new Date(NOW.getTime() - 60 * 1000),
+  createdAt: createdAgo(HOUR_SECONDS),
   now: NOW,
   ...overrides,
 });
@@ -41,31 +45,39 @@ describe('ingestableStatusOf', () => {
 });
 
 describe('nextReconcileAfterOf', () => {
-  it.each(
-    PENDING_RECONCILE_DELAYS_SECONDS.map(
-      (delaySeconds, index) => [index + 1, delaySeconds] as const,
-    ),
-  )(
-    'backs a pending payment off after attempt %i by %i seconds',
-    (attempts, delaySeconds) => {
+  it.each([
+    [30, 300],
+    [600, 300],
+    [900, 900],
+    [1799, 900],
+    [1800, 1800],
+    [HOUR_SECONDS, 3600],
+    [2 * HOUR_SECONDS, 3600],
+    [3 * HOUR_SECONDS, 10800],
+    [6 * HOUR_SECONDS, 21600],
+    [DAY_SECONDS, 86400],
+    [5 * DAY_SECONDS, 86400],
+  ])(
+    'backs a pending payment %i seconds old off by %i seconds',
+    (ageSeconds, delaySeconds) => {
       expect(
-        secondsUntil(nextReconcileAfterOf(scheduleWith({ attempts }))),
+        secondsUntil(
+          nextReconcileAfterOf(
+            scheduleWith({ createdAt: createdAgo(ageSeconds) }),
+          ),
+        ),
       ).toBe(delaySeconds);
     },
   );
 
-  it('caps the backoff at one day', () => {
-    expect(
-      secondsUntil(nextReconcileAfterOf(scheduleWith({ attempts: 50 }))),
-    ).toBe(86400);
-  });
-
   it('backs a created payment off like a pending one', () => {
     expect(
       secondsUntil(
-        nextReconcileAfterOf(scheduleWith({ status: 'created', attempts: 3 })),
+        nextReconcileAfterOf(
+          scheduleWith({ status: 'created', createdAt: createdAgo(1800) }),
+        ),
       ),
-    ).toBe(PENDING_RECONCILE_DELAYS_SECONDS[2]);
+    ).toBe(1800);
   });
 
   it.each(['succeeded', 'partially_refunded'] as const)(
@@ -85,25 +97,31 @@ describe('nextReconcileAfterOf', () => {
   );
 
   it('stops when the next check would fall past 30 days from creation', () => {
-    const input = scheduleWith({
-      attempts: 20,
-      createdAt: new Date(NOW.getTime() - 29.9 * DAY_MS),
-    });
-
-    expect(nextReconcileAfterOf(input)).toBeNull();
+    expect(
+      nextReconcileAfterOf(
+        scheduleWith({ createdAt: createdAgo(29.9 * DAY_SECONDS) }),
+      ),
+    ).toBeNull();
   });
 
   it('keeps checking when the next check is still inside the window', () => {
-    const input = scheduleWith({
-      attempts: 1,
-      createdAt: new Date(NOW.getTime() - 29.9 * DAY_MS),
-    });
-
-    expect(secondsUntil(nextReconcileAfterOf(input))).toBe(300);
+    expect(
+      secondsUntil(
+        nextReconcileAfterOf(
+          scheduleWith({ createdAt: createdAgo(28.9 * DAY_SECONDS) }),
+        ),
+      ),
+    ).toBe(86400);
   });
 });
 
 describe('reconcile lease', () => {
+  it('is shorter than the shortest backoff, so a finished check is told apart from a leased one', () => {
+    expect(Math.min(...PENDING_RECONCILE_DELAYS_SECONDS)).toBeGreaterThan(
+      RECONCILE_LEASE_SECONDS,
+    );
+  });
+
   it('outlasts two Paddle requests with room to spare', () => {
     expect(PADDLE_REQUEST_TIMEOUT_MS * 2).toBeLessThan(
       (RECONCILE_LEASE_SECONDS * 1000) / 2,
