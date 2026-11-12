@@ -60,6 +60,7 @@ const repositoryWith = (
       Promise.resolve(work(TX)),
     ),
     findById: jest.fn().mockResolvedValue(null),
+    requestReconciliation: jest.fn().mockResolvedValue(undefined),
     insertIfAbsent: jest.fn().mockResolvedValue(null),
     findByProviderRefForUpdate: jest.fn().mockResolvedValue(null),
     findByIdAndProviderForUpdate: jest.fn().mockResolvedValue(null),
@@ -105,6 +106,46 @@ describe('PaymentsService', () => {
         },
       });
     });
+
+    it.each(['created', 'pending'] as const)(
+      'asks for a reconciliation of a %s payment',
+      async (status) => {
+        const requestReconciliation = jest.fn().mockResolvedValue(undefined);
+        const service = new PaymentsService(
+          repositoryWith({
+            findById: jest.fn().mockResolvedValue(paymentWith({ status })),
+            requestReconciliation,
+          }),
+        );
+
+        await service.getPayment(REFERENCE);
+
+        expect(requestReconciliation).toHaveBeenCalledWith(REFERENCE);
+      },
+    );
+
+    it.each([
+      'succeeded',
+      'partially_refunded',
+      'refunded',
+      'failed',
+      'expired',
+    ] as const)(
+      'does not ask for a reconciliation of a %s payment',
+      async (status) => {
+        const requestReconciliation = jest.fn().mockResolvedValue(undefined);
+        const service = new PaymentsService(
+          repositoryWith({
+            findById: jest.fn().mockResolvedValue(paymentWith({ status })),
+            requestReconciliation,
+          }),
+        );
+
+        await service.getPayment(REFERENCE);
+
+        expect(requestReconciliation).not.toHaveBeenCalled();
+      },
+    );
   });
 
   it('accepts only registered provider codes at compile time', () => {

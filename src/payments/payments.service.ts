@@ -183,6 +183,9 @@ export class PaymentsService {
         message: 'Payment not found',
       });
     }
+    if (payment.status === 'created' || payment.status === 'pending') {
+      await this.paymentsRepository.requestReconciliation(payment.id);
+    }
 
     return new PaymentResponseDto(payment);
   }
