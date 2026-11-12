@@ -130,7 +130,7 @@ Refused before the provider is called, storing nothing under the key:
 
 When the provider refuses the refund the answer is `422 refund_rejected`; when it cannot be reached, is set up wrong or does not return a refund id it is `503 provider_unavailable` with the `paymentId`. A provider that identifies refunds by our id gets a `pending` refund row before the call; a refusal or a setup error marks it `failed`, an outage leaves it `pending`, because the refund may still have happened. A status a provider webhook already reported is kept. A provider that identifies refunds by its own id gets the row only after it answers.
 
-A refund request interrupted after its key was taken stores `503 provider_unavailable` for that key after 60 s and changes no refund. Check the payment before retrying with a new key. Every stored `503` brings the payment's next reconciliation within 2 minutes, which records the refund if the provider made it.
+A refund request interrupted after its key was taken stores `503 provider_unavailable` for that key after 60 s and changes no refund. Check the payment before retrying with a new key. Every stored `503` brings the payment's next reconciliation within 2 minutes, which records the refund if the provider made it and answers by then. Otherwise the daily check (while the payment is within 30 days of its creation) and the provider's webhooks take over.
 
 ### Idempotency
 
