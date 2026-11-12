@@ -41,7 +41,9 @@ export class ReconciliationRepository {
   constructor(@Inject(DRIZZLE) private readonly db: Database) {}
 
   // One autocommit statement, so the provider call that follows holds no
-  // connection. The status list is a literal to match the partial index.
+  // connection. The status list is a literal to match the partial index. Both
+  // times come from one now(), so a leased row is exactly reconciled_at + lease,
+  // which is how a read tells it from a finished check.
   async claimNext(
     skippedScopeKeys: readonly ReconciliationScopeKey[],
   ): Promise<ClaimedPayment | null> {
@@ -49,8 +51,8 @@ export class ReconciliationRepository {
       .update(payments)
       .set({
         reconcileAttempts: sql`${payments.reconcileAttempts} + 1`,
-        reconciledAt: sql`clock_timestamp()`,
-        reconcileAfter: sql`clock_timestamp() + ${RECONCILE_LEASE_SECONDS}::integer * interval '1 second'`,
+        reconciledAt: sql`now()`,
+        reconcileAfter: sql`now() + ${RECONCILE_LEASE_SECONDS}::integer * interval '1 second'`,
       })
       .where(
         sql`${payments.id} = (

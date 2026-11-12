@@ -35,7 +35,10 @@ import {
   IDEMPOTENCY_KEY_TTL_SECONDS,
   IDEMPOTENCY_LEASE_SECONDS,
 } from '@/idempotency/idempotency.constants';
-import { RECONCILE_GRACE_SECONDS } from '@/payments/payment.constants';
+import {
+  RECONCILE_GRACE_SECONDS,
+  RECONCILE_LEASE_SECONDS,
+} from '@/payments/payment.constants';
 import { PaymentsService } from '@/payments/payments.service';
 import { encodeFakeId } from '@/providers/fake/fake-wire-format';
 import { FakeProvider } from '@/providers/fake/fake.provider';
@@ -729,6 +732,9 @@ describe('Reconciliation', () => {
       const payment = await insertDuePayment({ createdAgoSeconds: 60 });
       const claimed = await app.get(ReconciliationRepository).claimNext([]);
       expect(claimed?.id).toBe(payment.id);
+      expect(secondsScheduledAfterCheck(await paymentOf(payment.id))).toBe(
+        RECONCILE_LEASE_SECONDS,
+      );
       await db.execute(sql`
         update payments
         set reconciled_at = reconciled_at - interval '20 seconds',
