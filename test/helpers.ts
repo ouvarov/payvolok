@@ -30,13 +30,15 @@ const databasePoolMax = isRealPostgres
   ? REAL_POSTGRES_POOL_MAX
   : PGLITE_POOL_MAX;
 
-// The worker is off unless a test asks for it: an enabled worker in one spec
-// file would claim rows another file on the same database still asserts on.
+// The workers are off unless a test asks for them: an enabled worker in one
+// spec file would claim rows another file on the same database still asserts on.
 type E2eAppOptions = {
   appDatabaseUrl?: string;
   appDatabasePoolMax?: number;
   isWorkerEnabled?: boolean;
   pollIntervalMs?: number;
+  isReconciliationEnabled?: boolean;
+  reconciliationPollIntervalMs?: number;
   fakeWebhookSecret?: string;
   extraControllers?: Type<unknown>[];
   paddleEnv?: PaddleEnv;
@@ -58,6 +60,8 @@ const createE2eApp = async ({
   appDatabasePoolMax = databasePoolMax,
   isWorkerEnabled = false,
   pollIntervalMs,
+  isReconciliationEnabled = false,
+  reconciliationPollIntervalMs,
   fakeWebhookSecret,
   extraControllers = [],
   paddleEnv = {},
@@ -71,6 +75,10 @@ const createE2eApp = async ({
     ...(pollIntervalMs === undefined
       ? {}
       : { WEBHOOK_POLL_INTERVAL_MS: pollIntervalMs }),
+    RECONCILIATION_WORKER_ENABLED: String(isReconciliationEnabled),
+    ...(reconciliationPollIntervalMs === undefined
+      ? {}
+      : { RECONCILIATION_POLL_INTERVAL_MS: reconciliationPollIntervalMs }),
     ...(fakeWebhookSecret === undefined
       ? {}
       : { FAKE_WEBHOOK_SECRET: fakeWebhookSecret }),

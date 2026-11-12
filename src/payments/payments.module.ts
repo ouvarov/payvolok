@@ -13,6 +13,6 @@ import { PaymentsService } from './payments.service';
   imports: [DatabaseModule, IdempotencyModule, ProvidersModule],
   controllers: [PaymentsController],
   providers: [PaymentCreationService, PaymentsRepository, PaymentsService],
-  exports: [PaymentsService],
+  exports: [PaymentCreationService, PaymentsService],
 })
 export class PaymentsModule {}

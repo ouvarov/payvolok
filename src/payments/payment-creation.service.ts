@@ -11,6 +11,7 @@ import type {
 import {
   IdempotencyService,
   requestHashOf,
+  type CloseInterruptedResult,
   type IdempotentResponse,
 } from '@/idempotency/idempotency.service';
 import type {
@@ -23,10 +24,15 @@ import {
   type ProviderFailure,
 } from '@/providers/provider-failure';
 import { ProviderRegistry } from '@/providers/provider.registry';
+import { RECONCILIATION_INTERRUPTED_REASON } from '@/reconciliation/reconciliation.constants';
 
 import type { CreatePaymentDto } from './dto/create-payment.dto';
 import { CreatedPaymentResponseDto } from './dto/created-payment-response.dto';
-import { PaymentsService, type ApiPaymentRef } from './payments.service';
+import {
+  PaymentsService,
+  type ApiPaymentRef,
+  type IngestPaymentResult,
+} from './payments.service';
 
 type ProviderOutcome =
   | { isCreated: true; created: CreatedPayment }
@@ -124,6 +130,23 @@ export class PaymentCreationService {
     }
 
     return response;
+  }
+
+  closeInterrupted(
+    ref: ApiPaymentRef,
+  ): Promise<CloseInterruptedResult<IngestPaymentResult>> {
+    return this.idempotencyService.closeInterrupted(
+      'api:create_payment',
+      ref.paymentId,
+      async (tx) => ({
+        result: await this.paymentsService.recordFailed(
+          tx,
+          ref,
+          RECONCILIATION_INTERRUPTED_REASON,
+        ),
+        response: providerUnavailableResponseOf(ref.paymentId),
+      }),
+    );
   }
 
   private async callProvider(

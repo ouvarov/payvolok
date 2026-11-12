@@ -20,6 +20,8 @@ describe('validateEnv', () => {
       DATABASE_POOL_MAX: 10,
       WEBHOOK_WORKER_ENABLED: true,
       WEBHOOK_POLL_INTERVAL_MS: 5000,
+      RECONCILIATION_WORKER_ENABLED: true,
+      RECONCILIATION_POLL_INTERVAL_MS: 15000,
     });
   });
 
@@ -281,6 +283,54 @@ describe('validateEnv', () => {
           WEBHOOK_WORKER_ENABLED: value,
         }),
       ).toThrow(/WEBHOOK_WORKER_ENABLED/);
+    });
+  });
+
+  describe('RECONCILIATION_POLL_INTERVAL_MS', () => {
+    it('accepts 100 and 3600000', () => {
+      for (const interval of ['100', '3600000']) {
+        expect(
+          validateEnv({
+            ...VALID_ENV,
+            RECONCILIATION_POLL_INTERVAL_MS: interval,
+          }).RECONCILIATION_POLL_INTERVAL_MS,
+        ).toBe(Number(interval));
+      }
+    });
+
+    it.each(['', '99', '3600001', '1.5', 'often'])(
+      'rejects %j, naming the key',
+      (interval) => {
+        expect(() =>
+          validateEnv({
+            ...VALID_ENV,
+            RECONCILIATION_POLL_INTERVAL_MS: interval,
+          }),
+        ).toThrow(/RECONCILIATION_POLL_INTERVAL_MS/);
+      },
+    );
+  });
+
+  describe('RECONCILIATION_WORKER_ENABLED', () => {
+    it.each([
+      ['true', true],
+      ['false', false],
+    ])('reads %s as %s', (value, isEnabled) => {
+      expect(
+        validateEnv({
+          ...VALID_ENV,
+          RECONCILIATION_WORKER_ENABLED: value,
+        }).RECONCILIATION_WORKER_ENABLED,
+      ).toBe(isEnabled);
+    });
+
+    it.each(['', 'maybe'])('rejects %j, naming the key', (value) => {
+      expect(() =>
+        validateEnv({
+          ...VALID_ENV,
+          RECONCILIATION_WORKER_ENABLED: value,
+        }),
+      ).toThrow(/RECONCILIATION_WORKER_ENABLED/);
     });
   });
 

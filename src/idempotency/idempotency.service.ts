@@ -5,6 +5,7 @@ import { HttpStatus, Injectable } from '@nestjs/common';
 import type { ApiErrorBody } from '@/common/errors/api-exception';
 import type { DatabaseTransaction } from '@/database/drizzle';
 
+import type { IdempotencyScope } from './idempotency.constants';
 import {
   IdempotencyRepository,
   storedResponseOf,
@@ -41,6 +42,14 @@ type TakenKeyResult = {
 
 type ClaimResult<TClaimed extends Claimed> =
   { isOwner: true; claimed: TClaimed } | TakenKeyResult;
+
+type InterruptedOutcome<TResult> = {
+  response: StoredResponse;
+  result: TResult;
+};
+
+type CloseInterruptedResult<TResult> =
+  { isClosed: false } | { isClosed: true; result: TResult };
 
 type TakenKeyDecision =
   | { action: 'respond'; response: IdempotentResponse }
@@ -168,6 +177,43 @@ export class IdempotencyService {
     );
   }
 
+  // Same lock order as recover: the key, then the payment inside onInterrupted.
+  closeInterrupted<TResult>(
+    scope: IdempotencyScope,
+    paymentId: string,
+    onInterrupted: (
+      tx: DatabaseTransaction,
+    ) => Promise<InterruptedOutcome<TResult>>,
+  ): Promise<CloseInterruptedResult<TResult>> {
+    return this.idempotencyRepository.withTransaction(async (tx) => {
+      const inProgressKey =
+        await this.idempotencyRepository.findInProgressByPaymentForUpdate(
+          tx,
+          scope,
+          paymentId,
+        );
+      if (inProgressKey && !inProgressKey.isLeaseExpired) {
+        return { isClosed: false };
+      }
+
+      const { response, result } = await onInterrupted(tx);
+      if (inProgressKey) {
+        await this.idempotencyRepository.complete(
+          tx,
+          inProgressKey,
+          paymentId,
+          response,
+        );
+      }
+
+      return { isClosed: true, result };
+    });
+  }
+
+  purgeExpired(limit: number): Promise<number> {
+    return this.idempotencyRepository.purgeExpired(limit);
+  }
+
   private recover(
     request: IdempotentRequest,
     onInterrupted: ClaimHandlers<Claimed>['onInterrupted'],
@@ -257,6 +303,8 @@ export { requestHashOf };
 export type {
   ClaimHandlers,
   ClaimResult,
+  CloseInterruptedResult,
   CompletedResponse,
   IdempotentResponse,
+  InterruptedOutcome,
 };
