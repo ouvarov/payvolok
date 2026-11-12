@@ -725,6 +725,25 @@ describe('Reconciliation', () => {
       expect(await isDueNow(justCreated.id)).toBe(false);
     });
 
+    it('leaves a payment whose check is still under its lease', async () => {
+      const payment = await insertDuePayment({ createdAgoSeconds: 60 });
+      const claimed = await app.get(ReconciliationRepository).claimNext([]);
+      expect(claimed?.id).toBe(payment.id);
+      await db.execute(sql`
+        update payments
+        set reconciled_at = reconciled_at - interval '20 seconds',
+          reconcile_after = reconcile_after - interval '20 seconds'
+        where id = ${payment.id}
+      `);
+      const leased = await paymentOf(payment.id);
+
+      await getPayment(payment.id).expect(200);
+
+      expect((await paymentOf(payment.id)).reconcileAfter).toEqual(
+        leased.reconcileAfter,
+      );
+    });
+
     it('leaves a payment whose reconciliation stopped', async () => {
       const stopped = await insertDuePayment({ createdAgoSeconds: 60 });
       await db

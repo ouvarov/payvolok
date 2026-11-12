@@ -18,6 +18,7 @@ import type { ProviderCode } from '@/providers/provider.constants';
 
 import {
   NUDGEABLE_PAYMENT_STATUSES,
+  RECONCILE_LEASE_SECONDS,
   RECONCILE_NUDGE_MIN_AGE_SECONDS,
   RECONCILE_NUDGE_THROTTLE_SECONDS,
   type PaymentStatus,
@@ -42,7 +43,8 @@ export class PaymentsRepository {
     return payment ?? null;
   }
 
-  // Only ever brings a check forward: a stopped (NULL) or already due row is left alone.
+  // Only ever brings a check forward: a stopped (NULL), already due or leased
+  // row is left alone. A finished check is always scheduled past its lease.
   async requestReconciliation(paymentId: string): Promise<void> {
     await this.db
       .update(payments)
@@ -56,6 +58,7 @@ export class PaymentsRepository {
           sql`${payments.reconcileAfter} > clock_timestamp()`,
           sql`${payments.createdAt} <= clock_timestamp() - ${RECONCILE_NUDGE_MIN_AGE_SECONDS}::integer * interval '1 second'`,
           sql`(${payments.reconciledAt} IS NULL OR ${payments.reconciledAt} <= clock_timestamp() - ${RECONCILE_NUDGE_THROTTLE_SECONDS}::integer * interval '1 second')`,
+          sql`(${payments.reconciledAt} IS NULL OR ${payments.reconcileAfter} > ${payments.reconciledAt} + ${RECONCILE_LEASE_SECONDS}::integer * interval '1 second')`,
         ),
       );
   }
