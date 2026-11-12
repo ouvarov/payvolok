@@ -29,6 +29,13 @@ const envSchema = z.object({
     .min(100)
     .max(3600000)
     .default(5000),
+  RECONCILIATION_WORKER_ENABLED: z.stringbool().default(true),
+  RECONCILIATION_POLL_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .min(100)
+    .max(3600000)
+    .default(15000),
 });
 
 type Env = z.infer<typeof envSchema>;

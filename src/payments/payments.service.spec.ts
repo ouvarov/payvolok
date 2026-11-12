@@ -1,3 +1,5 @@
+import { Logger } from '@nestjs/common';
+
 import type { DatabaseTransaction } from '@/database/drizzle';
 import type { Payment } from '@/database/schemas/payments.schema';
 import type { ProviderPaymentStatus } from '@/providers/payment-provider.port';
@@ -46,6 +48,9 @@ const paymentWith = (overrides: Partial<Payment> = {}): Payment => ({
   currency: 'USD',
   createdAt: new Date(0),
   updatedAt: new Date(0),
+  reconcileAfter: null,
+  reconciledAt: null,
+  reconcileAttempts: 0,
   ...overrides,
 });
 
@@ -57,6 +62,7 @@ const repositoryWith = (
       Promise.resolve(work(TX)),
     ),
     findById: jest.fn().mockResolvedValue(null),
+    requestReconciliation: jest.fn().mockResolvedValue(undefined),
     insertIfAbsent: jest.fn().mockResolvedValue(null),
     findByProviderRefForUpdate: jest.fn().mockResolvedValue(null),
     findByIdAndProviderForUpdate: jest.fn().mockResolvedValue(null),
@@ -102,6 +108,69 @@ describe('PaymentsService', () => {
         },
       });
     });
+
+    it.each(['created', 'pending'] as const)(
+      'asks for a reconciliation of a %s payment',
+      async (status) => {
+        const requestReconciliation = jest.fn().mockResolvedValue(undefined);
+        const service = new PaymentsService(
+          repositoryWith({
+            findById: jest.fn().mockResolvedValue(paymentWith({ status })),
+            requestReconciliation,
+          }),
+        );
+
+        await service.getPayment(REFERENCE);
+
+        expect(requestReconciliation).toHaveBeenCalledWith(REFERENCE);
+      },
+    );
+
+    it('still returns the payment when the reconciliation request fails', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      const service = new PaymentsService(
+        repositoryWith({
+          findById: jest
+            .fn()
+            .mockResolvedValue(paymentWith({ status: 'pending' })),
+          requestReconciliation: jest
+            .fn()
+            .mockRejectedValue(
+              new Error('canceling statement due to lock timeout'),
+            ),
+        }),
+      );
+
+      await expect(service.getPayment(REFERENCE)).resolves.toMatchObject({
+        paymentId: REFERENCE,
+        status: 'pending',
+      });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining(REFERENCE));
+      warn.mockRestore();
+    });
+
+    it.each([
+      'succeeded',
+      'partially_refunded',
+      'refunded',
+      'failed',
+      'expired',
+    ] as const)(
+      'does not ask for a reconciliation of a %s payment',
+      async (status) => {
+        const requestReconciliation = jest.fn().mockResolvedValue(undefined);
+        const service = new PaymentsService(
+          repositoryWith({
+            findById: jest.fn().mockResolvedValue(paymentWith({ status })),
+            requestReconciliation,
+          }),
+        );
+
+        await service.getPayment(REFERENCE);
+
+        expect(requestReconciliation).not.toHaveBeenCalled();
+      },
+    );
   });
 
   it('accepts only registered provider codes at compile time', () => {

@@ -39,6 +39,7 @@ const idempotencyKeys = pgTable(
     index('idempotency_keys_payment_id_in_progress_idx')
       .on(table.paymentId)
       .where(sql`${table.status} = 'in_progress'`),
+    index('idempotency_keys_created_at_idx').on(table.createdAt),
     check(
       'idempotency_keys_scope_check',
       sql`${table.scope} IN (${quotedList(IDEMPOTENCY_SCOPES)})`,

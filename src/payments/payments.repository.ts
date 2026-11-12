@@ -13,9 +13,16 @@ import {
   type NewPaymentEvent,
   type Payment,
 } from '@/database/schemas/payments.schema';
+import { quotedList } from '@/database/schemas/schema-helpers';
 import type { ProviderCode } from '@/providers/provider.constants';
 
-import type { PaymentStatus } from './payment.constants';
+import {
+  NUDGEABLE_PAYMENT_STATUSES,
+  RECONCILE_LEASE_SECONDS,
+  RECONCILE_NUDGE_MIN_AGE_SECONDS,
+  RECONCILE_NUDGE_THROTTLE_SECONDS,
+  type PaymentStatus,
+} from './payment.constants';
 
 @Injectable()
 export class PaymentsRepository {
@@ -34,6 +41,26 @@ export class PaymentsRepository {
       .where(eq(payments.id, paymentId));
 
     return payment ?? null;
+  }
+
+  // Only ever brings a check forward: a stopped (NULL), already due or leased
+  // row is left alone. A finished check is always scheduled past its lease.
+  async requestReconciliation(paymentId: string): Promise<void> {
+    await this.db
+      .update(payments)
+      .set({
+        reconcileAfter: sql`LEAST(${payments.reconcileAfter}, clock_timestamp())`,
+      })
+      .where(
+        and(
+          eq(payments.id, paymentId),
+          sql`${payments.status} IN (${quotedList(NUDGEABLE_PAYMENT_STATUSES)})`,
+          sql`${payments.reconcileAfter} > clock_timestamp()`,
+          sql`${payments.createdAt} <= clock_timestamp() - ${RECONCILE_NUDGE_MIN_AGE_SECONDS}::integer * interval '1 second'`,
+          sql`(${payments.reconciledAt} IS NULL OR ${payments.reconciledAt} <= clock_timestamp() - ${RECONCILE_NUDGE_THROTTLE_SECONDS}::integer * interval '1 second')`,
+          sql`(${payments.reconciledAt} IS NULL OR ${payments.reconcileAfter} > ${payments.reconciledAt} + ${RECONCILE_LEASE_SECONDS}::integer * interval '1 second')`,
+        ),
+      );
   }
 
   async insertIfAbsent(

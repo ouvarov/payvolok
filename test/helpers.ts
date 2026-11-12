@@ -30,18 +30,23 @@ const databasePoolMax = isRealPostgres
   ? REAL_POSTGRES_POOL_MAX
   : PGLITE_POOL_MAX;
 
-// The worker is off unless a test asks for it: an enabled worker in one spec
-// file would claim rows another file on the same database still asserts on.
+// The workers are off unless a test asks for them: an enabled worker in one
+// spec file would claim rows another file on the same database still asserts on.
 type E2eAppOptions = {
   appDatabaseUrl?: string;
   appDatabasePoolMax?: number;
   isWorkerEnabled?: boolean;
   pollIntervalMs?: number;
+  isReconciliationEnabled?: boolean;
+  reconciliationPollIntervalMs?: number;
   fakeWebhookSecret?: string;
   extraControllers?: Type<unknown>[];
   paddleEnv?: PaddleEnv;
   paddleProvider?: PaddleProvider;
+  classOverrides?: ClassOverride[];
 };
+
+type ClassOverride = { provide: Type<unknown>; useClass: Type<unknown> };
 
 type PaddleEnv = Partial<
   Pick<Env, 'PADDLE_API_KEY' | 'PADDLE_WEBHOOK_SECRET' | 'PADDLE_CLIENT_TOKEN'>
@@ -58,10 +63,13 @@ const createE2eApp = async ({
   appDatabasePoolMax = databasePoolMax,
   isWorkerEnabled = false,
   pollIntervalMs,
+  isReconciliationEnabled = false,
+  reconciliationPollIntervalMs,
   fakeWebhookSecret,
   extraControllers = [],
   paddleEnv = {},
   paddleProvider,
+  classOverrides = [],
 }: E2eAppOptions = {}): Promise<INestApplication> => {
   const env = validateEnv({
     ...process.env,
@@ -71,6 +79,10 @@ const createE2eApp = async ({
     ...(pollIntervalMs === undefined
       ? {}
       : { WEBHOOK_POLL_INTERVAL_MS: pollIntervalMs }),
+    RECONCILIATION_WORKER_ENABLED: String(isReconciliationEnabled),
+    ...(reconciliationPollIntervalMs === undefined
+      ? {}
+      : { RECONCILIATION_POLL_INTERVAL_MS: reconciliationPollIntervalMs }),
     ...(fakeWebhookSecret === undefined
       ? {}
       : { FAKE_WEBHOOK_SECRET: fakeWebhookSecret }),
@@ -82,6 +94,9 @@ const createE2eApp = async ({
   })
     .overrideProvider(ConfigService)
     .useValue({ get: (key: keyof Env) => env[key] });
+  for (const { provide, useClass } of classOverrides) {
+    moduleBuilder.overrideProvider(provide).useClass(useClass);
+  }
   if (paddleProvider) {
     moduleBuilder.overrideProvider(PaddleProvider).useValue(paddleProvider);
   }

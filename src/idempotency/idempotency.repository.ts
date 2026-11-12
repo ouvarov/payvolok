@@ -41,7 +41,11 @@ const storedResponseOf = (
 const keyOf = ({ scope, key }: IdempotentRequest) =>
   and(eq(idempotencyKeys.scope, scope), eq(idempotencyKeys.key, key));
 
+type InProgressKey = IdempotentRequest & { isLeaseExpired: boolean };
+
 const leaseCutoff = sql`clock_timestamp() - ${IDEMPOTENCY_LEASE_SECONDS}::integer * interval '1 second'`;
+
+const ttlCutoff = sql`clock_timestamp() - ${IDEMPOTENCY_KEY_TTL_SECONDS}::integer * interval '1 second'`;
 
 const stateColumns = {
   requestHash: idempotencyKeys.requestHash,
@@ -87,7 +91,7 @@ export class IdempotencyRepository {
           createdAt: sql`clock_timestamp()`,
           completedAt: null,
         },
-        setWhere: sql`${idempotencyKeys.createdAt} <= clock_timestamp() - ${IDEMPOTENCY_KEY_TTL_SECONDS}::integer * interval '1 second'`,
+        setWhere: sql`${idempotencyKeys.createdAt} <= ${ttlCutoff}`,
       })
       .returning({ key: idempotencyKeys.key });
 
@@ -149,6 +153,52 @@ export class IdempotencyRepository {
     return otherKey !== undefined;
   }
 
+  async findInProgressByPaymentForUpdate(
+    tx: DatabaseTransaction,
+    scope: IdempotencyScope,
+    paymentId: string,
+  ): Promise<InProgressKey | null> {
+    const [inProgressKey] = await tx
+      .select({
+        scope: idempotencyKeys.scope,
+        key: idempotencyKeys.key,
+        requestHash: idempotencyKeys.requestHash,
+        isLeaseExpired: stateColumns.isLeaseExpired,
+      })
+      .from(idempotencyKeys)
+      .where(
+        and(
+          eq(idempotencyKeys.paymentId, paymentId),
+          sql`${idempotencyKeys.status} = 'in_progress'`,
+          eq(idempotencyKeys.scope, scope),
+        ),
+      )
+      .limit(1)
+      .for('update');
+
+    return inProgressKey ?? null;
+  }
+
+  // The outer cutoff is repeated so a key matched only by name is never
+  // deleted while fresh, also once the key gains a project.
+  async purgeExpired(limit: number): Promise<number> {
+    const purgedRows = await this.db
+      .delete(idempotencyKeys)
+      .where(
+        and(
+          sql`(${idempotencyKeys.scope}, ${idempotencyKeys.key}) IN (
+            SELECT scope, key FROM idempotency_keys
+            WHERE created_at <= ${ttlCutoff}
+            LIMIT ${limit}
+          )`,
+          sql`${idempotencyKeys.createdAt} <= ${ttlCutoff}`,
+        ),
+      )
+      .returning({ key: idempotencyKeys.key });
+
+    return purgedRows.length;
+  }
+
   // Fenced by status and payment: a request whose lease was recovered stores nothing.
   async complete(
     tx: DatabaseTransaction,
@@ -182,4 +232,9 @@ export class IdempotencyRepository {
 }
 
 export { storedResponseOf };
-export type { IdempotencyKeyState, IdempotentRequest, StoredResponse };
+export type {
+  IdempotencyKeyState,
+  IdempotentRequest,
+  InProgressKey,
+  StoredResponse,
+};

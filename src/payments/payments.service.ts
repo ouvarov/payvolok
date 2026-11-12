@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { CURRENCY_PATTERN } from '@/common/currency';
 import { ApiException } from '@/common/errors/api-exception';
 import type { DatabaseTransaction } from '@/database/drizzle';
-import { isUniqueViolationOf } from '@/database/postgres-errors';
+import { describeError, isUniqueViolationOf } from '@/database/postgres-errors';
 import type { Payment } from '@/database/schemas/payments.schema';
 import type { CreatedPayment } from '@/providers/payment-provider.port';
 import type { ProviderCode } from '@/providers/provider.constants';
@@ -183,6 +183,9 @@ export class PaymentsService {
         message: 'Payment not found',
       });
     }
+    if (payment.status === 'created' || payment.status === 'pending') {
+      await this.requestReconciliation(payment.id);
+    }
 
     return new PaymentResponseDto(payment);
   }
@@ -310,6 +313,17 @@ export class PaymentsService {
       lookup.provider,
       lookup.providerPaymentId,
     );
+  }
+
+  // Best effort: the read already succeeded, so a failed nudge only delays the next check.
+  private async requestReconciliation(paymentId: string): Promise<void> {
+    try {
+      await this.paymentsRepository.requestReconciliation(paymentId);
+    } catch (error) {
+      this.logger.warn(
+        `Payment ${paymentId} reconciliation request failed: ${describeError(error)}`,
+      );
+    }
   }
 
   private async ingestInTransaction(

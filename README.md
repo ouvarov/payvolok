@@ -140,12 +140,12 @@ A refund request interrupted after its key was taken stores `503 provider_unavai
 - The same key with another body is `422 idempotency_key_reused`.
 - While the first request still runs, the same key gets `409 idempotency_key_in_progress`.
 - A payment request that stopped after the payment row was written, for example a crash, holds its key for 60 s. The next request with that key then marks the payment `failed` (`request_interrupted`), or records that as `stale` if a webhook already moved it on, without calling the provider, and stores `503 provider_unavailable` for the key.
-- Keys live 24 h. After that the same key starts a new payment or refund.
+- Keys live 24 h. After that the same key starts a new payment or refund, and reconciliation deletes the key within an hour.
 - Payment and refund keys are separate: one key string can be used once for each.
 
 Only requests that reached the provider are stored: a 400 or 401 leaves no trace, so a fixed request can reuse its key.
 
-`GET /api/v1/payments/:id` returns `paymentId`, `status`, `provider`, `amountMinor`, `currency`, `createdAt` and `updatedAt` from our database, or 404 `payment_not_found`. It does not call the provider.
+`GET /api/v1/payments/:id` returns `paymentId`, `status`, `provider`, `amountMinor`, `currency`, `createdAt` and `updatedAt` from our database, or 404 `payment_not_found`. It does not call the provider. Reading a `created` or `pending` payment that is at least 30 s old and was not checked in the last 15 s makes its next reconciliation due at once.
 
 ## Health routes
 
@@ -159,6 +159,22 @@ Each API process runs a worker that takes `received` rows from `webhook_events` 
 Several processes can run workers on one database: a claim locks one row with `SKIP LOCKED` and leases it for 5 minutes, and a worker whose lease ran out cannot overwrite the row. A crash leaves the row due again after the lease; running it again is safe.
 
 A row ends `processed` when at least one payment or refund event was applied, `ignored` when it held only unknown or subscription events, and `failed` when an event was rejected (an amount mismatch, an invalid value) or six attempts did not succeed. Retryable errors, such as an event that arrives before our payment row, wait 30 s, 2 min, 10 min, 1 h and 6 h between attempts. `last_error` keeps our own error message, or only the error class and Postgres code for anything else.
+
+## Reconciliation
+
+Webhooks get lost: the free plan sleeps, and Paddle's sandbox retries only for a few minutes. Each API process therefore also runs a reconciliation worker that asks the provider for the status of open payments. It runs one cycle at boot (on a sleeping host that is the wake) and then every `RECONCILIATION_POLL_INTERVAL_MS` (default 15000, 100 to 3600000). Set `RECONCILIATION_WORKER_ENABLED=false` (default `true`) for a process that should only serve the API.
+
+A cycle checks at most 10 due payments, one at a time. A claim locks one row with `SKIP LOCKED` and leases it for 2 minutes in one statement, so the provider call holds no database connection, and a check whose lease ran out cannot overwrite the schedule. Every status change goes through the same ingest as webhooks, with the reason `reconciliation` and no webhook event.
+
+- A new payment is first due 10 minutes after it was created. A `created` or `pending` payment is then checked again after a delay set by its age, so checks a read brings forward do not stretch it: 5 min until it is 15 min old, then 15 min, 30 min, 1 h, 3 h and 6 h as it passes those ages, and daily from one day old; a `succeeded` or `partially_refunded` one daily. `refunded`, `failed` and `expired` payments are not checked.
+- A payment is `expired` only when the provider says so. A payment the provider still reports `pending` is never expired by us; when the next check would fall more than 30 days after its creation, checks stop with a warning.
+- The provider's `refunded` and `partially_refunded` are recorded as `succeeded`: refund states come only from refund rows.
+- A `created` payment without a provider id is a request that stopped before the provider answer was stored. Once its key's 60 s lease is over (or it has no key), it is marked `failed` (`reconciliation_interrupted`) without calling the provider, and its key stores `503 provider_unavailable` with the `paymentId`, which a retry with that key replays.
+- A provider that does not know the payment, or reports another amount or currency, changes nothing: the check is logged and backs off. A provider that is unavailable or misconfigured is skipped for the rest of the cycle and logged once until it answers again.
+
+After the checks, at boot and then at most once an hour, the worker deletes idempotency keys older than 24 h, up to 5000 per run.
+
+Migration `0008` adds the schedule columns. It must be applied to the production database before the code that reads them is deployed, because every payment query lists all columns.
 
 ## Fake provider
 
@@ -205,7 +221,7 @@ node --env-file=.env -r ts-node/register/transpile-only -r tsconfig-paths/regist
 
 `PORT` is set by Render and read by the app; the other variables keep their defaults. `FAKE_WEBHOOK_SECRET` is left unset: each process then makes its own random secret.
 
-Migrations do not run on boot. Before a deploy that adds one, apply it from a machine that can reach the production database: `npm run db:migrate` with `DATABASE_URL` pointing at it. Prefer a direct connection over the pooler for this.
+Migrations do not run on boot. Before a deploy that adds one (the reconciliation release needs `0008`), apply it from a machine that can reach the production database: `npm run db:migrate` with `DATABASE_URL` pointing at it. Prefer a direct connection over the pooler for this.
 
 After the first deploy, point Paddle at the final service URL: the default payment link to `<url>/checkout/paddle`, and a new notification destination `<url>/webhooks/paddle` with the same six events. Put its secret in `PADDLE_WEBHOOK_SECRET` and redeploy. Check `/health/ready`.
 

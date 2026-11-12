@@ -10,6 +10,7 @@ import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 import { PaymentsModule } from './payments/payments.module';
 import { ProvidersModule } from './providers/providers.module';
+import { ReconciliationModule } from './reconciliation/reconciliation.module';
 import { RefundsModule } from './refunds/refunds.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 
@@ -24,6 +25,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     HealthModule,
     PaymentsModule,
     ProvidersModule,
+    ReconciliationModule,
     RefundsModule,
     WebhooksModule,
   ],

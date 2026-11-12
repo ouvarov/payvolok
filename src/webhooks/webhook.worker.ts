@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import { waitAtMost } from '@/common/wait-at-most';
 import type { Env } from '@/config/env.schema';
 import { describeError } from '@/database/postgres-errors';
 
@@ -13,23 +14,6 @@ import { WebhookEventProcessor } from './webhook-event.processor';
 import { WebhooksRepository } from './webhooks.repository';
 
 const WORKER_STOP_TIMEOUT_MS = 15000;
-
-const waitAtMost = async (
-  work: Promise<void>,
-  timeoutMs: number,
-): Promise<boolean> => {
-  let timer: NodeJS.Timeout | undefined;
-  const deadline = new Promise<false>((resolve) => {
-    timer = setTimeout(() => resolve(false), timeoutMs);
-    timer.unref();
-  });
-
-  try {
-    return await Promise.race([work.then(() => true), deadline]);
-  } finally {
-    clearTimeout(timer);
-  }
-};
 
 @Injectable()
 export class WebhookWorker
