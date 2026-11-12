@@ -228,14 +228,14 @@ describe('Reconciliation', () => {
     `);
   };
 
-  // The e2e database is shared with other spec files and earlier runs, so
-  // their rows are moved out of the way for a drain to see only this test's.
+  // Rows earlier runs left behind are due and would be claimed too. Rows other
+  // spec files create now are not due for 10 minutes, so they stay untouched.
   const parkOtherPayments = async (): Promise<void> => {
     await db.execute(sql`
       update payments set reconcile_after = null
       where id in (
         select id from payments
-        where reconcile_after <= clock_timestamp() + interval '1 hour'
+        where reconcile_after <= clock_timestamp()
         for update skip locked
       )
     `);
