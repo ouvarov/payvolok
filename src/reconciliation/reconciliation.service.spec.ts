@@ -346,6 +346,16 @@ describe('ReconciliationService', () => {
       expect(scheduledSeconds()).toBe(REFUNDABLE_RECONCILE_DELAY_SECONDS);
     });
 
+    it('checks the refunds of a partially refunded payment', async () => {
+      getStatus.mockResolvedValue(
+        paymentStatusWith({ status: 'partially_refunded' }),
+      );
+
+      await service.reconcile(claimedWith({ status: 'partially_refunded' }));
+
+      expect(reconcileRefunds).toHaveBeenCalledTimes(1);
+    });
+
     it('checks the refunds of a payment that just succeeded', async () => {
       ingestPayment.mockResolvedValue(ingestedWith('succeeded', 'applied'));
 
