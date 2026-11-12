@@ -116,6 +116,19 @@ export class RefundsRepository {
     return refund ?? null;
   }
 
+  async setApiOrigin(
+    tx: DatabaseTransaction,
+    refundId: string,
+  ): Promise<Refund | null> {
+    const [refund] = await tx
+      .update(refunds)
+      .set({ origin: 'api', updatedAt: sql`clock_timestamp()` })
+      .where(eq(refunds.id, refundId))
+      .returning();
+
+    return refund ?? null;
+  }
+
   async updateStatus(
     tx: DatabaseTransaction,
     refundId: string,

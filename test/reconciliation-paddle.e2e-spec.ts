@@ -380,6 +380,64 @@ describe('Reconciliation of Paddle refunds', () => {
     );
   });
 
+  describe('our refund listed before its request returns', () => {
+    it(
+      'claims the listed row for the API refund without moving money twice',
+      async () => {
+        muteLogs();
+        const payment = await insertDueSucceededPayment();
+        const transactionId = payment.providerPaymentId as string;
+        const adjustmentId = syntheticPaddleId('adj');
+        stubRefundList(transactionId, [
+          { id: adjustmentId, status: 'pending_approval' },
+        ]);
+
+        await worker.drain();
+
+        const [listed] = await refundRowsOf(payment.id);
+        expect(listed).toMatchObject({
+          providerRefundId: adjustmentId,
+          origin: 'provider',
+          status: 'pending',
+        });
+
+        fetchHandlers.set(`POST ${PADDLE_API}/adjustments`, () => {
+          const adjustment = adjustmentResponseFixture();
+          adjustment.data.id = adjustmentId;
+          adjustment.data.transaction_id = transactionId;
+          adjustment.data.totals.total = String(REFUND_AMOUNT_MINOR);
+
+          return Promise.resolve(jsonResponse(adjustment, 201));
+        });
+
+        const response = await request(serverOf(app))
+          .post(`/${API_V1_PREFIX}/payments/${payment.id}/refunds`)
+          .set('Authorization', `Bearer ${TEST_API_KEY}`)
+          .set('Idempotency-Key', `e2e-${randomUUID()}`)
+          .send({ amountMinor: REFUND_AMOUNT_MINOR })
+          .expect(201);
+
+        expect(response.body).toEqual({
+          refundId: listed.id,
+          paymentId: payment.id,
+          status: 'pending',
+        });
+        expect(await refundRowsOf(payment.id)).toEqual([
+          expect.objectContaining({
+            id: listed.id,
+            providerRefundId: adjustmentId,
+            origin: 'api',
+            status: 'pending',
+            amountMinor: REFUND_AMOUNT_MINOR,
+          }),
+        ]);
+        expect((await paymentOf(payment.id)).status).toBe('succeeded');
+        expect(await timelineOf(payment.id)).toEqual([]);
+      },
+      SLOW_TEST_TIMEOUT_MS,
+    );
+  });
+
   describe('what the list holds', () => {
     it('skips a reversed refund, a credit and a subscription refund, and records the rest', async () => {
       muteLogs();
