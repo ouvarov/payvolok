@@ -59,6 +59,7 @@ export class ReconciliationRepository {
           WHERE status IN (${quotedList(RECONCILABLE_PAYMENT_STATUSES)})
             AND reconcile_after <= now()
             AND ${outsideScopes(skippedScopeKeys)}
+            AND ${this.claimableRows()}
           ORDER BY reconcile_after, id
           LIMIT 1
           FOR UPDATE SKIP LOCKED
@@ -96,6 +97,11 @@ export class ReconciliationRepository {
       .returning({ id: payments.id });
 
     return finishedRows.length > 0;
+  }
+
+  // Every row is claimable; e2e tests on a shared database narrow it to their own rows.
+  protected claimableRows(): SQL {
+    return sql`true`;
   }
 }
 

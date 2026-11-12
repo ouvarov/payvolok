@@ -12,7 +12,7 @@ import { join } from 'node:path';
 
 import { PGlite } from '@electric-sql/pglite';
 import { Logger, type INestApplication } from '@nestjs/common';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, sql, type SQL } from 'drizzle-orm';
 import { drizzle as drizzlePglite } from 'drizzle-orm/pglite';
 import { migrate as migratePglite } from 'drizzle-orm/pglite/migrator';
 import postgres from 'postgres';
@@ -136,6 +136,26 @@ const muteLogs = () => ({
   log: jest.spyOn(Logger.prototype, 'log').mockImplementation(),
 });
 
+const testPaymentIds = new Set<string>();
+
+// The e2e database is shared with other spec files and earlier runs, whose
+// payments fall due too; a drain here must see only this test's payments.
+class TestScopedReconciliationRepository extends ReconciliationRepository {
+  protected claimableRows(): SQL {
+    if (testPaymentIds.size === 0) return sql`false`;
+
+    return sql`id IN (${sql.join(
+      [...testPaymentIds].map((paymentId) => sql`${paymentId}::uuid`),
+      sql`, `,
+    )})`;
+  }
+}
+
+const TEST_SCOPED_RECONCILIATION = {
+  provide: ReconciliationRepository,
+  useClass: TestScopedReconciliationRepository,
+};
+
 describe('Reconciliation', () => {
   let app: INestApplication;
   let db: Database;
@@ -168,6 +188,7 @@ describe('Reconciliation', () => {
         reconcileAttempts: attempts,
       })
       .returning();
+    testPaymentIds.add(payment.id);
 
     return payment;
   };
@@ -228,19 +249,6 @@ describe('Reconciliation', () => {
     `);
   };
 
-  // Rows earlier runs left behind are due and would be claimed too. Rows other
-  // spec files create now are not due for 10 minutes, so they stay untouched.
-  const parkOtherPayments = async (): Promise<void> => {
-    await db.execute(sql`
-      update payments set reconcile_after = null
-      where id in (
-        select id from payments
-        where reconcile_after <= clock_timestamp()
-        for update skip locked
-      )
-    `);
-  };
-
   const postPayment = (body: object, idempotencyKey: string) =>
     request(serverOf(app))
       .post(PAYMENTS_PATH)
@@ -262,6 +270,8 @@ describe('Reconciliation', () => {
     await postPayment(body, key).expect(500);
     const paymentId = (await keyRowOf(key))?.paymentId as string;
 
+    testPaymentIds.add(paymentId);
+
     return { key, body, paymentId };
   };
 
@@ -277,7 +287,7 @@ describe('Reconciliation', () => {
   });
 
   beforeAll(async () => {
-    app = await createE2eApp();
+    app = await createE2eApp({ classOverrides: [TEST_SCOPED_RECONCILIATION] });
     db = app.get<Database>(DRIZZLE);
     worker = app.get(ReconciliationWorker);
     fakeProvider = app.get(FakeProvider);
@@ -287,8 +297,8 @@ describe('Reconciliation', () => {
     await app.close();
   });
 
-  beforeEach(async () => {
-    await parkOtherPayments();
+  beforeEach(() => {
+    testPaymentIds.clear();
   });
 
   afterEach(() => {
@@ -520,6 +530,7 @@ describe('Reconciliation', () => {
       async () => {
         muteLogs();
         const singleConnectionApp = await createE2eApp({
+          classOverrides: [TEST_SCOPED_RECONCILIATION],
           appDatabasePoolMax: 1,
         });
 
@@ -711,6 +722,7 @@ describe('Reconciliation', () => {
         muteLogs();
         const payment = await insertDuePayment();
         const enabledApp = await createE2eApp({
+          classOverrides: [TEST_SCOPED_RECONCILIATION],
           isReconciliationEnabled: true,
           reconciliationPollIntervalMs: HOUR_SECONDS * 1000,
         });

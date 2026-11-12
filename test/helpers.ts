@@ -43,7 +43,10 @@ type E2eAppOptions = {
   extraControllers?: Type<unknown>[];
   paddleEnv?: PaddleEnv;
   paddleProvider?: PaddleProvider;
+  classOverrides?: ClassOverride[];
 };
+
+type ClassOverride = { provide: Type<unknown>; useClass: Type<unknown> };
 
 type PaddleEnv = Partial<
   Pick<Env, 'PADDLE_API_KEY' | 'PADDLE_WEBHOOK_SECRET' | 'PADDLE_CLIENT_TOKEN'>
@@ -66,6 +69,7 @@ const createE2eApp = async ({
   extraControllers = [],
   paddleEnv = {},
   paddleProvider,
+  classOverrides = [],
 }: E2eAppOptions = {}): Promise<INestApplication> => {
   const env = validateEnv({
     ...process.env,
@@ -90,6 +94,9 @@ const createE2eApp = async ({
   })
     .overrideProvider(ConfigService)
     .useValue({ get: (key: keyof Env) => env[key] });
+  for (const { provide, useClass } of classOverrides) {
+    moduleBuilder.overrideProvider(provide).useClass(useClass);
+  }
   if (paddleProvider) {
     moduleBuilder.overrideProvider(PaddleProvider).useValue(paddleProvider);
   }
