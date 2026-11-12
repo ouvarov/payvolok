@@ -9,6 +9,7 @@ import type {
   PaymentProvider,
   ProviderCapabilities,
   ProviderError,
+  ProviderRefundRecord,
   ProviderRefundStatus,
   RefundInput,
   ResourceStatus,
@@ -29,6 +30,7 @@ import { isSignatureValid } from './paddle-signature';
 import {
   ADJUSTMENT_ID_PATTERN,
   ADJUSTMENT_STATUSES,
+  oneOffRefundStatusOf,
   paddleAdjustmentPageSchema,
   paddleAdjustmentSchema,
   paddleCreatedTransactionSchema,
@@ -177,6 +179,22 @@ const reservedRefundMinorOf = (adjustments: PaddleAdjustment[]): number =>
     )
     .reduce((sum, { totals }) => sum + totals.total, 0);
 
+const refundRecordsOf = (
+  adjustment: PaddleAdjustment,
+): ProviderRefundRecord[] => {
+  const status = oneOffRefundStatusOf(adjustment);
+  if (!status) return [];
+
+  return [
+    {
+      providerRefundId: adjustment.id,
+      status,
+      amountMinor: adjustment.totals.total,
+      currency: adjustment.currency_code,
+    },
+  ];
+};
+
 const unknownBodyEvents = (rawBody: Buffer): ProviderEvents => [
   {
     type: 'unknown',
@@ -256,7 +274,9 @@ export class PaddleProvider implements PaymentProvider {
     }
 
     // Our refund rows miss an adjustment whose POST timed out, so Paddle's own list decides.
-    const refundedMinor = await this.refundedMinorOf(transaction.id);
+    const refundedMinor = reservedRefundMinorOf(
+      await this.refundAdjustmentsOf(transaction.id),
+    );
     if (
       input.amountMinor >
       transaction.details.totals.grand_total - refundedMinor
@@ -285,6 +305,20 @@ export class PaddleProvider implements PaymentProvider {
       : this.refundStatusOf(query);
   }
 
+  async listRefunds(
+    providerPaymentId: string,
+  ): Promise<readonly ProviderRefundRecord[]> {
+    if (!TRANSACTION_ID_PATTERN.test(providerPaymentId)) {
+      throw rejectedError('Payment id is not a transaction');
+    }
+
+    const adjustments = await this.refundAdjustmentsOf(providerPaymentId);
+
+    return adjustments
+      .filter(({ transaction_id }) => transaction_id === providerPaymentId)
+      .flatMap(refundRecordsOf);
+  }
+
   verifyWebhook(request: WebhookRequest): Promise<boolean> {
     if (this.config.webhookSecret === null) {
       return Promise.reject(
@@ -311,7 +345,9 @@ export class PaddleProvider implements PaymentProvider {
     return [toProviderEvent(envelope.data)];
   }
 
-  private async refundedMinorOf(transactionId: string): Promise<number> {
+  private async refundAdjustmentsOf(
+    transactionId: string,
+  ): Promise<PaddleAdjustment[]> {
     const page = bodyOf(
       paddleAdjustmentPageSchema,
       await this.send({
@@ -331,7 +367,7 @@ export class PaddleProvider implements PaymentProvider {
       );
     }
 
-    return reservedRefundMinorOf(page.data);
+    return page.data;
   }
 
   private async paymentStatusOf(

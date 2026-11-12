@@ -1,7 +1,7 @@
 import { randomInt, randomUUID } from 'node:crypto';
 
 import { Logger, type INestApplication } from '@nestjs/common';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, sql, type SQL } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import request from 'supertest';
@@ -32,6 +32,7 @@ import {
   type WebhookRequest,
 } from '@/providers/payment-provider.port';
 import { ProviderRegistry } from '@/providers/provider.registry';
+import { UNCONFIRMED_REFUND_RECONCILE_DELAY_SECONDS } from '@/refunds/refund.constants';
 import { RefundsService } from '@/refunds/refunds.service';
 import { WebhookEventProcessor } from '@/webhooks/webhook-event.processor';
 
@@ -231,6 +232,33 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
   const refundIdOf = (response: request.Response): string =>
     (response.body as { refundId: string }).refundId;
 
+  const setReconcileAfter = async (
+    paymentId: string,
+    reconcileAfter: SQL,
+  ): Promise<void> => {
+    await db.execute(sql`
+      update payments set reconcile_after = ${reconcileAfter}
+      where id = ${paymentId}
+    `);
+  };
+
+  const isReconciledWithin = async (
+    paymentId: string,
+    seconds: number,
+  ): Promise<boolean> => {
+    const [{ is_within: isWithin }] = await db.execute<{
+      is_within: boolean;
+    }>(sql`
+      select coalesce(
+        reconcile_after <= clock_timestamp() + ${seconds}::integer * interval '1 second',
+        false
+      ) as is_within
+      from payments where id = ${paymentId}
+    `);
+
+    return isWithin;
+  };
+
   beforeAll(async () => {
     app = await createE2eApp();
     await app.listen(0);
@@ -340,7 +368,7 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
       const rows = await refundRowsOf(payment.id);
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({
-        origin: 'provider',
+        origin: 'api',
         status: 'succeeded',
       });
       expect(response.body).toEqual({
@@ -837,6 +865,89 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
     });
   });
 
+  describe('reconciliation after a refund the provider did not confirm', () => {
+    const EARLIER_DUE_AT = '2026-01-01 00:00:00.123456+00';
+    const DAY_SECONDS = 24 * 60 * 60;
+
+    it.each([
+      ['an outage', 1098, false],
+      ['a misconfiguration', 1099, false],
+      ['no refund id', REFUND_AMOUNT_MINOR, true],
+    ] as const)(
+      'brings the payment check within two minutes after %s',
+      async (_case, amountMinor, isRefundIdMissing) => {
+        muteLogs();
+        if (isRefundIdMissing) {
+          refund.mockResolvedValue({
+            providerRefundId: null,
+            status: 'pending',
+          });
+        }
+        const payment = await insertPayment();
+        await setReconcileAfter(
+          payment.id,
+          sql`clock_timestamp() + ${DAY_SECONDS}::integer * interval '1 second'`,
+        );
+
+        await postRefund(payment.id, { amountMinor }, newKey()).expect(503);
+
+        expect(
+          await isReconciledWithin(
+            payment.id,
+            UNCONFIRMED_REFUND_RECONCILE_DELAY_SECONDS,
+          ),
+        ).toBe(true);
+      },
+    );
+
+    it('keeps an earlier due time', async () => {
+      muteLogs();
+      const payment = await insertPayment();
+      await setReconcileAfter(payment.id, sql`${EARLIER_DUE_AT}::timestamptz`);
+
+      await postRefund(payment.id, { amountMinor: 1098 }, newKey()).expect(503);
+
+      const [{ is_kept: isKept }] = await db.execute<{ is_kept: boolean }>(sql`
+        select reconcile_after = ${EARLIER_DUE_AT}::timestamptz as is_kept
+        from payments where id = ${payment.id}
+      `);
+      expect(isKept).toBe(true);
+    });
+
+    it('re-arms a payment whose reconciliation stopped', async () => {
+      muteLogs();
+      const payment = await insertPayment();
+      await setReconcileAfter(payment.id, sql`null`);
+
+      await postRefund(payment.id, { amountMinor: 1098 }, newKey()).expect(503);
+
+      expect(
+        await isReconciledWithin(
+          payment.id,
+          UNCONFIRMED_REFUND_RECONCILE_DELAY_SECONDS,
+        ),
+      ).toBe(true);
+    });
+
+    it('leaves the schedule after a rejection', async () => {
+      muteLogs();
+      const payment = await insertPayment();
+      await setReconcileAfter(
+        payment.id,
+        sql`clock_timestamp() + ${DAY_SECONDS}::integer * interval '1 second'`,
+      );
+
+      await postRefund(payment.id, { amountMinor: 1097 }, newKey()).expect(422);
+
+      expect(
+        await isReconciledWithin(
+          payment.id,
+          UNCONFIRMED_REFUND_RECONCILE_DELAY_SECONDS,
+        ),
+      ).toBe(false);
+    });
+  });
+
   describe('interrupted requests', () => {
     it.each(['provider', 'reference'] as const)(
       'with %s identity stores 503 for a stale key without calling the provider or changing rows',
@@ -881,7 +992,16 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
             : [],
         );
         expect(await refundRowsOf(payment.id)).toEqual(rowsBefore);
-        expect(await paymentOf(payment.id)).toEqual(paymentBefore);
+        expect(await paymentOf(payment.id)).toEqual({
+          ...paymentBefore,
+          reconcileAfter: expect.any(Date) as Date,
+        });
+        expect(
+          await isReconciledWithin(
+            payment.id,
+            UNCONFIRMED_REFUND_RECONCILE_DELAY_SECONDS,
+          ),
+        ).toBe(true);
         expect(
           warn.mock.calls.filter(([message]) =>
             String(message).includes('request was interrupted'),

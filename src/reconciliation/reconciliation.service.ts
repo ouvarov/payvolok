@@ -32,6 +32,7 @@ import {
   type ClaimedPayment,
   type ReconciliationScopeKey,
 } from './reconciliation.repository';
+import { RefundReconciliationService } from './refund-reconciliation.service';
 
 type PaymentStatusResource = Extract<ResourceStatus, { resource: 'payment' }>;
 
@@ -67,6 +68,9 @@ const checkedCheckOf = (
 const isUnsettled = (status: PaymentStatus): boolean =>
   status === 'created' || status === 'pending';
 
+const isRefundable = (status: PaymentStatus): boolean =>
+  status === 'succeeded' || status === 'partially_refunded';
+
 @Injectable()
 export class ReconciliationService {
   private readonly logger = new Logger(ReconciliationService.name);
@@ -76,13 +80,54 @@ export class ReconciliationService {
     private readonly paymentCreationService: PaymentCreationService,
     private readonly providerRegistry: ProviderRegistry,
     private readonly reconciliationRepository: ReconciliationRepository,
+    private readonly refundReconciliationService: RefundReconciliationService,
   ) {}
 
   async reconcile(claimed: ClaimedPayment): Promise<ReconcileResult> {
-    const check = await this.check(claimed);
+    const paymentCheck = await this.check(claimed);
+    const check = await this.checkRefunds(claimed, paymentCheck);
     await this.schedule(claimed, check);
 
     return check.result;
+  }
+
+  private async checkRefunds(
+    claimed: ClaimedPayment,
+    check: PaymentCheck,
+  ): Promise<PaymentCheck> {
+    const { result } = check;
+    if (
+      result.outcome !== 'checked' ||
+      !isRefundable(check.status) ||
+      claimed.providerPaymentId === null
+    ) {
+      return check;
+    }
+
+    const refunds = await this.refundReconciliationService.reconcile(
+      this.providerOf(claimed),
+      {
+        id: claimed.id,
+        provider: claimed.provider,
+        providerPaymentId: claimed.providerPaymentId,
+      },
+    );
+    if (!refunds.isAnswered) {
+      return {
+        ...check,
+        result: {
+          outcome: 'provider_failed',
+          scopeKey: result.scopeKey,
+          failure: refunds.failure,
+        },
+      };
+    }
+
+    return {
+      ...check,
+      result: { ...result, isChanged: result.isChanged || refunds.isChanged },
+      status: refunds.paymentStatus ?? check.status,
+    };
   }
 
   private check(claimed: ClaimedPayment): Promise<PaymentCheck> {

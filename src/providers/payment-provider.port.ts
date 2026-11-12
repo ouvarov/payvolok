@@ -67,6 +67,13 @@ type StatusQuery =
       reference: string;
     };
 
+type ProviderRefundRecord = {
+  providerRefundId: string;
+  status: ProviderRefundStatus;
+  amountMinor: number;
+  currency: string;
+};
+
 type ResourceStatus =
   | {
       resource: 'payment';
@@ -92,6 +99,10 @@ type PaymentProvider = {
   refund(input: RefundInput): Promise<CreatedRefund>;
   // Null means the provider does not know the resource.
   getStatus(query: StatusQuery): Promise<ResourceStatus | null>;
+  // Rejects rather than answer a partial list: a missing refund would look never made.
+  listRefunds(
+    providerPaymentId: string,
+  ): Promise<readonly ProviderRefundRecord[]>;
   // Rejects when verification was impossible: an outage must not become a permanent 401.
   verifyWebhook(request: WebhookRequest): Promise<boolean>;
   parseWebhook(request: WebhookRequest): ProviderEvents;
@@ -132,6 +143,7 @@ export type {
   ProviderErrorDetails,
   ProviderErrorKind,
   ProviderPaymentStatus,
+  ProviderRefundRecord,
   ProviderRefundStatus,
   RecurringModel,
   RefundIdentity,

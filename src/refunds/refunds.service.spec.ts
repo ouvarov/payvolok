@@ -83,7 +83,7 @@ const serviceWith = ({
       sumSucceededMinor: jest.fn().mockResolvedValue(300),
       sumReservedMinor: jest.fn().mockResolvedValue(300),
       ...refunds,
-    },
+    } as unknown as RefundsRepository,
   );
 
 describe('RefundsService', () => {
@@ -253,6 +253,55 @@ describe('RefundsService', () => {
           refunds: { insertIfAbsent: jest.fn().mockResolvedValue(null) },
         }).ingestRefund(INPUT),
       ).rejects.toThrow('Refund row disappeared during ingest');
+    });
+  });
+
+  describe('origin', () => {
+    it('claims a row the provider reported first for our API refund with the same provider id', async () => {
+      const setApiOrigin = jest
+        .fn()
+        .mockResolvedValue(refundWith({ origin: 'api' }));
+      const updateStatus = jest
+        .fn()
+        .mockResolvedValue(refundWith({ origin: 'api', status: 'succeeded' }));
+
+      const result = await serviceWith({
+        refunds: {
+          findByProviderRef: jest.fn().mockResolvedValue(refundWith()),
+          setApiOrigin,
+          updateStatus,
+        },
+      }).recordApiRefund(TX, INPUT);
+
+      expect(setApiOrigin).toHaveBeenCalledWith(TX, REFUND_ID);
+      expect(result.refund).toMatchObject({
+        id: REFUND_ID,
+        origin: 'api',
+        status: 'succeeded',
+      });
+    });
+
+    it.each([
+      ['a provider report of our API refund', 'provider', 'api'],
+      ['a provider report of a provider refund', 'provider', 'provider'],
+      ['our API refund of a row we own', 'api', 'api'],
+    ] as const)('keeps the origin on %s', async (_case, via, storedOrigin) => {
+      const setApiOrigin = jest.fn();
+      const service = serviceWith({
+        refunds: {
+          findByProviderRef: jest
+            .fn()
+            .mockResolvedValue(refundWith({ origin: storedOrigin })),
+          setApiOrigin,
+          updateStatus: jest.fn().mockResolvedValue(refundWith()),
+        },
+      });
+
+      await (via === 'api'
+        ? service.recordApiRefund(TX, INPUT)
+        : service.ingestRefund(INPUT));
+
+      expect(setApiOrigin).not.toHaveBeenCalled();
     });
   });
 

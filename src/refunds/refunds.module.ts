@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { DatabaseModule } from '@/database/database.module';
 import { IdempotencyModule } from '@/idempotency/idempotency.module';
 import { PaymentsModule } from '@/payments/payments.module';
 import { ProvidersModule } from '@/providers/providers.module';
@@ -10,7 +11,7 @@ import { RefundsRepository } from './refunds.repository';
 import { RefundsService } from './refunds.service';
 
 @Module({
-  imports: [IdempotencyModule, PaymentsModule, ProvidersModule],
+  imports: [DatabaseModule, IdempotencyModule, PaymentsModule, ProvidersModule],
   controllers: [RefundsController],
   providers: [RefundCreationService, RefundsRepository, RefundsService],
   exports: [RefundsService],

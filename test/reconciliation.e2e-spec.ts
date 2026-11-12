@@ -12,7 +12,7 @@ import { join } from 'node:path';
 
 import { PGlite } from '@electric-sql/pglite';
 import { Logger, type INestApplication } from '@nestjs/common';
-import { and, asc, eq, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import { drizzle as drizzlePglite } from 'drizzle-orm/pglite';
 import { migrate as migratePglite } from 'drizzle-orm/pglite/migrator';
 import postgres from 'postgres';
@@ -64,6 +64,7 @@ import {
   serverOf,
   TEST_API_KEY,
 } from './helpers';
+import { scopedReconciliation } from './scoped-reconciliation';
 
 const PAYMENTS_PATH = `/${API_V1_PREFIX}/payments`;
 const RETURN_URL = 'https://shop.example.test/return';
@@ -139,25 +140,8 @@ const muteLogs = () => ({
   log: jest.spyOn(Logger.prototype, 'log').mockImplementation(),
 });
 
-const testPaymentIds = new Set<string>();
-
-// The e2e database is shared with other spec files and earlier runs, whose
-// payments fall due too; a drain here must see only this test's payments.
-class TestScopedReconciliationRepository extends ReconciliationRepository {
-  protected claimableRows(): SQL {
-    if (testPaymentIds.size === 0) return sql`false`;
-
-    return sql`id IN (${sql.join(
-      [...testPaymentIds].map((paymentId) => sql`${paymentId}::uuid`),
-      sql`, `,
-    )})`;
-  }
-}
-
-const TEST_SCOPED_RECONCILIATION = {
-  provide: ReconciliationRepository,
-  useClass: TestScopedReconciliationRepository,
-};
+const { paymentIds: testPaymentIds, override: TEST_SCOPED_RECONCILIATION } =
+  scopedReconciliation();
 
 describe('Reconciliation', () => {
   let app: INestApplication;
@@ -505,6 +489,105 @@ describe('Reconciliation', () => {
       for (const { id } of settled) {
         expect((await paymentOf(id)).reconcileAttempts).toBe(0);
       }
+    });
+  });
+
+  describe('refunds', () => {
+    const REFUND_AMOUNT_MINOR = 400;
+
+    const refundRowsOf = (paymentId: string) =>
+      db.select().from(refunds).where(eq(refunds.paymentId, paymentId));
+
+    const insertPendingRefund = async (paymentId: string) => {
+      const [refund] = await db
+        .insert(refunds)
+        .values({
+          paymentId,
+          provider: 'fake',
+          providerRefundId: null,
+          origin: 'api',
+          status: 'pending',
+          amountMinor: REFUND_AMOUNT_MINOR,
+          currency: 'USD',
+        })
+        .returning();
+
+      return refund;
+    };
+
+    const useReferenceIdentity = () =>
+      jest.replaceProperty(fakeProvider, 'capabilities', {
+        ...fakeProvider.capabilities,
+        refundIdentity: 'reference',
+      });
+
+    it('lists the refunds of a succeeded payment and changes nothing when the provider has none', async () => {
+      const listRefunds = jest.spyOn(fakeProvider, 'listRefunds');
+      const payment = await insertDuePayment({ status: 'succeeded' });
+
+      await worker.drain();
+
+      expect(listRefunds).toHaveBeenCalledWith(payment.providerPaymentId);
+      const stored = await paymentOf(payment.id);
+      expect(stored.status).toBe('succeeded');
+      expect(secondsScheduledAfterCheck(stored)).toBe(
+        REFUNDABLE_RECONCILE_DELAY_SECONDS,
+      );
+      expect(await refundRowsOf(payment.id)).toEqual([]);
+      expect(await eventsOf(payment.id)).toEqual([]);
+    });
+
+    describe('a provider that identifies refunds by our id', () => {
+      it('asks for a pending refund by its id and leaves it when the provider does not know it', async () => {
+        const { warn } = muteLogs();
+        useReferenceIdentity();
+        const getStatus = jest.spyOn(fakeProvider, 'getStatus');
+        const payment = await insertDuePayment({ status: 'succeeded' });
+        const refund = await insertPendingRefund(payment.id);
+
+        await worker.drain();
+
+        expect(getStatus).toHaveBeenCalledWith({
+          resource: 'refund',
+          providerPaymentId: payment.providerPaymentId,
+          providerRefundId: null,
+          reference: refund.id,
+        });
+        expect(await refundRowsOf(payment.id)).toEqual([refund]);
+        expect((await paymentOf(payment.id)).status).toBe('succeeded');
+        expect(await eventsOf(payment.id)).toEqual([]);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining(refund.id));
+      });
+
+      it('applies a refund the provider reports succeeded', async () => {
+        muteLogs();
+        useReferenceIdentity();
+        const payment = await insertDuePayment({ status: 'succeeded' });
+        const refund = await insertPendingRefund(payment.id);
+        jest
+          .spyOn(fakeProvider, 'getStatus')
+          .mockImplementation((query: StatusQuery) =>
+            query.resource === 'refund' && query.reference === refund.id
+              ? Promise.resolve({
+                  resource: 'refund',
+                  providerRefundId: null,
+                  status: 'succeeded',
+                  amountMinor: REFUND_AMOUNT_MINOR,
+                  currency: 'USD',
+                })
+              : FakeProvider.prototype.getStatus.call(fakeProvider, query),
+          );
+
+        await worker.drain();
+
+        expect(await refundRowsOf(payment.id)).toEqual([
+          expect.objectContaining({ id: refund.id, status: 'succeeded' }),
+        ]);
+        expect((await paymentOf(payment.id)).status).toBe('partially_refunded');
+        expect(await timelineOf(payment.id)).toEqual([
+          ['succeeded', 'partially_refunded', 'applied', 'reconciliation'],
+        ]);
+      });
     });
   });
 

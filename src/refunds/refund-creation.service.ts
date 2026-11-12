@@ -29,6 +29,7 @@ import { ProviderRegistry } from '@/providers/provider.registry';
 
 import type { CreateRefundDto } from './dto/create-refund.dto';
 import { CreatedRefundResponseDto } from './dto/created-refund-response.dto';
+import { UNCONFIRMED_REFUND_RECONCILE_DELAY_SECONDS } from './refund.constants';
 import { RefundsService, type IngestRefundInput } from './refunds.service';
 
 const API_REFUND_REASON = 'api_refund';
@@ -70,18 +71,11 @@ const providerUnavailableResponseOf = (paymentId: string): StoredResponse =>
     paymentId,
   });
 
-// misconfigured is our fault, not the client's: it answers like an outage.
-const failureResponseOf = (
-  kind: ProviderErrorKind,
-  paymentId: string,
-): StoredResponse =>
-  kind === 'rejected'
-    ? errorResponseOf({
-        statusCode: HttpStatus.UNPROCESSABLE_ENTITY,
-        code: 'refund_rejected',
-        message: 'The payment provider rejected the refund',
-      })
-    : providerUnavailableResponseOf(paymentId);
+const REFUND_REJECTED_RESPONSE = errorResponseOf({
+  statusCode: HttpStatus.UNPROCESSABLE_ENTITY,
+  code: 'refund_rejected',
+  message: 'The payment provider rejected the refund',
+});
 
 const isMissingProviderRefundId = (
   reservation: RefundReservation,
@@ -140,8 +134,8 @@ export class RefundCreationService {
       onClaimed: (tx) =>
         this.reserveRefund(tx, request, normalizedPaymentId, dto.amountMinor),
       // A refund the provider may have made must not be failed by us.
-      onInterrupted: (_tx, claimedPaymentId) =>
-        Promise.resolve(providerUnavailableResponseOf(claimedPaymentId)),
+      onInterrupted: (tx, claimedPaymentId) =>
+        this.recordUnconfirmed(tx, claimedPaymentId),
     });
     if (!claim.isOwner) {
       if (claim.recoveredPaymentId !== null) {
@@ -289,7 +283,7 @@ export class RefundCreationService {
       return this.recordFailure(tx, reservation, outcome.failure.kind);
     }
     if (isMissingProviderRefundId(reservation, outcome)) {
-      return providerUnavailableResponseOf(reservation.paymentId);
+      return this.recordUnconfirmed(tx, reservation.paymentId);
     }
 
     const { refund } = await this.refundsService.recordApiRefund(
@@ -312,8 +306,25 @@ export class RefundCreationService {
     if (reservation.refundIdentity === 'reference' && kind !== 'unavailable') {
       await this.refundsService.recordApiRefundFailed(tx, reservation);
     }
+    if (kind === 'rejected') return REFUND_REJECTED_RESPONSE;
 
-    return failureResponseOf(kind, reservation.paymentId);
+    // misconfigured is our fault, not the client's: it answers like an outage.
+    return this.recordUnconfirmed(tx, reservation.paymentId);
+  }
+
+  // Only the provider knows whether this refund exists, so the payment's next
+  // reconciliation, which lists the provider's refunds, is brought forward.
+  private async recordUnconfirmed(
+    tx: DatabaseTransaction,
+    paymentId: string,
+  ): Promise<StoredResponse> {
+    await this.paymentsService.scheduleReconciliation(
+      tx,
+      paymentId,
+      UNCONFIRMED_REFUND_RECONCILE_DELAY_SECONDS,
+    );
+
+    return providerUnavailableResponseOf(paymentId);
   }
 
   private logOutcome(

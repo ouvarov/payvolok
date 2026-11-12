@@ -24,6 +24,11 @@ import type {
   ReconciliationRepository,
 } from './reconciliation.repository';
 import { ReconciliationService } from './reconciliation.service';
+import type {
+  RefundablePayment,
+  RefundCheck,
+  RefundReconciliationService,
+} from './refund-reconciliation.service';
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -68,6 +73,12 @@ const secondsAfterClaim = (next: Date | null): number | null =>
 
 const ONE_HOUR_OLD_DELAY_SECONDS = PENDING_RECONCILE_DELAYS_SECONDS[3];
 
+const UNCHANGED_REFUNDS: RefundCheck = {
+  isAnswered: true,
+  isChanged: false,
+  paymentStatus: null,
+};
+
 describe('ReconciliationService', () => {
   let getStatus: jest.Mock<Promise<ResourceStatus | null>, []>;
   let ingestPayment: jest.Mock<
@@ -76,6 +87,10 @@ describe('ReconciliationService', () => {
   >;
   let closeInterrupted: jest.Mock;
   let finish: jest.Mock<Promise<boolean>, [ClaimedPayment, Date | null]>;
+  let reconcileRefunds: jest.Mock<
+    Promise<RefundCheck>,
+    [PaymentProvider, RefundablePayment]
+  >;
   let warn: jest.SpyInstance;
   let error: jest.SpyInstance;
   let service: ReconciliationService;
@@ -94,6 +109,9 @@ describe('ReconciliationService', () => {
     finish = jest
       .fn<Promise<boolean>, [ClaimedPayment, Date | null]>()
       .mockResolvedValue(true);
+    reconcileRefunds = jest
+      .fn<Promise<RefundCheck>, [PaymentProvider, RefundablePayment]>()
+      .mockResolvedValue(UNCHANGED_REFUNDS);
     warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
     error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
     jest.spyOn(Logger.prototype, 'log').mockImplementation();
@@ -105,6 +123,9 @@ describe('ReconciliationService', () => {
         get: () => ({ getStatus }) as unknown as PaymentProvider,
       } as unknown as ProviderRegistry,
       { finish } as unknown as ReconciliationRepository,
+      {
+        reconcile: reconcileRefunds,
+      } as unknown as RefundReconciliationService,
     );
   });
 
@@ -259,6 +280,115 @@ describe('ReconciliationService', () => {
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining('after 30 days; reconciliation stopped'),
       );
+    });
+  });
+
+  describe('refunds of a refundable payment', () => {
+    beforeEach(() => {
+      ingestPayment.mockResolvedValue(ingestedWith('succeeded', 'duplicate'));
+    });
+
+    it('checks the refunds after the payment with the same adapter', async () => {
+      await service.reconcile(claimedWith({ status: 'succeeded' }));
+
+      expect(reconcileRefunds).toHaveBeenCalledWith(
+        expect.objectContaining({ getStatus }),
+        { id: PAYMENT_ID, provider: 'fake', providerPaymentId: 'provider-1' },
+      );
+    });
+
+    it('reports a change the refunds made and stops once they refund it in full', async () => {
+      reconcileRefunds.mockResolvedValue({
+        isAnswered: true,
+        isChanged: true,
+        paymentStatus: 'refunded',
+      });
+
+      const result = await service.reconcile(
+        claimedWith({ status: 'succeeded' }),
+      );
+
+      expect(result).toEqual({
+        outcome: 'checked',
+        scopeKey: 'fake',
+        isChanged: true,
+      });
+      expect(finish.mock.calls[0][1]).toBeNull();
+    });
+
+    it('keeps the daily check after a partial refund', async () => {
+      reconcileRefunds.mockResolvedValue({
+        isAnswered: true,
+        isChanged: true,
+        paymentStatus: 'partially_refunded',
+      });
+
+      await service.reconcile(claimedWith({ status: 'succeeded' }));
+
+      expect(scheduledSeconds()).toBe(REFUNDABLE_RECONCILE_DELAY_SECONDS);
+    });
+
+    it('skips the provider when it cannot list the refunds', async () => {
+      reconcileRefunds.mockResolvedValue({
+        isAnswered: false,
+        failure: { kind: 'unavailable', detail: 'more than one page' },
+      });
+
+      const result = await service.reconcile(
+        claimedWith({ status: 'succeeded' }),
+      );
+
+      expect(result).toEqual({
+        outcome: 'provider_failed',
+        scopeKey: 'fake',
+        failure: { kind: 'unavailable', detail: 'more than one page' },
+      });
+      expect(scheduledSeconds()).toBe(REFUNDABLE_RECONCILE_DELAY_SECONDS);
+    });
+
+    it('checks the refunds of a partially refunded payment', async () => {
+      getStatus.mockResolvedValue(
+        paymentStatusWith({ status: 'partially_refunded' }),
+      );
+
+      await service.reconcile(claimedWith({ status: 'partially_refunded' }));
+
+      expect(reconcileRefunds).toHaveBeenCalledTimes(1);
+    });
+
+    it('checks the refunds of a payment that just succeeded', async () => {
+      ingestPayment.mockResolvedValue(ingestedWith('succeeded', 'applied'));
+
+      await service.reconcile(claimedWith());
+
+      expect(reconcileRefunds).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      [
+        'a payment still pending',
+        () => {
+          getStatus.mockResolvedValue(paymentStatusWith({ status: 'pending' }));
+          ingestPayment.mockResolvedValue(ingestedWith('pending', 'duplicate'));
+        },
+      ],
+      [
+        'a provider that is down',
+        () => {
+          getStatus.mockRejectedValue(
+            new ProviderError('down', {
+              providerCode: 'fake',
+              kind: 'unavailable',
+            }),
+          );
+        },
+      ],
+    ])('leaves the refunds of %s', async (_case, arrange) => {
+      arrange();
+
+      await service.reconcile(claimedWith());
+
+      expect(reconcileRefunds).not.toHaveBeenCalled();
     });
   });
 

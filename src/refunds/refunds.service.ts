@@ -242,6 +242,10 @@ export class RefundsService {
     return this.refundsRepository.sumReservedMinor(tx, paymentId);
   }
 
+  findPendingRefunds(paymentId: string): Promise<Refund[]> {
+    return this.refundsRepository.findPendingByPayment(paymentId);
+  }
+
   private async runTransaction(
     input: IngestRefundInput,
   ): Promise<IngestRefundResult> {
@@ -330,9 +334,10 @@ export class RefundsService {
     if (problem) throw new RefundMismatchError(payment.id, problem);
     await this.assertReferenceNotOwnedElsewhere(tx, existingRefund, input);
 
+    const ownedRefund = await this.claimForApi(tx, existingRefund, origin);
     const linkedRefund = await this.linkProviderRefundId(
       tx,
-      existingRefund,
+      ownedRefund,
       input,
     );
     const decision = decideRefundTransition(linkedRefund.status, input.status);
@@ -348,6 +353,24 @@ export class RefundsService {
     if (!updatedRefund) throw new Error('Refund row disappeared during ingest');
 
     return { refund: updatedRefund, refundOutcome: 'applied' };
+  }
+
+  // A provider list or webhook can record our refund before our own call
+  // returns; the provider id proves it was ours, so it is not the provider's.
+  private async claimForApi(
+    tx: DatabaseTransaction,
+    refund: Refund,
+    origin: RefundOrigin,
+  ): Promise<Refund> {
+    if (origin !== 'api' || refund.origin !== 'provider') return refund;
+
+    const claimedRefund = await this.refundsRepository.setApiOrigin(
+      tx,
+      refund.id,
+    );
+    if (!claimedRefund) throw new Error('Refund row disappeared during ingest');
+
+    return claimedRefund;
   }
 
   // A reference no row owns is ignored: the provider id already identified the refund.

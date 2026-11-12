@@ -8,6 +8,7 @@ import {
   type PaymentProvider,
   type ProviderCapabilities,
   type ProviderErrorKind,
+  type ProviderRefundRecord,
   type RefundInput,
   type ResourceStatus,
   type StatusQuery,
@@ -194,6 +195,11 @@ export class FakeProvider implements PaymentProvider {
         ? paymentStatusOf(query.providerPaymentId)
         : refundStatusOf(query),
     );
+  }
+
+  // Keeps no data, so it knows no refund beyond what its ids encode.
+  listRefunds(): Promise<readonly ProviderRefundRecord[]> {
+    return Promise.resolve([]);
   }
 
   verifyWebhook(request: WebhookRequest): Promise<boolean> {

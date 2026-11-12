@@ -1,7 +1,11 @@
-import { Injectable } from '@nestjs/common';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { Inject, Injectable } from '@nestjs/common';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
-import type { DatabaseTransaction } from '@/database/drizzle';
+import {
+  DRIZZLE,
+  type Database,
+  type DatabaseTransaction,
+} from '@/database/drizzle';
 import {
   refunds,
   type NewRefund,
@@ -30,6 +34,18 @@ const sumMinorWithStatus = async (
 
 @Injectable()
 export class RefundsRepository {
+  constructor(@Inject(DRIZZLE) private readonly db: Database) {}
+
+  findPendingByPayment(paymentId: string): Promise<Refund[]> {
+    return this.db
+      .select()
+      .from(refunds)
+      .where(
+        and(eq(refunds.paymentId, paymentId), eq(refunds.status, 'pending')),
+      )
+      .orderBy(asc(refunds.createdAt), asc(refunds.id));
+  }
+
   async insertIfAbsent(
     tx: DatabaseTransaction,
     newRefund: NewRefund,
@@ -94,6 +110,19 @@ export class RefundsRepository {
     const [refund] = await tx
       .update(refunds)
       .set({ providerRefundId, updatedAt: sql`clock_timestamp()` })
+      .where(eq(refunds.id, refundId))
+      .returning();
+
+    return refund ?? null;
+  }
+
+  async setApiOrigin(
+    tx: DatabaseTransaction,
+    refundId: string,
+  ): Promise<Refund | null> {
+    const [refund] = await tx
+      .update(refunds)
+      .set({ origin: 'api', updatedAt: sql`clock_timestamp()` })
       .where(eq(refunds.id, refundId))
       .returning();
 
