@@ -63,6 +63,20 @@ export class PaymentsRepository {
       );
   }
 
+  // LEAST skips NULL, so a stopped row is re-armed while an earlier due time stays.
+  async scheduleReconciliation(
+    tx: DatabaseTransaction,
+    paymentId: string,
+    delaySeconds: number,
+  ): Promise<void> {
+    await tx
+      .update(payments)
+      .set({
+        reconcileAfter: sql`LEAST(${payments.reconcileAfter}, clock_timestamp() + ${delaySeconds}::integer * interval '1 second')`,
+      })
+      .where(eq(payments.id, paymentId));
+  }
+
   async insertIfAbsent(
     tx: DatabaseTransaction,
     newPayment: NewPayment,

@@ -292,6 +292,18 @@ export class PaymentsService {
     }
   }
 
+  scheduleReconciliation(
+    tx: DatabaseTransaction,
+    paymentId: string,
+    delaySeconds: number,
+  ): Promise<void> {
+    return this.paymentsRepository.scheduleReconciliation(
+      tx,
+      paymentId,
+      delaySeconds,
+    );
+  }
+
   lockPayment(
     tx: DatabaseTransaction,
     paymentId: string,
