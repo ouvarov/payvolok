@@ -46,6 +46,9 @@ const paymentWith = (overrides: Partial<Payment> = {}): Payment => ({
   currency: 'USD',
   createdAt: new Date(0),
   updatedAt: new Date(0),
+  reconcileAfter: null,
+  reconciledAt: null,
+  reconcileAttempts: 0,
   ...overrides,
 });
 

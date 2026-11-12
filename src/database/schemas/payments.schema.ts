@@ -3,6 +3,7 @@ import {
   bigint,
   check,
   index,
+  integer,
   pgTable,
   text,
   timestamp,
@@ -18,6 +19,10 @@ import {
   PAYMENTS_PROVIDER_REF_UNIQUE,
 } from '../../payments/payment.constants';
 import { PROVIDER_CODES } from '../../providers/provider.constants';
+import {
+  RECONCILABLE_PAYMENT_STATUSES,
+  RECONCILE_GRACE_SECONDS,
+} from '../../reconciliation/reconciliation.constants';
 
 import { quotedList } from './schema-helpers';
 import { webhookEvents } from './webhook-events.schema';
@@ -39,6 +44,16 @@ const payments = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
       .default(sql`clock_timestamp()`),
+    // Volatile on purpose: adding the column then rewrites the table and sets every existing row due after the grace.
+    reconcileAfter: timestamp('reconcile_after', {
+      withTimezone: true,
+    }).default(
+      sql.raw(
+        `(clock_timestamp() + interval '${RECONCILE_GRACE_SECONDS} seconds')`,
+      ),
+    ),
+    reconciledAt: timestamp('reconciled_at', { withTimezone: true }),
+    reconcileAttempts: integer('reconcile_attempts').notNull().default(0),
   },
   (table) => [
     unique(PAYMENTS_PROVIDER_REF_UNIQUE).on(
@@ -59,6 +74,15 @@ const payments = pgTable(
     ),
     check('payments_amount_minor_check', sql`${table.amountMinor} >= 0`),
     check('payments_currency_check', sql`${table.currency} ~ '^[A-Z]{3}$'`),
+    check(
+      'payments_reconcile_attempts_check',
+      sql`${table.reconcileAttempts} >= 0`,
+    ),
+    index('payments_reconcile_after_idx')
+      .on(table.reconcileAfter)
+      .where(
+        sql`${table.status} IN (${quotedList(RECONCILABLE_PAYMENT_STATUSES)})`,
+      ),
   ],
 );
 

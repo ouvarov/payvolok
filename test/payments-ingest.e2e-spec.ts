@@ -259,7 +259,7 @@ describe('Payments ingest', () => {
             `select tablename as name from pg_tables where schemaname = 'public' order by tablename`,
           );
 
-          expect(firstRunRows.rows).toHaveLength(8);
+          expect(firstRunRows.rows).toHaveLength(9);
           expect(secondRunRows.rows).toEqual(firstRunRows.rows);
           expect(tables.rows.map(({ name }) => name)).toEqual([
             'idempotency_keys',
@@ -283,7 +283,7 @@ describe('Payments ingest', () => {
 
         await applyMigrations(databaseUrl);
 
-        expect(rowsBefore).toHaveLength(8);
+        expect(rowsBefore).toHaveLength(9);
         expect(await db.execute(migrationRowsSql)).toEqual(rowsBefore);
       },
       SLOW_TEST_TIMEOUT_MS,
