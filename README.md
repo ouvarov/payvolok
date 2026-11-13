@@ -8,7 +8,7 @@ Pet project at an early stage. Sandbox only, no real money: it only talks to pro
 
 ## Status
 
-What exists: the payment and refund ingest core, the fake provider, the health routes, the webhook route, the webhook worker, `POST /api/v1/payments`, `GET /api/v1/payments/:id` and `POST /api/v1/payments/:paymentId/refunds`. `POST /webhooks/:provider` verifies the signature and stores the delivery in `webhook_events`; the worker then applies it to payments and refunds. The first real provider is Paddle, sandbox only, for one-off payments and refunds. Everything else is planned, including reconciliation and more providers.
+What exists: the payment and refund ingest core, the fake provider, the health routes, the webhook route, the webhook worker, `POST /api/v1/payments`, `GET /api/v1/payments/:id` and `POST /api/v1/payments/:paymentId/refunds`. `POST /webhooks/:provider` verifies the signature and stores the delivery in `webhook_events`; the worker then applies it to payments and refunds. The first real provider is Paddle, sandbox only, for one-off payments and refunds. Payment and refund reconciliation runs in every API process. Multiple projects, more providers and subscriptions are planned.
 
 ## Stack
 
