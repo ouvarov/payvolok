@@ -17,6 +17,7 @@ type ClaimedPayment = Pick<
   Payment,
   | 'id'
   | 'provider'
+  | 'providerAccountId'
   | 'providerPaymentId'
   | 'status'
   | 'purpose'
@@ -69,6 +70,7 @@ export class ReconciliationRepository {
       .returning({
         id: payments.id,
         provider: payments.provider,
+        providerAccountId: payments.providerAccountId,
         providerPaymentId: payments.providerPaymentId,
         status: payments.status,
         purpose: payments.purpose,

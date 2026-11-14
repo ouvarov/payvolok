@@ -17,6 +17,7 @@ import type { RefundIdentity } from '@/providers/payment-provider.port';
 import type { ProviderCode } from '@/providers/provider.constants';
 
 import {
+  REFUNDS_ACCOUNT_PROVIDER_REF_UNIQUE,
   REFUNDS_PROVIDER_REF_UNIQUE,
   type RefundStatus,
 } from './refund.constants';
@@ -27,6 +28,10 @@ import {
 import { RefundsRepository } from './refunds.repository';
 
 const refundReferenceSchema = z.uuid();
+const PROVIDER_REF_UNIQUES = [
+  REFUNDS_PROVIDER_REF_UNIQUE,
+  REFUNDS_ACCOUNT_PROVIDER_REF_UNIQUE,
+];
 
 type IngestRefundInput = {
   reference: string | null;
@@ -46,7 +51,10 @@ type RefundOrigin = Extract<PaymentOrigin, 'api' | 'provider'>;
 
 type RequestedApiRefund = {
   refundId: string;
-  payment: Pick<Payment, 'id' | 'provider' | 'currency'>;
+  payment: Pick<
+    Payment,
+    'id' | 'projectId' | 'providerAccountId' | 'provider' | 'currency'
+  >;
   amountMinor: number;
 };
 
@@ -197,6 +205,8 @@ export class RefundsService {
     const refund = await this.refundsRepository.insertIfAbsent(tx, {
       id: requested.refundId,
       paymentId: requested.payment.id,
+      projectId: requested.payment.projectId,
+      providerAccountId: requested.payment.providerAccountId,
       provider: requested.payment.provider,
       providerRefundId: null,
       origin: 'api',
@@ -254,7 +264,9 @@ export class RefundsService {
         this.ingestInTransaction(tx, input, 'provider'),
       );
     } catch (error) {
-      if (isUniqueViolationOf(error, REFUNDS_PROVIDER_REF_UNIQUE)) {
+      if (
+        PROVIDER_REF_UNIQUES.some((name) => isUniqueViolationOf(error, name))
+      ) {
         throw new RefundMismatchError(
           null,
           `provider ref ${input.providerRefundId} is owned by another refund`,
@@ -425,6 +437,8 @@ export class RefundsService {
     const refund = await this.refundsRepository.insertIfAbsent(tx, {
       ...(refundId ? { id: refundId } : {}),
       paymentId: payment.id,
+      projectId: payment.projectId,
+      providerAccountId: payment.providerAccountId,
       provider: input.provider,
       providerRefundId: input.providerRefundId,
       origin,

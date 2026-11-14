@@ -30,6 +30,7 @@ import {
   type IngestPaymentInput,
 } from '@/payments/payments.service';
 import { PAYMENT_STATUS_BY_EVENT_TYPE } from '@/payments/provider-event-status';
+import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
 import { FakeProvider } from '@/providers/fake/fake.provider';
 import type { ProviderCode } from '@/providers/provider.constants';
 import type {
@@ -75,6 +76,7 @@ const ingestInputWith = (
 ): IngestPaymentInput => ({
   reference: null,
   provider: 'fake',
+  providerAccountId: SEED_FAKE_ACCOUNT_ID,
   providerPaymentId: randomUUID(),
   status: 'succeeded',
   amountMinor: 1000,
@@ -259,12 +261,15 @@ describe('Payments ingest', () => {
             `select tablename as name from pg_tables where schemaname = 'public' order by tablename`,
           );
 
-          expect(firstRunRows.rows).toHaveLength(9);
+          expect(firstRunRows.rows).toHaveLength(10);
           expect(secondRunRows.rows).toEqual(firstRunRows.rows);
           expect(tables.rows.map(({ name }) => name)).toEqual([
+            'api_keys',
             'idempotency_keys',
             'payment_events',
             'payments',
+            'projects',
+            'provider_accounts',
             'refunds',
             'webhook_events',
           ]);
@@ -283,7 +288,7 @@ describe('Payments ingest', () => {
 
         await applyMigrations(databaseUrl);
 
-        expect(rowsBefore).toHaveLength(9);
+        expect(rowsBefore).toHaveLength(10);
         expect(await db.execute(migrationRowsSql)).toEqual(rowsBefore);
       },
       SLOW_TEST_TIMEOUT_MS,
@@ -330,7 +335,11 @@ describe('Payments ingest', () => {
         renewalInputWith({ provider: 'fake', providerPaymentId }),
       );
       const second = await paymentsService.ingestPayment(
-        renewalInputWith({ provider: OTHER_PROVIDER, providerPaymentId }),
+        renewalInputWith({
+          provider: OTHER_PROVIDER,
+          providerAccountId: null,
+          providerPaymentId,
+        }),
       );
 
       expect(second.outcome).toBe('created');

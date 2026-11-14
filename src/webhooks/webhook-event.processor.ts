@@ -116,26 +116,26 @@ export class WebhookEventProcessor {
 
     const results: EventResult[] = [];
     for (const event of events) {
-      results.push(await this.handle(claimed.id, provider.code, event));
+      results.push(await this.handle(claimed, provider.code, event));
     }
 
     return this.finishOf(claimed, results);
   }
 
   private async handle(
-    webhookEventId: string,
+    claimed: ClaimedWebhookEvent,
     providerCode: ProviderCode,
     event: ProviderEvent,
   ): Promise<EventResult> {
     try {
-      return await this.apply(webhookEventId, providerCode, event);
+      return await this.apply(claimed, providerCode, event);
     } catch (error) {
       return failedResultOf(error);
     }
   }
 
   private apply(
-    webhookEventId: string,
+    claimed: ClaimedWebhookEvent,
     providerCode: ProviderCode,
     event: ProviderEvent,
   ): Promise<EventResult> {
@@ -145,11 +145,11 @@ export class WebhookEventProcessor {
       case 'payment.succeeded':
       case 'payment.failed':
       case 'payment.expired':
-        return this.applyPayment(webhookEventId, providerCode, event);
+        return this.applyPayment(claimed, providerCode, event);
       case 'refund.pending':
       case 'refund.succeeded':
       case 'refund.failed':
-        return this.applyRefund(webhookEventId, providerCode, event);
+        return this.applyRefund(claimed.id, providerCode, event);
       case 'subscription.activated':
       case 'subscription.past_due':
       case 'subscription.paused':
@@ -165,7 +165,7 @@ export class WebhookEventProcessor {
   }
 
   private async applyPayment(
-    webhookEventId: string,
+    claimed: ClaimedWebhookEvent,
     providerCode: ProviderCode,
     event: ProviderPaymentEvent,
   ): Promise<EventResult> {
@@ -173,6 +173,7 @@ export class WebhookEventProcessor {
     const { payment, outcome } = await this.paymentsService.ingestPayment({
       reference: event.reference,
       provider: providerCode,
+      providerAccountId: claimed.providerAccountId,
       providerPaymentId: event.providerPaymentId,
       status,
       amountMinor: event.amountMinor,
@@ -182,7 +183,7 @@ export class WebhookEventProcessor {
         event.failureReason ?? event.type,
         MAX_FAILURE_REASON_LENGTH,
       ),
-      webhookEventId,
+      webhookEventId: claimed.id,
     });
 
     return {

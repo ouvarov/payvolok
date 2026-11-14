@@ -1,7 +1,7 @@
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import type { ApiErrorBody } from '@/common/errors/api-exception';
+import { ApiException, type ApiErrorBody } from '@/common/errors/api-exception';
 import type { Env } from '@/config/env.schema';
 import type { DatabaseTransaction } from '@/database/drizzle';
 import type {
@@ -14,6 +14,11 @@ import {
   type CloseInterruptedResult,
   type IdempotentResponse,
 } from '@/idempotency/idempotency.service';
+import { SEED_PROJECT_ID } from '@/projects/projects.constants';
+import {
+  ProviderAccountsService,
+  type AccountRef,
+} from '@/provider-accounts/provider-accounts.service';
 import type {
   CreatedPayment,
   ProviderErrorKind,
@@ -87,6 +92,7 @@ export class PaymentCreationService {
   constructor(
     private readonly idempotencyService: IdempotencyService,
     private readonly paymentsService: PaymentsService,
+    private readonly providerAccountsService: ProviderAccountsService,
     private readonly providerRegistry: ProviderRegistry,
     configService: ConfigService<Env, true>,
   ) {
@@ -97,10 +103,19 @@ export class PaymentCreationService {
     idempotencyKey: string,
     dto: CreatePaymentDto,
   ): Promise<IdempotentResponse> {
+    const account = await this.availableAccountFor(dto.provider);
     const request = requestOf(idempotencyKey, dto);
     const claim = await this.idempotencyService.claim(request, {
       onClaimed: async (tx) => ({
-        paymentId: (await this.paymentsService.recordRequested(tx, dto)).id,
+        paymentId: (
+          await this.paymentsService.recordRequested(tx, {
+            projectId: account.projectId,
+            providerAccountId: account.id,
+            provider: dto.provider,
+            amountMinor: dto.amountMinor,
+            currency: dto.currency,
+          })
+        ).id,
       }),
       onInterrupted: (tx, paymentId) =>
         this.recordInterrupted(tx, { paymentId, provider: dto.provider }),
@@ -147,6 +162,22 @@ export class PaymentCreationService {
         response: providerUnavailableResponseOf(ref.paymentId),
       }),
     );
+  }
+
+  private async availableAccountFor(
+    provider: ProviderCode,
+  ): Promise<AccountRef> {
+    const account = await this.providerAccountsService.activeAccountFor(
+      SEED_PROJECT_ID,
+      provider,
+    );
+    if (account) return account;
+
+    throw new ApiException({
+      statusCode: HttpStatus.UNPROCESSABLE_ENTITY,
+      code: 'provider_not_available',
+      message: 'The provider is not available for this project',
+    });
   }
 
   private async callProvider(

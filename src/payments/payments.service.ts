@@ -6,11 +6,13 @@ import { ApiException } from '@/common/errors/api-exception';
 import type { DatabaseTransaction } from '@/database/drizzle';
 import { describeError, isUniqueViolationOf } from '@/database/postgres-errors';
 import type { Payment } from '@/database/schemas/payments.schema';
+import { SEED_PROJECT_ID } from '@/projects/projects.constants';
 import type { CreatedPayment } from '@/providers/payment-provider.port';
 import type { ProviderCode } from '@/providers/provider.constants';
 
 import { PaymentResponseDto } from './dto/payment-response.dto';
 import {
+  PAYMENTS_ACCOUNT_PROVIDER_REF_UNIQUE,
   PAYMENTS_PROVIDER_REF_UNIQUE,
   type PaymentPurpose,
   type PaymentStatus,
@@ -24,8 +26,14 @@ const paymentReferenceSchema = z.uuid();
 const API_REQUEST_REASON = 'api_request';
 const PROVIDER_CREATED_REASON = 'provider_created';
 const REQUEST_INTERRUPTED_REASON = 'request_interrupted';
+const PROVIDER_REF_UNIQUES = [
+  PAYMENTS_PROVIDER_REF_UNIQUE,
+  PAYMENTS_ACCOUNT_PROVIDER_REF_UNIQUE,
+];
 
 type RequestedPaymentInput = {
+  projectId: string;
+  providerAccountId: string;
   provider: ProviderCode;
   amountMinor: number;
   currency: string;
@@ -36,6 +44,7 @@ type ApiPaymentRef = { paymentId: string; provider: ProviderCode };
 type IngestPaymentInput = {
   reference: string | null;
   provider: ProviderCode;
+  providerAccountId: string | null;
   providerPaymentId: string;
   status: IngestablePaymentStatus;
   amountMinor: number;
@@ -195,6 +204,8 @@ export class PaymentsService {
     input: RequestedPaymentInput,
   ): Promise<Payment> {
     const payment = await this.paymentsRepository.insertIfAbsent(tx, {
+      projectId: input.projectId,
+      providerAccountId: input.providerAccountId,
       provider: input.provider,
       providerPaymentId: null,
       purpose: 'one_off',
@@ -284,7 +295,9 @@ export class PaymentsService {
     try {
       return await this.paymentsRepository.withTransaction(work);
     } catch (error) {
-      if (isUniqueViolationOf(error, PAYMENTS_PROVIDER_REF_UNIQUE)) {
+      if (
+        PROVIDER_REF_UNIQUES.some((name) => isUniqueViolationOf(error, name))
+      ) {
         throw new PaymentProviderRefOwnedError(received, { cause: error });
       }
 
@@ -428,6 +441,8 @@ export class PaymentsService {
     input: IngestPaymentInput,
   ): Promise<Payment | null> {
     const createdPayment = await this.paymentsRepository.insertIfAbsent(tx, {
+      projectId: SEED_PROJECT_ID,
+      providerAccountId: input.providerAccountId,
       provider: input.provider,
       providerPaymentId: input.providerPaymentId,
       purpose: input.purpose,

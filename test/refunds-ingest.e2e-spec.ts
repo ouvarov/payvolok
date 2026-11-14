@@ -18,6 +18,7 @@ import {
   PaymentProviderRefOwnedError,
   PaymentsService,
 } from '@/payments/payments.service';
+import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
 import {
   RefundEventInvalidError,
   RefundMismatchError,
@@ -417,6 +418,7 @@ describe('Refunds ingest', () => {
           await paymentsService.ingestPayment({
             reference: null,
             provider: 'fake',
+            providerAccountId: SEED_FAKE_ACCOUNT_ID,
             providerPaymentId: payment.providerPaymentId as string,
             status: 'succeeded',
             amountMinor: 1000,
@@ -527,6 +529,7 @@ describe('Refunds ingest', () => {
           await paymentsService.ingestPayment({
             reference: null,
             provider: 'fake',
+            providerAccountId: SEED_FAKE_ACCOUNT_ID,
             providerPaymentId: payment.providerPaymentId as string,
             status: 'succeeded',
             amountMinor: 1000,

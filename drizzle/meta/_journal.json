@@ -64,6 +64,13 @@
       "when": 1794483855220,
       "tag": "0008_handy_blizzard",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794692875597,
+      "tag": "0009_clever_clea",
+      "breakpoints": true
     }
   ]
 }
