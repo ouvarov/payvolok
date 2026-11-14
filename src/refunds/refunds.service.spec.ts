@@ -5,6 +5,8 @@ import {
   IngestRejectedError,
   type PaymentsService,
 } from '@/payments/payments.service';
+import { SEED_PROJECT_ID } from '@/projects/projects.constants';
+import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
 
 import type { RefundsRepository } from './refunds.repository';
 import {
@@ -35,6 +37,8 @@ const INPUT: IngestRefundInput = {
 
 const PAYMENT = {
   id: 'payment-1',
+  projectId: SEED_PROJECT_ID,
+  providerAccountId: SEED_FAKE_ACCOUNT_ID,
   status: 'succeeded',
   amountMinor: 1000,
   currency: 'USD',
@@ -51,6 +55,8 @@ const refundWith = (overrides: Partial<Refund> = {}): Refund => ({
   currency: 'USD',
   createdAt: new Date(0),
   updatedAt: new Date(0),
+  projectId: SEED_PROJECT_ID,
+  providerAccountId: SEED_FAKE_ACCOUNT_ID,
   ...overrides,
 });
 

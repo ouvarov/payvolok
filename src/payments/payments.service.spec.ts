@@ -2,6 +2,8 @@ import { Logger } from '@nestjs/common';
 
 import type { DatabaseTransaction } from '@/database/drizzle';
 import type { Payment } from '@/database/schemas/payments.schema';
+import { SEED_PROJECT_ID } from '@/projects/projects.constants';
+import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
 import type { ProviderPaymentStatus } from '@/providers/payment-provider.port';
 
 import type { PaymentsRepository } from './payments.repository';
@@ -51,6 +53,8 @@ const paymentWith = (overrides: Partial<Payment> = {}): Payment => ({
   reconcileAfter: null,
   reconciledAt: null,
   reconcileAttempts: 0,
+  projectId: SEED_PROJECT_ID,
+  providerAccountId: SEED_FAKE_ACCOUNT_ID,
   ...overrides,
 });
 
