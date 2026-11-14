@@ -3,6 +3,7 @@ import type { ConfigService } from '@nestjs/config';
 
 import type { Env } from '@/config/env.schema';
 import type { IdempotencyService } from '@/idempotency/idempotency.service';
+import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
 
 import {
   IDEMPOTENCY_PURGE_BATCH_SIZE,
@@ -30,6 +31,7 @@ const claimedPaymentWith = (
 ): ClaimedPayment => ({
   id: 'payment-1',
   provider: 'fake',
+  providerAccountId: SEED_FAKE_ACCOUNT_ID,
   providerPaymentId: 'provider-1',
   status: 'pending',
   purpose: 'one_off',

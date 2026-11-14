@@ -12,7 +12,13 @@ import { configureApp } from '@/app.setup';
 import { validateEnv, type Env } from '@/config/env.schema';
 import type { Database } from '@/database/drizzle';
 import { webhookEvents } from '@/database/schemas/webhook-events.schema';
+import { SEED_PROJECT_ID } from '@/projects/projects.constants';
+import {
+  SEED_FAKE_ACCOUNT_ID,
+  SEED_PADDLE_ACCOUNT_ID,
+} from '@/provider-accounts/provider-accounts.constants';
 import { PaddleProvider } from '@/providers/paddle/paddle.provider';
+import type { ProviderCode } from '@/providers/provider.constants';
 
 const PGLITE_POOL_MAX = 1;
 const REAL_POSTGRES_POOL_MAX = 5;
@@ -22,6 +28,11 @@ const LOCK_WAIT_DEADLINE_MS = 8000;
 const TEST_API_KEY = 'e2e-test-api-key-with-enough-length-0001';
 
 const FAKE_SIGNATURE_HEADER = 'x-fake-signature';
+
+const SEED_ACCOUNT_ID_BY_PROVIDER: Record<ProviderCode, string> = {
+  fake: SEED_FAKE_ACCOUNT_ID,
+  paddle: SEED_PADDLE_ACCOUNT_ID,
+};
 
 const databaseUrl = process.env.E2E_DATABASE_URL as string;
 const isRealPostgres = process.env.E2E_REAL_POSTGRES === 'true';
@@ -108,6 +119,14 @@ const createE2eApp = async ({
   return app;
 };
 
+// The columns a row written by the API gets, for tests that insert rows directly.
+const seedColumnsOf = (
+  provider: ProviderCode,
+): { projectId: string; providerAccountId: string } => ({
+  projectId: SEED_PROJECT_ID,
+  providerAccountId: SEED_ACCOUNT_ID_BY_PROVIDER[provider],
+});
+
 const serverOf = (app: INestApplication): Server =>
   app.getHttpServer() as Server;
 
@@ -142,6 +161,7 @@ const insertInboxEvent = async (db: Database): Promise<string> => {
     .insert(webhookEvents)
     .values({
       provider: 'fake',
+      providerAccountId: SEED_FAKE_ACCOUNT_ID,
       dedupKey: randomUUID(),
       status: 'received',
       signatureValid: true,
@@ -195,6 +215,7 @@ export {
   describeOnRealPostgres,
   FAKE_SIGNATURE_HEADER,
   insertInboxEvent,
+  seedColumnsOf,
   serverOf,
   TEST_API_KEY,
   trackSettled,

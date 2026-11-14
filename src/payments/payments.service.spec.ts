@@ -19,12 +19,14 @@ import {
 } from './payments.service';
 
 const TX = {} as DatabaseTransaction;
+const OTHER_ACCOUNT_ID = '9c1e2d3f-4a5b-4c6d-8e7f-000000000002';
 
 const REFERENCE = '7f3c1a52-8d4e-4b6a-9c21-0e5d7a9b3f10';
 
 const INPUT: IngestPaymentInput = {
   reference: null,
   provider: 'fake',
+  providerAccountId: SEED_FAKE_ACCOUNT_ID,
   providerPaymentId: 'provider-1',
   status: 'succeeded',
   amountMinor: 1000,
@@ -427,7 +429,10 @@ describe('PaymentsService', () => {
         repositoryWith({ insertIfAbsent, insertEvent }),
       );
 
-      const result = await paymentsService.ingestPayment(RENEWAL_INPUT);
+      const result = await paymentsService.ingestPayment({
+        ...RENEWAL_INPUT,
+        providerAccountId: OTHER_ACCOUNT_ID,
+      });
 
       expect(result).toEqual({ payment: createdPayment, outcome: 'created' });
       expect(insertIfAbsent).toHaveBeenCalledWith(
@@ -435,6 +440,8 @@ describe('PaymentsService', () => {
         expect.objectContaining({
           origin: 'provider',
           purpose: 'subscription_renewal',
+          projectId: SEED_PROJECT_ID,
+          providerAccountId: OTHER_ACCOUNT_ID,
         }),
       );
       expect(insertEvent).toHaveBeenCalledTimes(1);

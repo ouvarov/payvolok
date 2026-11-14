@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 
 import type { Env } from '@/config/env.schema';
+import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
 
 import type { WebhookEventProcessor } from './webhook-event.processor';
 import { WebhookWorker, WORKER_STOP_TIMEOUT_MS } from './webhook.worker';
@@ -23,6 +24,7 @@ const PROCESSED: WebhookEventFinish = {
 const claimedRow = (id: string): ClaimedWebhookEvent => ({
   id,
   provider: 'fake',
+  providerAccountId: SEED_FAKE_ACCOUNT_ID,
   replayOf: null,
   attempts: 1,
 });
