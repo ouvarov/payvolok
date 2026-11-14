@@ -32,7 +32,7 @@ Copy `.env.example` to `.env` first. The app refuses to start when `DATABASE_URL
 docker compose up --build
 ```
 
-This starts Postgres, applies migrations and then starts the API on <http://localhost:3000>. The credentials in `docker-compose.yml` are local development values only.
+This starts Postgres, applies migrations and then starts the API on <http://localhost:3000>. The credentials in `docker-compose.yml` are local development values only. To use the `fake` provider, seed its account once: `docker compose run --rm migrate node dist/database/seed-fake-account.js` (see Projects and provider accounts).
 
 ### Without Docker
 
@@ -45,6 +45,7 @@ In another terminal, set `DATABASE_URL=postgres://postgres@127.0.0.1:55432/postg
 
 ```bash
 npm run db:migrate
+npm run db:seed:fake   # only to use the fake provider
 npm run start:dev
 ```
 
@@ -67,6 +68,7 @@ The e2e tests apply migrations to `E2E_DATABASE_URL` once, before the Jest worke
 | `npm run test:e2e`                            | End-to-end tests; read `E2E_DATABASE_URL` from `.env`, which must name an existing throwaway database other than the one in `DATABASE_URL` |
 | `npm run db:generate`                         | Generate a Drizzle migration from the schema                                                                                               |
 | `npm run db:migrate` / `db:migrate:prod`      | Apply migrations from sources / from the build                                                                                             |
+| `npm run db:seed:fake`                        | Add the seed project's `fake` provider account to `DATABASE_URL`; refuses `NODE_ENV=production`                                            |
 | `npm run db:local`                            | In-memory Postgres for development and e2e                                                                                                 |
 
 The role's 10 s `statement_timeout` also applies to migrations: a long statement in a migration needs `SET LOCAL statement_timeout = 0` before it.
@@ -115,7 +117,7 @@ A 400 for an invalid body has `code: "validation_failed"` and `issues: [{ "field
 
 `amountMinor` is a positive integer in minor units, `currency` three uppercase letters, `description` 1 to 255 characters and `returnUrl` an http or https URL. On success it answers `201 {"paymentId": "...", "checkout": {"type": "redirect", "url": "..."}}`: send the customer to `checkout.url`. The payment is `pending` until the provider's webhooks move it on.
 
-When the provider refuses the order the answer is `422 order_rejected`; when it cannot be reached, fails in an unexpected way or is set up wrong it is `503 provider_unavailable` with the `paymentId`. In both cases the payment is `failed` and the reason is in its events, unless a provider webhook already moved it on: then it keeps the provider's status and the failure is recorded as a `stale` event. Check `GET /api/v1/payments/:id` before retrying. Nothing retries on its own: retry with a new key.
+A provider the project has no active account for is `422 provider_not_available`, before the key is taken: nothing is stored and no provider is called. When the provider refuses the order the answer is `422 order_rejected`; when it cannot be reached, fails in an unexpected way or is set up wrong it is `503 provider_unavailable` with the `paymentId`. In both cases the payment is `failed` and the reason is in its events, unless a provider webhook already moved it on: then it keeps the provider's status and the failure is recorded as a `stale` event. Check `GET /api/v1/payments/:id` before retrying. Nothing retries on its own: retry with a new key.
 
 ### Refund a payment
 
@@ -177,6 +179,10 @@ After the checks, at boot and then at most once an hour, the worker deletes idem
 
 Migration `0008` adds the schedule columns. It must be applied to the production database before the code that reads them is deployed, because every payment query lists all columns.
 
+## Projects and provider accounts
+
+Every payment, refund and idempotency key belongs to a project, and every payment, refund and webhook row to a provider account of that project. A project has at most one account per provider. For now there is one project, `payvolok-demo` (`5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a01`), with the Paddle account `5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a02` (credentials from the `PADDLE_*` variables); the API and the webhook routes use it. The `fake` account `5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a03` exists only where fake rows already existed when migration `0009` ran, or after `npm run db:seed:fake`; without it `fake` payments answer `422 provider_not_available` and `POST /webhooks/fake` answers 404. Production has no fake account. The e2e setup seeds it after the migrations.
+
 ## Fake provider
 
 `fake` is a provider for development and chaos tests. It keeps no data. The last two digits of `amountMinor` choose the scenario: `01` fails, `02` succeeds after a failed attempt, `03` fails after a failed attempt, `04` expires, `05` stays pending, anything else succeeds. On a refund amount, `01` fails, `05` stays pending, anything else succeeds.
@@ -223,6 +229,21 @@ node --env-file=.env -r ts-node/register/transpile-only -r tsconfig-paths/regist
 `PORT` is set by Render and read by the app; the other variables keep their defaults. `FAKE_WEBHOOK_SECRET` is left unset: each process then makes its own random secret.
 
 Migrations do not run on boot. Before a deploy that adds one (the reconciliation release needs `0008`), apply it from a machine that can reach the production database: `npm run db:migrate` with `DATABASE_URL` pointing at it. Prefer a direct connection over the pooler for this.
+
+Migration `0009` (projects and provider accounts) is applied to the Neon `dev` and `production` databases before its pull request is merged; the code running before it works on the new schema. It runs with a 3 s lock timeout, so a busy table makes it fail and roll back instead of blocking traffic; then run it again. Rows the older code writes after it have no account until the follow-up data migration `0010`. Check the counts before and right after:
+
+```sql
+-- before: note the numbers
+SELECT provider, count(*) FROM payments GROUP BY 1;
+SELECT provider, count(*) FROM refunds GROUP BY 1;
+SELECT provider, count(*) FROM webhook_events GROUP BY 1;
+SELECT count(*) FROM idempotency_keys;
+
+-- after: every count is 0
+SELECT count(*) FROM payments WHERE provider_account_id IS NULL;
+SELECT count(*) FROM refunds WHERE provider_account_id IS NULL;
+SELECT count(*) FROM webhook_events WHERE provider_account_id IS NULL;
+```
 
 After the first deploy, point Paddle at the final service URL: the default payment link to `<url>/checkout/paddle`, and a new notification destination `<url>/webhooks/paddle` with the same six events. Put its secret in `PADDLE_WEBHOOK_SECRET` and redeploy. Check `/health/ready`.
 
