@@ -70,6 +70,11 @@ const webhookEvents = pgTable(
       columns: [table.providerAccountId],
       foreignColumns: [providerAccounts.id],
     }),
+    foreignKey({
+      name: 'webhook_events_provider_account_fk',
+      columns: [table.providerAccountId, table.provider],
+      foreignColumns: [providerAccounts.id, providerAccounts.provider],
+    }),
     index('webhook_events_replay_of_idx')
       .on(table.replayOf)
       .where(sql`${table.replayOf} IS NOT NULL`),
