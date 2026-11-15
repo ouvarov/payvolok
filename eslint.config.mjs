@@ -55,6 +55,23 @@ export default tseslint.config(
     },
   },
   {
+    files: ['src/providers/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/provider-accounts/**'],
+              message:
+                'Adapters do not depend on provider accounts; keep shared types in src/providers.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: [
       'src/database/migrate.ts',
       'src/database/seed-fake-account.ts',

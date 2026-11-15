@@ -1,10 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
-import type {
-  FakeCredentials,
-  RedactedSecret,
-} from '@/provider-accounts/provider-credentials';
-
 import {
   ProviderError,
   type CreatedPayment,
@@ -19,6 +14,7 @@ import {
   type StatusQuery,
   type WebhookRequest,
 } from '../payment-provider.port';
+import type { FakeCredentials, RedactedSecret } from '../provider-credentials';
 import {
   dedupKeyFromBody,
   type ProviderEvent,

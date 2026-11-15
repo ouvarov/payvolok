@@ -1,6 +1,10 @@
 import { SEED_PROJECT_ID } from '@/projects/projects.constants';
 import { FakeProvider } from '@/providers/fake/fake.provider';
 import { PaddleProvider } from '@/providers/paddle/paddle.provider';
+import {
+  RedactedSecret,
+  type ProviderCredentials,
+} from '@/providers/provider-credentials';
 import { ProviderRegistry } from '@/providers/provider.registry';
 
 import {
@@ -12,10 +16,6 @@ import type {
   StoredAccount,
 } from './provider-accounts.repository';
 import { ProviderAccountsService } from './provider-accounts.service';
-import {
-  RedactedSecret,
-  type ProviderCredentials,
-} from './provider-credentials';
 
 const CLIENT_TOKEN = `test_${'a1B'.repeat(9)}`;
 

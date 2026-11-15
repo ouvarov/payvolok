@@ -1,6 +1,5 @@
-import { RedactedSecret } from '@/provider-accounts/provider-credentials';
-
 import { ProviderError, type WebhookRequest } from '../payment-provider.port';
+import { RedactedSecret } from '../provider-credentials';
 import type { ProviderPaymentEvent } from '../provider-events';
 import { boundProviderOf } from '../bound-provider';
 

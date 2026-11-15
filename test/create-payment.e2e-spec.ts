@@ -26,7 +26,7 @@ import { IdempotencyRepository } from '@/idempotency/idempotency.repository';
 import { PaymentsRepository } from '@/payments/payments.repository';
 import { PaymentsService } from '@/payments/payments.service';
 import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
-import type { FakeCredentials } from '@/provider-accounts/provider-credentials';
+import type { FakeCredentials } from '@/providers/provider-credentials';
 import { FakeProvider } from '@/providers/fake/fake.provider';
 import {
   ProviderError,

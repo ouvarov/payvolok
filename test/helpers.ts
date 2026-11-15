@@ -18,7 +18,6 @@ import {
   SEED_FAKE_CREDENTIALS_REF,
   SEED_PADDLE_ACCOUNT_ID,
 } from '@/provider-accounts/provider-accounts.constants';
-import type { RedactedSecret } from '@/provider-accounts/provider-credentials';
 import { ProviderCredentialsResolver } from '@/provider-accounts/provider-credentials.resolver';
 import type { FakeWireBody } from '@/providers/fake/fake-wire-format';
 import { FakeProvider } from '@/providers/fake/fake.provider';
@@ -28,6 +27,7 @@ import type {
   BoundProvider,
   WebhookRequest,
 } from '@/providers/payment-provider.port';
+import type { RedactedSecret } from '@/providers/provider-credentials';
 import type { ProviderCode } from '@/providers/provider.constants';
 
 const PGLITE_POOL_MAX = 1;

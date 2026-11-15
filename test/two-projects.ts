@@ -6,12 +6,12 @@ import { DRIZZLE, type Database } from '@/database/drizzle';
 import { projects } from '@/database/schemas/projects.schema';
 import { providerAccounts } from '@/database/schemas/provider-accounts.schema';
 import { EnvCredentialsResolver } from '@/provider-accounts/env-credentials.resolver';
+import { ProviderCredentialsResolver } from '@/provider-accounts/provider-credentials.resolver';
+import { FakeProvider } from '@/providers/fake/fake.provider';
 import {
   RedactedSecret,
   type ProviderCredentials,
-} from '@/provider-accounts/provider-credentials';
-import { ProviderCredentialsResolver } from '@/provider-accounts/provider-credentials.resolver';
-import { FakeProvider } from '@/providers/fake/fake.provider';
+} from '@/providers/provider-credentials';
 
 import { fakeSignerFor, type ClassOverride, type FakeSigner } from './helpers';
 

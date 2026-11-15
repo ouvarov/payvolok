@@ -1,7 +1,6 @@
 import { z } from 'zod';
 
 import { CURRENCY_PATTERN } from '@/common/currency';
-import type { PaddleCredentials } from '@/provider-accounts/provider-credentials';
 
 import type {
   CreatedPayment,
@@ -17,6 +16,7 @@ import type {
   StatusQuery,
   WebhookRequest,
 } from '../payment-provider.port';
+import type { PaddleCredentials } from '../provider-credentials';
 import { dedupKeyFromBody, type ProviderEvents } from '../provider-events';
 
 import {

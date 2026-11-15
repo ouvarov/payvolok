@@ -1,6 +1,5 @@
+import type { ProviderCredentials } from '@/providers/provider-credentials';
 import type { ProviderCode } from '@/providers/provider.constants';
-
-import type { ProviderCredentials } from './provider-credentials';
 
 type CredentialedAccount = {
   id: string;

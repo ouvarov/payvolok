@@ -10,7 +10,7 @@ import {
 import { SEED_PROJECT_ID } from '@/projects/projects.constants';
 import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
 import type { ProviderAccountsService } from '@/provider-accounts/provider-accounts.service';
-import { RedactedSecret } from '@/provider-accounts/provider-credentials';
+import { RedactedSecret } from '@/providers/provider-credentials';
 import { FakeProvider } from '@/providers/fake/fake.provider';
 import type { BoundProvider } from '@/providers/payment-provider.port';
 import { boundProviderOf } from '@/providers/bound-provider';

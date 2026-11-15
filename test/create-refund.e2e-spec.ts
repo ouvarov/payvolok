@@ -24,7 +24,7 @@ import { IDEMPOTENCY_LEASE_SECONDS } from '@/idempotency/idempotency.constants';
 import { IdempotencyRepository } from '@/idempotency/idempotency.repository';
 import { PaymentsRepository } from '@/payments/payments.repository';
 import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
-import type { FakeCredentials } from '@/provider-accounts/provider-credentials';
+import type { FakeCredentials } from '@/providers/provider-credentials';
 import { encodeFakeId } from '@/providers/fake/fake-wire-format';
 import { FakeProvider } from '@/providers/fake/fake.provider';
 import {

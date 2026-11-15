@@ -4,7 +4,7 @@ import { envSchema } from '../src/config/env.schema';
 import {
   RedactedSecret,
   type PaddleCredentials,
-} from '../src/provider-accounts/provider-credentials';
+} from '../src/providers/provider-credentials';
 import { PaddleProvider } from '../src/providers/paddle/paddle.provider';
 import {
   ProviderError,

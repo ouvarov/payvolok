@@ -1,9 +1,9 @@
 import { inspect } from 'node:util';
 
 import { IDEMPOTENCY_LEASE_SECONDS } from '@/idempotency/idempotency.constants';
-import { RedactedSecret } from '@/provider-accounts/provider-credentials';
 
 import { ProviderError } from '../payment-provider.port';
+import { RedactedSecret } from '../provider-credentials';
 
 import {
   errorBodyFixture,

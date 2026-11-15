@@ -1,14 +1,13 @@
 import {
-  RedactedSecret,
-  type PaddleCredentials,
-} from '@/provider-accounts/provider-credentials';
-
-import {
   ProviderError,
   type BoundProvider,
   type RefundInput,
 } from '../payment-provider.port';
 import { boundProviderOf } from '../bound-provider';
+import {
+  RedactedSecret,
+  type PaddleCredentials,
+} from '../provider-credentials';
 
 import {
   adjustmentEventFixture,

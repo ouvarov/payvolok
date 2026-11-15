@@ -1,10 +1,5 @@
 import { Injectable } from '@nestjs/common';
 
-import type {
-  CredentialsOf,
-  ProviderCredentials,
-} from '@/provider-accounts/provider-credentials';
-
 import { boundProviderOf } from './bound-provider';
 import { FakeProvider } from './fake/fake.provider';
 import { PaddleProvider } from './paddle/paddle.provider';
@@ -14,6 +9,10 @@ import {
   type PaymentProvider,
   type RefundIdentity,
 } from './payment-provider.port';
+import type {
+  CredentialsOf,
+  ProviderCredentials,
+} from './provider-credentials';
 import type { ProviderCode } from './provider.constants';
 
 type ProviderAdapters = {

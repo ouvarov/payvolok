@@ -1,12 +1,11 @@
-import type {
-  PaddleEnvironment,
-  RedactedSecret,
-} from '@/provider-accounts/provider-credentials';
-
 import {
   ProviderError,
   type ProviderErrorKind,
 } from '../payment-provider.port';
+import type {
+  PaddleEnvironment,
+  RedactedSecret,
+} from '../provider-credentials';
 
 import { paddleErrorBodySchema, parseJsonOrNull } from './paddle-wire-format';
 

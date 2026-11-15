@@ -5,17 +5,17 @@ import { ConfigService } from '@nestjs/config';
 
 import type { Env } from '@/config/env.schema';
 import { ProviderError } from '@/providers/payment-provider.port';
-
-import {
-  SEED_FAKE_CREDENTIALS_REF,
-  SEED_PADDLE_CREDENTIALS_REF,
-} from './provider-accounts.constants';
 import {
   RedactedSecret,
   type FakeCredentials,
   type PaddleCredentials,
   type ProviderCredentials,
-} from './provider-credentials';
+} from '@/providers/provider-credentials';
+
+import {
+  SEED_FAKE_CREDENTIALS_REF,
+  SEED_PADDLE_CREDENTIALS_REF,
+} from './provider-accounts.constants';
 import {
   ProviderCredentialsResolver,
   type CredentialedAccount,

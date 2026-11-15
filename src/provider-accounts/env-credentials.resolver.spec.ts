@@ -4,17 +4,17 @@ import type { ConfigService } from '@nestjs/config';
 
 import type { Env } from '@/config/env.schema';
 import { ProviderError } from '@/providers/payment-provider.port';
+import type {
+  FakeCredentials,
+  PaddleCredentials,
+  ProviderCredentials,
+} from '@/providers/provider-credentials';
 
 import { EnvCredentialsResolver } from './env-credentials.resolver';
 import {
   SEED_FAKE_ACCOUNT_ID,
   SEED_PADDLE_ACCOUNT_ID,
 } from './provider-accounts.constants';
-import type {
-  FakeCredentials,
-  PaddleCredentials,
-  ProviderCredentials,
-} from './provider-credentials';
 
 const PADDLE_API_KEY = `pdl_sdbx_apikey_${'k'.repeat(53)}`;
 const PADDLE_WEBHOOK_SECRET = 'pdl_ntfset_01jcsyntheticsecret00000001_Wiring';

@@ -1,8 +1,7 @@
-import { RedactedSecret } from '@/provider-accounts/provider-credentials';
-
 import { FakeProvider } from './fake/fake.provider';
 import { PaddleProvider } from './paddle/paddle.provider';
 import { ProviderError } from './payment-provider.port';
+import { RedactedSecret } from './provider-credentials';
 import { ProviderRegistry } from './provider.registry';
 
 const SECRET = new RedactedSecret('s'.repeat(32));

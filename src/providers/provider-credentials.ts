@@ -1,6 +1,6 @@
 import { inspect } from 'node:util';
 
-import type { ProviderCode } from '@/providers/provider.constants';
+import type { ProviderCode } from './provider.constants';
 
 const REDACTED = '[redacted]';
 
