@@ -265,7 +265,7 @@ describe('Payments ingest', () => {
             `select tablename as name from pg_tables where schemaname = 'public' order by tablename`,
           );
 
-          expect(firstRunRows.rows).toHaveLength(10);
+          expect(firstRunRows.rows).toHaveLength(11);
           expect(secondRunRows.rows).toEqual(firstRunRows.rows);
           expect(tables.rows.map(({ name }) => name)).toEqual([
             'api_keys',
@@ -292,7 +292,7 @@ describe('Payments ingest', () => {
 
         await applyMigrations(databaseUrl);
 
-        expect(rowsBefore).toHaveLength(10);
+        expect(rowsBefore).toHaveLength(11);
         expect(await db.execute(migrationRowsSql)).toEqual(rowsBefore);
       },
       SLOW_TEST_TIMEOUT_MS,
@@ -1130,8 +1130,10 @@ describe('Payments ingest', () => {
       await connection.unsafe('begin');
       await connection`
         insert into payments
-          (provider, provider_payment_id, purpose, origin, status, amount_minor, currency)
+          (project_id, provider_account_id, provider, provider_payment_id, purpose, origin, status, amount_minor, currency)
         values (
+          ${input.projectId},
+          ${input.providerAccountId},
           ${input.provider},
           ${input.providerPaymentId},
           ${input.purpose},

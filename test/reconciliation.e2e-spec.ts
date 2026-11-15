@@ -40,6 +40,7 @@ import {
   RECONCILE_LEASE_SECONDS,
 } from '@/payments/payment.constants';
 import { PaymentsService } from '@/payments/payments.service';
+import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
 import { encodeFakeId } from '@/providers/fake/fake-wire-format';
 import { FakeProvider } from '@/providers/fake/fake.provider';
 import { PaddleProvider } from '@/providers/paddle/paddle.provider';
@@ -473,7 +474,7 @@ describe('Reconciliation', () => {
 
       expect((await paymentOf(payment.id)).reconcileAfter).toBeNull();
       expect(warn).toHaveBeenCalledWith(
-        `Payment ${payment.id} still pending at fake after 30 days; reconciliation stopped`,
+        `Payment ${payment.id} still pending at fake account ${SEED_FAKE_ACCOUNT_ID} after 30 days; reconciliation stopped`,
       );
     });
 

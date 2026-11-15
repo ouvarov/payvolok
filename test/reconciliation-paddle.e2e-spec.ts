@@ -12,6 +12,7 @@ import {
   type Payment,
 } from '@/database/schemas/payments.schema';
 import { refunds, type Refund } from '@/database/schemas/refunds.schema';
+import { SEED_PADDLE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
 import {
   adjustmentListFixture,
   adjustmentResponseFixture,
@@ -290,7 +291,9 @@ describe('Reconciliation of Paddle refunds', () => {
           ['succeeded', paymentStatus, 'applied', 'reconciliation', null],
         ]);
         expect(warn).toHaveBeenCalledWith(
-          expect.stringContaining('found only at the provider'),
+          expect.stringContaining(
+            `found only at paddle account ${SEED_PADDLE_ACCOUNT_ID}`,
+          ),
         );
         const versions = await refundVersionsOf(payment.id);
 

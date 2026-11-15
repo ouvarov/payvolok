@@ -1166,9 +1166,11 @@ describe('Refunds ingest', () => {
           await connection.unsafe('begin');
           await connection`
             insert into refunds
-              (payment_id, provider, provider_refund_id, origin, status, amount_minor, currency)
+              (payment_id, project_id, provider_account_id, provider, provider_refund_id, origin, status, amount_minor, currency)
             values (
               ${otherPayment.id},
+              ${otherPayment.projectId},
+              ${otherPayment.providerAccountId},
               'fake',
               ${input.providerRefundId},
               'provider',
