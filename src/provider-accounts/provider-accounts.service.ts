@@ -1,10 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 
-import type {
-  BoundProvider,
-  RefundIdentity,
-} from '@/providers/payment-provider.port';
+import type { BoundProvider } from '@/providers/payment-provider.port';
 import type { PaddleEnvironment } from '@/providers/provider-credentials';
 import type { ProviderCode } from '@/providers/provider.constants';
 import { ProviderRegistry } from '@/providers/provider.registry';
@@ -77,10 +74,6 @@ export class ProviderAccountsService {
       clientToken: credentials.clientToken?.reveal() ?? null,
       environment: credentials.environment,
     };
-  }
-
-  refundIdentityOf(provider: ProviderCode): RefundIdentity {
-    return this.providerRegistry.refundIdentityOf(provider);
   }
 
   private findAccount(accountId: string): Promise<StoredAccount | null> {

@@ -70,21 +70,4 @@ describe('ProviderRegistry', () => {
       kind: 'misconfigured',
     });
   });
-
-  it('reads the refund identity from the adapter capabilities', () => {
-    const referenceProvider = Object.assign(new FakeProvider(), {
-      capabilities: {
-        ...fakeProvider.capabilities,
-        refundIdentity: 'reference' as const,
-      },
-    });
-
-    expect(registry.refundIdentityOf('fake')).toBe('provider');
-    expect(registry.refundIdentityOf('paddle')).toBe('provider');
-    expect(
-      new ProviderRegistry(referenceProvider, paddleProvider).refundIdentityOf(
-        'fake',
-      ),
-    ).toBe('reference');
-  });
 });

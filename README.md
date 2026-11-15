@@ -129,6 +129,7 @@ Refused before the provider is called, storing nothing under the key:
 - `409 payment_not_refundable` unless the payment is `succeeded` or `partially_refunded`.
 - `422 refund_amount_exceeds_remaining` when the amount is larger than the payment minus its `pending` and `succeeded` refunds.
 - `409 refund_in_progress` while another key's refund of the same payment waits for the provider.
+- `503 provider_unavailable` with the `paymentId` when the payment's provider account cannot be loaded, for example its credentials do not resolve. No refund row is written, so a retry with the same key is safe.
 
 When the provider refuses the refund the answer is `422 refund_rejected`; when it cannot be reached, is set up wrong or does not return a refund id it is `503 provider_unavailable` with the `paymentId`. A provider that identifies refunds by our id gets a `pending` refund row before the call; a refusal or a setup error marks it `failed`, an outage leaves it `pending`, because the refund may still have happened. A status a provider webhook already reported is kept. A provider that identifies refunds by its own id gets the row only after it answers.
 

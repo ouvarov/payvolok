@@ -7,7 +7,6 @@ import {
   ProviderError,
   type BoundProvider,
   type PaymentProvider,
-  type RefundIdentity,
 } from './payment-provider.port';
 import type {
   CredentialsOf,
@@ -50,10 +49,6 @@ export class ProviderRegistry {
       case 'paddle':
         return boundProviderOf(account, this.adapters.paddle, credentials);
     }
-  }
-
-  refundIdentityOf(code: ProviderCode): RefundIdentity {
-    return this.adapters[code].capabilities.refundIdentity;
   }
 }
 

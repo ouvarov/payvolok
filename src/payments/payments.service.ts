@@ -326,6 +326,10 @@ export class PaymentsService {
     );
   }
 
+  findPayment(paymentId: string): Promise<Payment | null> {
+    return this.paymentsRepository.findById(paymentId);
+  }
+
   lockPayment(
     tx: DatabaseTransaction,
     paymentId: string,

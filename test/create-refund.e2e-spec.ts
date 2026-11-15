@@ -24,6 +24,7 @@ import { IDEMPOTENCY_LEASE_SECONDS } from '@/idempotency/idempotency.constants';
 import { IdempotencyRepository } from '@/idempotency/idempotency.repository';
 import { PaymentsRepository } from '@/payments/payments.repository';
 import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
+import { ProviderAccountsService } from '@/provider-accounts/provider-accounts.service';
 import type { FakeCredentials } from '@/providers/provider-credentials';
 import { encodeFakeId } from '@/providers/fake/fake-wire-format';
 import { FakeProvider } from '@/providers/fake/fake.provider';
@@ -511,6 +512,35 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
         { amountMinor: REFUND_AMOUNT_MINOR },
         key,
       ).expect(201);
+    });
+
+    it('answers 503 when the payment account does not bind, reserving nothing, then refunds under the same key', async () => {
+      const { error } = muteLogs();
+      useReferenceIdentity();
+      const payment = await insertPayment();
+      const key = newKey();
+      const body = { amountMinor: REFUND_AMOUNT_MINOR };
+      const bind = jest
+        .spyOn(app.get(ProviderAccountsService), 'bind')
+        .mockRejectedValue(new Error('account lookup failed'));
+
+      const response = await postRefund(payment.id, body, key).expect(503);
+
+      expect(response.body).toEqual({
+        statusCode: 503,
+        code: 'provider_unavailable',
+        message: 'The payment provider is not available',
+        paymentId: payment.id,
+      });
+      expect(await refundRowsOf(payment.id)).toEqual([]);
+      await expectNothingStored(key);
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining(
+          `provider account ${SEED_FAKE_ACCOUNT_ID} did not bind: Error`,
+        ),
+      );
+      bind.mockRestore();
+      await postRefund(payment.id, body, key).expect(201);
     });
 
     it.each(['created', 'pending', 'failed', 'expired', 'refunded'] as const)(

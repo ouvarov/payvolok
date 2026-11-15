@@ -4,6 +4,7 @@ import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 
 import { ApiException, type ApiErrorBody } from '@/common/errors/api-exception';
 import type { DatabaseTransaction } from '@/database/drizzle';
+import { describeError } from '@/database/postgres-errors';
 import type { Payment } from '@/database/schemas/payments.schema';
 import type {
   IdempotentRequest,
@@ -18,6 +19,7 @@ import { accountIdOf } from '@/payments/payment-account';
 import { PaymentsService } from '@/payments/payments.service';
 import { ProviderAccountsService } from '@/provider-accounts/provider-accounts.service';
 import type {
+  BoundProvider,
   CreatedRefund,
   ProviderErrorKind,
   RefundIdentity,
@@ -71,6 +73,13 @@ const providerUnavailableResponseOf = (paymentId: string): StoredResponse =>
     code: 'provider_unavailable',
     message: 'The payment provider did not confirm the refund',
     paymentId,
+  });
+
+const paymentNotFound = (): ApiException =>
+  new ApiException({
+    statusCode: HttpStatus.NOT_FOUND,
+    code: 'payment_not_found',
+    message: 'Payment not found',
   });
 
 const REFUND_REJECTED_RESPONSE = errorResponseOf({
@@ -133,9 +142,20 @@ export class RefundCreationService {
   ): Promise<IdempotentResponse> {
     const normalizedPaymentId = paymentId.toLowerCase();
     const request = requestOf(idempotencyKey, normalizedPaymentId, dto);
+    // Before the bind: a retry of a finished refund gets its stored answer whatever the account's state.
+    const replayed = await this.idempotencyService.findReplay(request);
+    if (replayed) return replayed;
+
+    const provider = await this.boundProviderOfPayment(normalizedPaymentId);
     const claim = await this.idempotencyService.claim(request, {
       onClaimed: (tx) =>
-        this.reserveRefund(tx, request, normalizedPaymentId, dto.amountMinor),
+        this.reserveRefund(
+          tx,
+          request,
+          normalizedPaymentId,
+          provider,
+          dto.amountMinor,
+        ),
       // A refund the provider may have made must not be failed by us.
       onInterrupted: (tx, claimedPaymentId) =>
         this.recordUnconfirmed(tx, claimedPaymentId),
@@ -151,7 +171,7 @@ export class RefundCreationService {
     }
 
     const reservation = claim.claimed;
-    const outcome = await this.callProvider(reservation);
+    const outcome = await this.callProvider(provider, reservation);
     const { response, isLeaseLost } = await this.idempotencyService.complete(
       request,
       reservation.paymentId,
@@ -167,10 +187,33 @@ export class RefundCreationService {
     return response;
   }
 
+  // A payment's account never changes, so the account bound before the claim is the locked payment's.
+  private async boundProviderOfPayment(
+    paymentId: string,
+  ): Promise<BoundProvider> {
+    const payment = await this.paymentsService.findPayment(paymentId);
+    if (!payment) throw paymentNotFound();
+
+    try {
+      return await this.providerAccountsService.bind(accountIdOf(payment));
+    } catch (error) {
+      this.logger.error(
+        `Refund of payment ${payment.id}: its provider account ${String(payment.providerAccountId)} did not bind: ${describeError(error)}`,
+      );
+      throw new ApiException({
+        statusCode: HttpStatus.SERVICE_UNAVAILABLE,
+        code: 'provider_unavailable',
+        message: 'The payment provider is not available',
+        paymentId: payment.id,
+      });
+    }
+  }
+
   private async reserveRefund(
     tx: DatabaseTransaction,
     request: IdempotentRequest,
     paymentId: string,
+    provider: BoundProvider,
     amountMinor: number,
   ): Promise<RefundReservation> {
     const payment = await this.lockRefundablePayment(tx, paymentId);
@@ -180,11 +223,9 @@ export class RefundCreationService {
     const reservation: RefundReservation = {
       paymentId: payment.id,
       refundId: randomUUID(),
-      refundIdentity: this.providerAccountsService.refundIdentityOf(
-        payment.provider,
-      ),
+      refundIdentity: provider.capabilities.refundIdentity,
       provider: payment.provider,
-      providerAccountId: accountIdOf(payment),
+      providerAccountId: provider.accountId,
       providerPaymentId: payment.providerPaymentId,
       amountMinor,
       currency: payment.currency,
@@ -205,13 +246,7 @@ export class RefundCreationService {
     paymentId: string,
   ): Promise<RefundablePayment> {
     const payment = await this.paymentsService.lockPayment(tx, paymentId);
-    if (!payment) {
-      throw new ApiException({
-        statusCode: HttpStatus.NOT_FOUND,
-        code: 'payment_not_found',
-        message: 'Payment not found',
-      });
-    }
+    if (!payment) throw paymentNotFound();
     if (!isRefundable(payment)) {
       throw new ApiException({
         statusCode: HttpStatus.CONFLICT,
@@ -262,12 +297,10 @@ export class RefundCreationService {
   }
 
   private async callProvider(
+    provider: BoundProvider,
     reservation: RefundReservation,
   ): Promise<ProviderOutcome> {
     try {
-      const provider = await this.providerAccountsService.bind(
-        reservation.providerAccountId,
-      );
       const created = await provider.refund({
         reference: reservation.refundId,
         providerPaymentId: reservation.providerPaymentId,
