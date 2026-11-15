@@ -1,4 +1,14 @@
-import { ProviderError, type RefundInput } from '../payment-provider.port';
+import {
+  RedactedSecret,
+  type PaddleCredentials,
+} from '@/provider-accounts/provider-credentials';
+
+import {
+  ProviderError,
+  type BoundProvider,
+  type RefundInput,
+} from '../payment-provider.port';
+import { boundProviderOf } from '../bound-provider';
 
 import {
   adjustmentEventFixture,
@@ -19,7 +29,12 @@ type FetchMock = jest.Mock<Promise<Response>, Parameters<typeof fetch>>;
 
 const API_KEY = `pdl_sdbx_apikey_${'k'.repeat(53)}`;
 const WEBHOOK_SECRET = 'pdl_ntfset_01jcsyntheticsecret00000001_AbCdEf';
+const OTHER_WEBHOOK_SECRET = 'pdl_ntfset_01jcsyntheticsecret00000002_GhIjKl';
 const NOW_EPOCH_MS = 1_762_855_200_000;
+const ACCOUNT = {
+  id: '0b9d6f0e-5a4b-4c1e-9f3a-aaaaaaaaaaaa',
+  projectId: '0b9d6f0e-5a4b-4c1e-9f3a-bbbbbbbbbbbb',
+};
 const TRANSACTION_ID = 'txn_01jcsyntheticpayment000001';
 const LINE_ITEM_ID = 'txnitm_01jcsyntheticlineitem00001';
 const ADJUSTMENT_ID = 'adj_01jcsyntheticrefund0000001';
@@ -59,14 +74,25 @@ const fetchAnswering = (...responses: Response[]): FetchMock => {
   });
 };
 
+const credentialsWith = (
+  overrides: Partial<PaddleCredentials> = {},
+): PaddleCredentials => ({
+  provider: 'paddle',
+  environment: 'sandbox',
+  apiKey: new RedactedSecret(API_KEY),
+  webhookSecrets: [new RedactedSecret(WEBHOOK_SECRET)],
+  clientToken: null,
+  ...overrides,
+});
+
 const providerWith = (
   fetchFn: FetchMock,
-  config: Partial<ConstructorParameters<typeof PaddleProvider>[0]> = {},
-): PaddleProvider =>
-  new PaddleProvider(
-    { apiKey: API_KEY, webhookSecret: WEBHOOK_SECRET, ...config },
-    fetchFn,
-    () => NOW_EPOCH_MS,
+  overrides: Partial<PaddleCredentials> = {},
+): BoundProvider =>
+  boundProviderOf(
+    ACCOUNT,
+    new PaddleProvider(fetchFn, () => NOW_EPOCH_MS),
+    credentialsWith(overrides),
   );
 
 const requestOf = (fetchFn: FetchMock, index: number) => {
@@ -114,7 +140,7 @@ const adjustmentWithStatus = (status: string) => {
   return fixture;
 };
 
-const parse = (provider: PaddleProvider, body: unknown) =>
+const parse = (provider: BoundProvider, body: unknown) =>
   provider.parseWebhook(
     signedPaddleWebhook(body, WEBHOOK_SECRET, NOW_EPOCH_MS),
   );
@@ -170,6 +196,35 @@ describe('PaddleProvider', () => {
         ],
         currency_code: 'USD',
         custom_data: { reference: REFERENCE },
+      });
+    });
+
+    it('sends each call with the key and API base of the credentials it gets', async () => {
+      const fetchFn = fetchAnswering(
+        jsonResponse(createdTransaction(), 201),
+        jsonResponse(createdTransaction(), 201),
+      );
+      const provider = new PaddleProvider(fetchFn, () => NOW_EPOCH_MS);
+      const liveKey = `pdl_live_apikey_${'l'.repeat(53)}`;
+
+      await provider.createPayment(
+        credentialsWith({
+          environment: 'live',
+          apiKey: new RedactedSecret(liveKey),
+        }),
+        PAYMENT_INPUT,
+      );
+      await provider.createPayment(credentialsWith(), PAYMENT_INPUT);
+
+      const [[liveUrl, liveInit], [sandboxUrl, sandboxInit]] =
+        fetchFn.mock.calls;
+      expect(liveUrl).toBe('https://api.paddle.com/transactions');
+      expect(liveInit?.headers).toMatchObject({
+        Authorization: `Bearer ${liveKey}`,
+      });
+      expect(sandboxUrl).toBe('https://sandbox-api.paddle.com/transactions');
+      expect(sandboxInit?.headers).toMatchObject({
+        Authorization: `Bearer ${API_KEY}`,
       });
     });
 
@@ -848,9 +903,26 @@ describe('PaddleProvider', () => {
       ).resolves.toBe(false);
     });
 
+    it('accepts a delivery signed with any of the secrets', async () => {
+      const provider = providerWith(fetchAnswering(), {
+        webhookSecrets: [
+          new RedactedSecret(OTHER_WEBHOOK_SECRET),
+          new RedactedSecret(WEBHOOK_SECRET),
+        ],
+      });
+
+      for (const secret of [OTHER_WEBHOOK_SECRET, WEBHOOK_SECRET]) {
+        await expect(
+          provider.verifyWebhook(
+            signedPaddleWebhook(body, secret, NOW_EPOCH_MS),
+          ),
+        ).resolves.toBe(true);
+      }
+    });
+
     it('rejects when no secret is configured, so the delivery gets a 503', async () => {
       const rejection = await rejectionOf(
-        providerWith(fetchAnswering(), { webhookSecret: null }).verifyWebhook(
+        providerWith(fetchAnswering(), { webhookSecrets: [] }).verifyWebhook(
           signedPaddleWebhook(body, WEBHOOK_SECRET, NOW_EPOCH_MS),
         ),
       );

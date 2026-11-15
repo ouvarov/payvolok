@@ -37,6 +37,24 @@ export default tseslint.config(
     },
   },
   {
+    files: ['src/**/*.ts', 'test/**/*.ts', 'scripts/**/*.ts'],
+    ignores: ['src/providers/**', 'src/provider-accounts/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/provider.registry'],
+              message:
+                'Bind a provider account through ProviderAccountsService instead.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: [
       'src/database/migrate.ts',
       'src/database/seed-fake-account.ts',

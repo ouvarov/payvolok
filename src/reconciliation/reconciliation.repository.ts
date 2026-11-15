@@ -8,10 +8,10 @@ import {
   RECONCILABLE_PAYMENT_STATUSES,
   RECONCILE_LEASE_SECONDS,
 } from '@/payments/payment.constants';
-import type { ProviderCode } from '@/providers/provider.constants';
+import { accountIdOf } from '@/payments/payment-account';
 
-// The unit a provider outage is skipped by; a provider account once there is more than one.
-type ReconciliationScopeKey = ProviderCode;
+// The provider account id: an outage or a credentials failure skips only that account.
+type ReconciliationScopeKey = string;
 
 type ClaimedPayment = Pick<
   Payment,
@@ -26,14 +26,14 @@ type ClaimedPayment = Pick<
 > & { reconciledAt: Date };
 
 const reconciliationScopeKeyOf = (
-  payment: Pick<ClaimedPayment, 'provider'>,
-): ReconciliationScopeKey => payment.provider;
+  payment: Pick<ClaimedPayment, 'id' | 'providerAccountId'>,
+): ReconciliationScopeKey => accountIdOf(payment);
 
 const outsideScopes = (scopeKeys: readonly ReconciliationScopeKey[]): SQL =>
   scopeKeys.length === 0
     ? sql`true`
-    : sql`provider NOT IN (${sql.join(
-        scopeKeys.map((scopeKey) => sql`${scopeKey}`),
+    : sql`provider_account_id NOT IN (${sql.join(
+        scopeKeys.map((scopeKey) => sql`${scopeKey}::uuid`),
         sql`, `,
       )})`;
 

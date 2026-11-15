@@ -6,11 +6,8 @@ import type { DatabaseTransaction } from '@/database/drizzle';
 import type { IdempotencyService } from '@/idempotency/idempotency.service';
 import { SEED_PROJECT_ID } from '@/projects/projects.constants';
 import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
-import type {
-  AccountRef,
-  ProviderAccountsService,
-} from '@/provider-accounts/provider-accounts.service';
-import type { ProviderRegistry } from '@/providers/provider.registry';
+import type { ProviderAccountsService } from '@/provider-accounts/provider-accounts.service';
+import type { BoundProvider } from '@/providers/payment-provider.port';
 
 import type { CreatePaymentDto } from './dto/create-payment.dto';
 import { PaymentCreationService } from './payment-creation.service';
@@ -28,21 +25,25 @@ const DTO: CreatePaymentDto = {
   returnUrl: 'https://shop.example/return',
 };
 
-const SEED_FAKE_ACCOUNT: AccountRef = {
-  id: SEED_FAKE_ACCOUNT_ID,
+const SEED_FAKE_PROVIDER = {
+  accountId: SEED_FAKE_ACCOUNT_ID,
   projectId: SEED_PROJECT_ID,
-  provider: 'fake',
-};
+  code: 'fake',
+} as BoundProvider;
 
 type Collaborators = {
-  activeAccountFor: jest.Mock;
+  findReplay: jest.Mock;
+  bindForNewPayment: jest.Mock;
   claim: jest.Mock;
   recordRequested: jest.Mock;
-  get: jest.Mock;
 };
 
-const collaboratorsWith = (account: AccountRef | null): Collaborators => ({
-  activeAccountFor: jest.fn().mockResolvedValue(account),
+const collaboratorsWith = (
+  provider: BoundProvider | null,
+  replay: unknown = null,
+): Collaborators => ({
+  findReplay: jest.fn().mockResolvedValue(replay),
+  bindForNewPayment: jest.fn().mockResolvedValue(provider),
   claim: jest.fn(
     async (
       _request: unknown,
@@ -58,19 +59,20 @@ const collaboratorsWith = (account: AccountRef | null): Collaborators => ({
     },
   ),
   recordRequested: jest.fn().mockResolvedValue({ id: PAYMENT_ID }),
-  get: jest.fn(),
 });
 
 const serviceWith = (collaborators: Collaborators): PaymentCreationService =>
   new PaymentCreationService(
-    { claim: collaborators.claim } as unknown as IdempotencyService,
+    {
+      findReplay: collaborators.findReplay,
+      claim: collaborators.claim,
+    } as unknown as IdempotencyService,
     {
       recordRequested: collaborators.recordRequested,
     } as unknown as PaymentsService,
     {
-      activeAccountFor: collaborators.activeAccountFor,
+      bindForNewPayment: collaborators.bindForNewPayment,
     } as unknown as ProviderAccountsService,
-    { get: collaborators.get } as unknown as ProviderRegistry,
     {
       get: () => 'https://payvolok.test',
     } as unknown as ConfigService<Env, true>,
@@ -90,17 +92,16 @@ describe('PaymentCreationService', () => {
       code: 'provider_not_available',
       message: 'The provider is not available for this project',
     });
-    expect(collaborators.activeAccountFor).toHaveBeenCalledWith(
+    expect(collaborators.bindForNewPayment).toHaveBeenCalledWith(
       SEED_PROJECT_ID,
       'fake',
     );
     expect(collaborators.claim).not.toHaveBeenCalled();
     expect(collaborators.recordRequested).not.toHaveBeenCalled();
-    expect(collaborators.get).not.toHaveBeenCalled();
   });
 
-  it('records the payment under the active account of the seed project', async () => {
-    const collaborators = collaboratorsWith(SEED_FAKE_ACCOUNT);
+  it('records the payment under the bound account of the seed project', async () => {
+    const collaborators = collaboratorsWith(SEED_FAKE_PROVIDER);
 
     await expect(
       serviceWith(collaborators).createPayment('key-1', DTO),
@@ -113,5 +114,19 @@ describe('PaymentCreationService', () => {
       amountMinor: 1000,
       currency: 'USD',
     });
+  });
+
+  it('replays a completed key before it checks the account', async () => {
+    const collaborators = collaboratorsWith(null, STORED_RESPONSE);
+
+    await expect(
+      serviceWith(collaborators).createPayment('key-1', DTO),
+    ).resolves.toBe(STORED_RESPONSE);
+
+    expect(collaborators.findReplay).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'api:create_payment', key: 'key-1' }),
+    );
+    expect(collaborators.bindForNewPayment).not.toHaveBeenCalled();
+    expect(collaborators.claim).not.toHaveBeenCalled();
   });
 });

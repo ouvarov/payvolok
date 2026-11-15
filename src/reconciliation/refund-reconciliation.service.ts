@@ -4,7 +4,7 @@ import type { Refund } from '@/database/schemas/refunds.schema';
 import type { PaymentStatus } from '@/payments/payment.constants';
 import { IngestRejectedError } from '@/payments/payments.service';
 import type {
-  PaymentProvider,
+  BoundProvider,
   ProviderRefundRecord,
   RefundIdentity,
 } from '@/providers/payment-provider.port';
@@ -12,7 +12,6 @@ import {
   providerFailureOf,
   type ProviderFailure,
 } from '@/providers/provider-failure';
-import type { ProviderCode } from '@/providers/provider.constants';
 import {
   RefundsService,
   type IngestRefundInput,
@@ -23,7 +22,6 @@ import { RECONCILIATION_REASON } from './reconciliation.constants';
 
 type RefundablePayment = {
   id: string;
-  provider: ProviderCode;
   providerPaymentId: string;
 };
 
@@ -61,14 +59,19 @@ const askProvider = async <Value>(
   }
 };
 
+const labelOf = (provider: BoundProvider): string =>
+  `${provider.code} account ${provider.accountId}`;
+
 const refundInputOf = (
+  provider: BoundProvider,
   payment: RefundablePayment,
   refundIdentity: RefundIdentity,
   refundReference: string | null,
   providerRefund: ProviderRefund,
 ): IngestRefundInput => ({
   reference: payment.id,
-  provider: payment.provider,
+  provider: provider.code,
+  providerAccountId: provider.accountId,
   providerPaymentId: payment.providerPaymentId,
   refundReference,
   providerRefundId: providerRefund.providerRefundId,
@@ -104,7 +107,7 @@ export class RefundReconciliationService {
 
   // The adapter comes from the caller, which owns the one way to resolve it.
   reconcile(
-    provider: PaymentProvider,
+    provider: BoundProvider,
     payment: RefundablePayment,
   ): Promise<RefundCheck> {
     return provider.capabilities.refundIdentity === 'provider'
@@ -114,19 +117,22 @@ export class RefundReconciliationService {
 
   // A refund whose POST timed out exists only at the provider, so its list is the source.
   private async reconcileListed(
-    provider: PaymentProvider,
+    provider: BoundProvider,
     payment: RefundablePayment,
   ): Promise<RefundCheck> {
     const answer = await askProvider(() =>
       provider.listRefunds(payment.providerPaymentId),
     );
-    if (!answer.isAnswered) return this.unansweredCheckOf(payment, answer);
+    if (!answer.isAnswered) {
+      return this.unansweredCheckOf(provider, payment, answer);
+    }
 
     const ingested: IngestRefundResult[] = [];
     for (const record of answer.value) {
       const result = await this.ingest(
+        provider,
         payment,
-        refundInputOf(payment, 'provider', null, record),
+        refundInputOf(provider, payment, 'provider', null, record),
       );
       if (result) ingested.push(result);
     }
@@ -136,7 +142,7 @@ export class RefundReconciliationService {
 
   // Our own pending rows carry the reference the provider knows them by.
   private async reconcilePending(
-    provider: PaymentProvider,
+    provider: BoundProvider,
     payment: RefundablePayment,
   ): Promise<RefundCheck> {
     const pendingRefunds = await this.refundsService.findPendingRefunds(
@@ -147,15 +153,16 @@ export class RefundReconciliationService {
     for (const refund of pendingRefunds) {
       const answer = await this.askRefundStatus(provider, payment, refund);
       if (!answer.isAnswered) {
-        const check = this.unansweredCheckOf(payment, answer);
+        const check = this.unansweredCheckOf(provider, payment, answer);
         if (!check.isAnswered) return check;
         continue;
       }
       if (!answer.value) continue;
 
       const result = await this.ingest(
+        provider,
         payment,
-        refundInputOf(payment, 'reference', refund.id, answer.value),
+        refundInputOf(provider, payment, 'reference', refund.id, answer.value),
       );
       if (result) ingested.push(result);
     }
@@ -164,7 +171,7 @@ export class RefundReconciliationService {
   }
 
   private async askRefundStatus(
-    provider: PaymentProvider,
+    provider: BoundProvider,
     payment: RefundablePayment,
     refund: Refund,
   ): Promise<ProviderAnswer<ProviderRefund | null>> {
@@ -181,13 +188,13 @@ export class RefundReconciliationService {
     const status = answer.value;
     if (status === null) {
       this.logger.warn(
-        `Refund ${refund.id} of payment ${payment.id} is unknown to ${payment.provider}; left pending`,
+        `Refund ${refund.id} of payment ${payment.id} is unknown to ${labelOf(provider)}; left pending`,
       );
       return { isAnswered: true, value: null };
     }
     if (status.resource !== 'refund') {
       this.logger.error(
-        `Refund ${refund.id} of payment ${payment.id}: ${payment.provider} answered with a ${status.resource}`,
+        `Refund ${refund.id} of payment ${payment.id}: ${labelOf(provider)} answered with a ${status.resource}`,
       );
       return { isAnswered: true, value: null };
     }
@@ -196,24 +203,26 @@ export class RefundReconciliationService {
   }
 
   private unansweredCheckOf(
+    provider: BoundProvider,
     payment: RefundablePayment,
     { failure }: Unanswered,
   ): RefundCheck {
     if (failure.kind !== 'rejected') return { isAnswered: false, failure };
 
     this.logger.error(
-      `Refunds of payment ${payment.id} were rejected by ${payment.provider}: ${failure.detail}`,
+      `Refunds of payment ${payment.id} were rejected by ${labelOf(provider)}: ${failure.detail}`,
     );
     return UNCHANGED;
   }
 
   private async ingest(
+    provider: BoundProvider,
     payment: RefundablePayment,
     input: IngestRefundInput,
   ): Promise<IngestRefundResult | null> {
     try {
       const result = await this.refundsService.ingestRefund(input);
-      this.logResult(payment, result);
+      this.logResult(provider, payment, result);
 
       return result;
     } catch (error) {
@@ -227,6 +236,7 @@ export class RefundReconciliationService {
   }
 
   private logResult(
+    provider: BoundProvider,
     payment: RefundablePayment,
     {
       refund,
@@ -237,7 +247,7 @@ export class RefundReconciliationService {
   ): void {
     if (refundOutcome === 'created') {
       this.logger.warn(
-        `Refund ${refund.id} (${refund.providerRefundId}) of payment ${payment.id} found only at the provider ${payment.provider}; recorded ${refund.status}`,
+        `Refund ${refund.id} (${refund.providerRefundId}) of payment ${payment.id} found only at ${labelOf(provider)}; recorded ${refund.status}`,
       );
     } else if (refundOutcome === 'applied') {
       this.logger.log(

@@ -3,7 +3,7 @@ import { Module } from '@nestjs/common';
 import { DatabaseModule } from '@/database/database.module';
 import { IdempotencyModule } from '@/idempotency/idempotency.module';
 import { PaymentsModule } from '@/payments/payments.module';
-import { ProvidersModule } from '@/providers/providers.module';
+import { ProviderAccountsModule } from '@/provider-accounts/provider-accounts.module';
 import { RefundsModule } from '@/refunds/refunds.module';
 
 import { ReconciliationRepository } from './reconciliation.repository';
@@ -16,7 +16,7 @@ import { RefundReconciliationService } from './refund-reconciliation.service';
     DatabaseModule,
     IdempotencyModule,
     PaymentsModule,
-    ProvidersModule,
+    ProviderAccountsModule,
     RefundsModule,
   ],
   providers: [

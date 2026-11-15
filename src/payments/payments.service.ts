@@ -6,7 +6,6 @@ import { ApiException } from '@/common/errors/api-exception';
 import type { DatabaseTransaction } from '@/database/drizzle';
 import { describeError, isUniqueViolationOf } from '@/database/postgres-errors';
 import type { Payment } from '@/database/schemas/payments.schema';
-import { SEED_PROJECT_ID } from '@/projects/projects.constants';
 import type { CreatedPayment } from '@/providers/payment-provider.port';
 import type { ProviderCode } from '@/providers/provider.constants';
 
@@ -44,7 +43,8 @@ type ApiPaymentRef = { paymentId: string; provider: ProviderCode };
 type IngestPaymentInput = {
   reference: string | null;
   provider: ProviderCode;
-  providerAccountId: string | null;
+  projectId: string;
+  providerAccountId: string;
   providerPaymentId: string;
   status: IngestablePaymentStatus;
   amountMinor: number;
@@ -61,8 +61,10 @@ type IngestPaymentResult = {
 
 type PaymentLookup = Pick<
   IngestPaymentInput,
-  'reference' | 'provider' | 'providerPaymentId'
+  'reference' | 'provider' | 'providerAccountId' | 'providerPaymentId'
 >;
+
+type ReceivedRefs = Pick<PaymentLookup, 'reference' | 'providerPaymentId'>;
 
 type ApplyStatusInput = {
   payment: Payment;
@@ -118,7 +120,7 @@ export class PaymentProviderRefMismatchError extends IngestRejectedError {
 
   constructor(
     stored: Pick<Payment, 'id' | 'providerPaymentId'>,
-    received: Pick<IngestPaymentInput, 'providerPaymentId'>,
+    received: Pick<ReceivedRefs, 'providerPaymentId'>,
   ) {
     super(
       `Payment ${stored.id} provider ref mismatch: stored ${stored.providerPaymentId}, received ${received.providerPaymentId}`,
@@ -134,7 +136,7 @@ export class PaymentProviderRefOwnedError extends IngestRejectedError {
   readonly reference: string | null;
   readonly providerPaymentId: string;
 
-  constructor(received: PaymentLookup, options?: ErrorOptions) {
+  constructor(received: ReceivedRefs, options?: ErrorOptions) {
     super(
       `Payment ${received.reference} cannot take provider ref ${received.providerPaymentId}: another payment owns it`,
       options,
@@ -150,13 +152,21 @@ export class PaymentNotFoundError extends Error {
   readonly reference: string | null;
   readonly providerPaymentId: string;
 
-  constructor(received: PaymentLookup) {
+  constructor(received: ReceivedRefs) {
     super(
       `No payment for reference ${received.reference} or provider ref ${received.providerPaymentId} yet`,
     );
     this.name = 'PaymentNotFoundError';
     this.reference = received.reference;
     this.providerPaymentId = received.providerPaymentId;
+  }
+}
+
+// Neither rejected nor retried: an event for another account's payment is ignored at once.
+export class ForeignAccountError extends Error {
+  constructor(subject: string) {
+    super(`${subject} belongs to another account`);
+    this.name = 'ForeignAccountError';
   }
 }
 
@@ -238,7 +248,6 @@ export class PaymentsService {
     const payment = await this.lockApiPayment(tx, ref);
     const linkedPayment = await this.linkProviderPaymentId(tx, payment, {
       reference: payment.id,
-      provider: ref.provider,
       providerPaymentId: created.providerPaymentId,
     });
 
@@ -333,11 +342,7 @@ export class PaymentsService {
       return this.linkProviderPaymentId(tx, referencedPayment, lookup);
     }
 
-    return this.paymentsRepository.findByProviderRefForUpdate(
-      tx,
-      lookup.provider,
-      lookup.providerPaymentId,
-    );
+    return this.findByProviderRefForUpdate(tx, lookup);
   }
 
   // Best effort: the read already succeeded, so a failed nudge only delays the next check.
@@ -372,12 +377,7 @@ export class PaymentsService {
         : null;
     if (createdPayment) return { payment: createdPayment, outcome: 'created' };
 
-    const existingPayment =
-      await this.paymentsRepository.findByProviderRefForUpdate(
-        tx,
-        input.provider,
-        input.providerPaymentId,
-      );
+    const existingPayment = await this.findByProviderRefForUpdate(tx, input);
     if (!existingPayment) throw new PaymentNotFoundError(input);
 
     return this.applyToExisting(tx, existingPayment, input);
@@ -441,7 +441,7 @@ export class PaymentsService {
     input: IngestPaymentInput,
   ): Promise<Payment | null> {
     const createdPayment = await this.paymentsRepository.insertIfAbsent(tx, {
-      projectId: SEED_PROJECT_ID,
+      projectId: input.projectId,
       providerAccountId: input.providerAccountId,
       provider: input.provider,
       providerPaymentId: input.providerPaymentId,
@@ -474,17 +474,46 @@ export class PaymentsService {
     const reference = paymentReferenceSchema.safeParse(input.reference);
     if (!reference.success) return null;
 
-    return this.paymentsRepository.findByIdAndProviderForUpdate(
+    const payment = await this.paymentsRepository.findByIdAndProviderForUpdate(
       tx,
       reference.data,
       input.provider,
     );
+    if (payment && payment.providerAccountId !== input.providerAccountId) {
+      throw new ForeignAccountError(`Reference ${reference.data}`);
+    }
+
+    return payment;
+  }
+
+  private async findByProviderRefForUpdate(
+    tx: DatabaseTransaction,
+    lookup: PaymentLookup,
+  ): Promise<Payment | null> {
+    const payment = await this.paymentsRepository.findByProviderRefForUpdate(
+      tx,
+      lookup.providerAccountId,
+      lookup.providerPaymentId,
+    );
+    if (payment) return payment;
+
+    const isForeign = await this.paymentsRepository.hasProviderRefElsewhere(
+      tx,
+      lookup,
+    );
+    if (isForeign) {
+      throw new ForeignAccountError(
+        `Provider payment ${lookup.providerPaymentId}`,
+      );
+    }
+
+    return null;
   }
 
   private async linkProviderPaymentId(
     tx: DatabaseTransaction,
     payment: Payment,
-    input: PaymentLookup,
+    input: ReceivedRefs,
   ): Promise<Payment> {
     if (payment.providerPaymentId === input.providerPaymentId) return payment;
 

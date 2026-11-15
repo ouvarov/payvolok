@@ -1,4 +1,7 @@
+import { inspect } from 'node:util';
+
 import { IDEMPOTENCY_LEASE_SECONDS } from '@/idempotency/idempotency.constants';
+import { RedactedSecret } from '@/provider-accounts/provider-credentials';
 
 import { ProviderError } from '../payment-provider.port';
 
@@ -14,6 +17,10 @@ import {
 } from './paddle-http';
 
 const API_KEY = `pdl_sdbx_apikey_${'k'.repeat(53)}`;
+const SANDBOX_ACCESS = {
+  apiKey: new RedactedSecret(API_KEY),
+  environment: 'sandbox' as const,
+};
 
 const fetchAnswering = (response: Response) =>
   jest.fn<Promise<Response>, Parameters<typeof fetch>>(() =>
@@ -47,7 +54,7 @@ describe('paddle http', () => {
         new Response('{"data":{}}', { status: 201 }),
       );
 
-      const response = await sendPaddleRequest(fetchFn, API_KEY, {
+      const response = await sendPaddleRequest(fetchFn, SANDBOX_ACCESS, {
         method: 'POST',
         path: '/transactions',
         body: { currency_code: 'USD' },
@@ -69,10 +76,27 @@ describe('paddle http', () => {
       expect(init?.signal).toBeInstanceOf(AbortSignal);
     });
 
+    it('sends a live account to the live API with its own key', async () => {
+      const fetchFn = fetchAnswering(new Response('{"data":{}}'));
+      const liveKey = `pdl_live_apikey_${'l'.repeat(53)}`;
+
+      await sendPaddleRequest(
+        fetchFn,
+        { apiKey: new RedactedSecret(liveKey), environment: 'live' },
+        { method: 'GET', path: '/transactions/txn_1' },
+      );
+
+      const [url, init] = fetchFn.mock.calls[0];
+      expect(url).toBe('https://api.paddle.com/transactions/txn_1');
+      expect(init?.headers).toMatchObject({
+        Authorization: `Bearer ${liveKey}`,
+      });
+    });
+
     it('encodes query parameters', async () => {
       const fetchFn = fetchAnswering(new Response('{"data":[]}'));
 
-      await sendPaddleRequest(fetchFn, API_KEY, {
+      await sendPaddleRequest(fetchFn, SANDBOX_ACCESS, {
         method: 'GET',
         path: '/adjustments',
         query: { id: 'adj_1', transaction_id: 'txn_1&x=y' },
@@ -87,7 +111,7 @@ describe('paddle http', () => {
     it('reads a non-JSON body as null', async () => {
       const response = await sendPaddleRequest(
         fetchAnswering(new Response(forbiddenHtmlFixture(), { status: 403 })),
-        API_KEY,
+        SANDBOX_ACCESS,
         { method: 'GET', path: '/transactions/txn_1' },
       );
 
@@ -104,7 +128,7 @@ describe('paddle http', () => {
       );
 
       const rejection = await rejectionOf(
-        sendPaddleRequest(fetchFn, API_KEY, {
+        sendPaddleRequest(fetchFn, SANDBOX_ACCESS, {
           method: 'GET',
           path: '/transactions/txn_1',
         }),
@@ -112,7 +136,8 @@ describe('paddle http', () => {
 
       expect(rejection.kind).toBe('unavailable');
       expect(rejection.providerCode).toBe('paddle');
-      expect(rejection.message).not.toContain(API_KEY);
+      expect(inspect(rejection, { depth: null })).not.toContain(API_KEY);
+      expect(JSON.stringify(rejection.cause)).not.toContain(API_KEY);
     });
   });
 

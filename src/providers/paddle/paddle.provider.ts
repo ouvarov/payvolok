@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { CURRENCY_PATTERN } from '@/common/currency';
+import type { PaddleCredentials } from '@/provider-accounts/provider-credentials';
 
 import type {
   CreatedPayment,
@@ -44,11 +45,6 @@ import {
   type PaddleAdjustment,
   type PaddleRefundableTransaction,
 } from './paddle-wire-format';
-
-type PaddleConfig = {
-  apiKey: string | null;
-  webhookSecret: string | null;
-};
 
 const SIGNATURE_HEADER = 'paddle-signature';
 const PRODUCT_NAME_MAX_LENGTH = 200;
@@ -204,18 +200,20 @@ const unknownBodyEvents = (rawBody: Buffer): ProviderEvents => [
   },
 ];
 
-export class PaddleProvider implements PaymentProvider {
+export class PaddleProvider implements PaymentProvider<PaddleCredentials> {
   readonly code = 'paddle';
   readonly capabilities = PADDLE_CAPABILITIES;
   readonly webhookHeaders = [SIGNATURE_HEADER];
 
   constructor(
-    private readonly config: PaddleConfig,
     private readonly fetchFn: typeof fetch = fetch,
     private readonly nowEpochMs: () => number = Date.now,
   ) {}
 
-  async createPayment(input: CreatePaymentInput): Promise<CreatedPayment> {
+  async createPayment(
+    credentials: PaddleCredentials,
+    input: CreatePaymentInput,
+  ): Promise<CreatedPayment> {
     if (
       !isPositiveAmount(input.amountMinor) ||
       !CURRENCY_PATTERN.test(input.currency)
@@ -223,7 +221,7 @@ export class PaddleProvider implements PaymentProvider {
       throw rejectedError('Payment amount or currency is invalid');
     }
 
-    const response = await this.send({
+    const response = await this.send(credentials, {
       method: 'POST',
       path: '/transactions',
       body: transactionBodyOf(input),
@@ -250,7 +248,10 @@ export class PaddleProvider implements PaymentProvider {
     };
   }
 
-  async refund(input: RefundInput): Promise<CreatedRefund> {
+  async refund(
+    credentials: PaddleCredentials,
+    input: RefundInput,
+  ): Promise<CreatedRefund> {
     if (
       !isPositiveAmount(input.amountMinor) ||
       !CURRENCY_PATTERN.test(input.currency) ||
@@ -261,7 +262,7 @@ export class PaddleProvider implements PaymentProvider {
 
     const transaction = dataOf(
       paddleRefundableTransactionSchema,
-      await this.send({
+      await this.send(credentials, {
         method: 'GET',
         path: `/transactions/${input.providerPaymentId}`,
       }),
@@ -275,7 +276,7 @@ export class PaddleProvider implements PaymentProvider {
 
     // Our refund rows miss an adjustment whose POST timed out, so Paddle's own list decides.
     const refundedMinor = reservedRefundMinorOf(
-      await this.refundAdjustmentsOf(transaction.id),
+      await this.refundAdjustmentsOf(credentials, transaction.id),
     );
     if (
       input.amountMinor >
@@ -286,7 +287,7 @@ export class PaddleProvider implements PaymentProvider {
 
     const adjustment = dataOf(
       paddleAdjustmentSchema,
-      await this.send({
+      await this.send(credentials, {
         method: 'POST',
         path: '/adjustments',
         body: adjustmentBodyOf(transaction, input.amountMinor),
@@ -299,39 +300,54 @@ export class PaddleProvider implements PaymentProvider {
     };
   }
 
-  getStatus(query: StatusQuery): Promise<ResourceStatus | null> {
+  getStatus(
+    credentials: PaddleCredentials,
+    query: StatusQuery,
+  ): Promise<ResourceStatus | null> {
     return query.resource === 'payment'
-      ? this.paymentStatusOf(query.providerPaymentId)
-      : this.refundStatusOf(query);
+      ? this.paymentStatusOf(credentials, query.providerPaymentId)
+      : this.refundStatusOf(credentials, query);
   }
 
   async listRefunds(
+    credentials: PaddleCredentials,
     providerPaymentId: string,
   ): Promise<readonly ProviderRefundRecord[]> {
     if (!TRANSACTION_ID_PATTERN.test(providerPaymentId)) {
       throw rejectedError('Payment id is not a transaction');
     }
 
-    const adjustments = await this.refundAdjustmentsOf(providerPaymentId);
+    const adjustments = await this.refundAdjustmentsOf(
+      credentials,
+      providerPaymentId,
+    );
 
     return adjustments
       .filter(({ transaction_id }) => transaction_id === providerPaymentId)
       .flatMap(refundRecordsOf);
   }
 
-  verifyWebhook(request: WebhookRequest): Promise<boolean> {
-    if (this.config.webhookSecret === null) {
+  // Any of the secrets: Paddle signs with the old one too while a rotation is in progress.
+  verifyWebhook(
+    credentials: PaddleCredentials,
+    request: WebhookRequest,
+  ): Promise<boolean> {
+    if (credentials.webhookSecrets.length === 0) {
       return Promise.reject(
-        paddleError('PADDLE_WEBHOOK_SECRET is not configured', 'misconfigured'),
+        paddleError('paddle webhook secret is not configured', 'misconfigured'),
       );
     }
 
+    const nowEpochMs = this.nowEpochMs();
+
     return Promise.resolve(
-      isSignatureValid(
-        request.headers[SIGNATURE_HEADER],
-        request.rawBody,
-        this.config.webhookSecret,
-        this.nowEpochMs(),
+      credentials.webhookSecrets.some((secret) =>
+        isSignatureValid(
+          request.headers[SIGNATURE_HEADER],
+          request.rawBody,
+          secret.reveal(),
+          nowEpochMs,
+        ),
       ),
     );
   }
@@ -346,11 +362,12 @@ export class PaddleProvider implements PaymentProvider {
   }
 
   private async refundAdjustmentsOf(
+    credentials: PaddleCredentials,
     transactionId: string,
   ): Promise<PaddleAdjustment[]> {
     const page = bodyOf(
       paddleAdjustmentPageSchema,
-      await this.send({
+      await this.send(credentials, {
         method: 'GET',
         path: '/adjustments',
         query: {
@@ -371,11 +388,12 @@ export class PaddleProvider implements PaymentProvider {
   }
 
   private async paymentStatusOf(
+    credentials: PaddleCredentials,
     providerPaymentId: string,
   ): Promise<ResourceStatus | null> {
     if (!TRANSACTION_ID_PATTERN.test(providerPaymentId)) return null;
 
-    const response = await this.send({
+    const response = await this.send(credentials, {
       method: 'GET',
       path: `/transactions/${providerPaymentId}`,
     });
@@ -400,6 +418,7 @@ export class PaddleProvider implements PaymentProvider {
   }
 
   private async refundStatusOf(
+    credentials: PaddleCredentials,
     query: Extract<StatusQuery, { resource: 'refund' }>,
   ): Promise<ResourceStatus | null> {
     const { providerRefundId, providerPaymentId } = query;
@@ -413,7 +432,7 @@ export class PaddleProvider implements PaymentProvider {
 
     const adjustments = dataOf(
       paddleAdjustmentSchema.array(),
-      await this.send({
+      await this.send(credentials, {
         method: 'GET',
         path: '/adjustments',
         query: { id: providerRefundId, transaction_id: providerPaymentId },
@@ -431,15 +450,16 @@ export class PaddleProvider implements PaymentProvider {
     };
   }
 
-  private send(request: PaddleRequest): Promise<PaddleResponse> {
-    if (this.config.apiKey === null) {
+  private send(
+    { apiKey, environment }: PaddleCredentials,
+    request: PaddleRequest,
+  ): Promise<PaddleResponse> {
+    if (apiKey === null) {
       return Promise.reject(
-        paddleError('PADDLE_API_KEY is not configured', 'misconfigured'),
+        paddleError('paddle api key is not configured', 'misconfigured'),
       );
     }
 
-    return sendPaddleRequest(this.fetchFn, this.config.apiKey, request);
+    return sendPaddleRequest(this.fetchFn, { apiKey, environment }, request);
   }
 }
-
-export type { PaddleConfig };

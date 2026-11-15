@@ -3,7 +3,10 @@ import type { ConfigService } from '@nestjs/config';
 
 import type { Env } from '@/config/env.schema';
 import type { IdempotencyService } from '@/idempotency/idempotency.service';
-import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
+import {
+  SEED_FAKE_ACCOUNT_ID,
+  SEED_PADDLE_ACCOUNT_ID,
+} from '@/provider-accounts/provider-accounts.constants';
 
 import {
   IDEMPOTENCY_PURGE_BATCH_SIZE,
@@ -43,13 +46,15 @@ const claimedPaymentWith = (
 
 const CHECKED: ReconcileResult = {
   outcome: 'checked',
-  scopeKey: 'fake',
+  scopeKey: SEED_FAKE_ACCOUNT_ID,
+  provider: 'fake',
   isChanged: false,
 };
 
 const paddleUnavailable: ReconcileResult = {
   outcome: 'provider_failed',
-  scopeKey: 'paddle',
+  scopeKey: SEED_PADDLE_ACCOUNT_ID,
+  provider: 'paddle',
   failure: { kind: 'unavailable', detail: 'paddle is down' },
 };
 
@@ -182,7 +187,11 @@ describe('ReconciliationWorker', () => {
 
     await startedWorker();
 
-    expect(claimNext.mock.calls).toEqual([[[]], [['paddle']], [['paddle']]]);
+    expect(claimNext.mock.calls).toEqual([
+      [[]],
+      [[SEED_PADDLE_ACCOUNT_ID]],
+      [[SEED_PADDLE_ACCOUNT_ID]],
+    ]);
 
     await jest.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
     expect(claimNext).toHaveBeenLastCalledWith([]);
@@ -199,9 +208,15 @@ describe('ReconciliationWorker', () => {
       await worker.drain();
     }
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('paddle'));
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining(`paddle account ${SEED_PADDLE_ACCOUNT_ID}`),
+    );
 
-    reconcile.mockResolvedValue({ ...CHECKED, scopeKey: 'paddle' });
+    reconcile.mockResolvedValue({
+      ...CHECKED,
+      scopeKey: SEED_PADDLE_ACCOUNT_ID,
+      provider: 'paddle',
+    });
     claimNext
       .mockResolvedValueOnce(claimedPaymentWith({ provider: 'paddle' }))
       .mockResolvedValueOnce(claimedPaymentWith({ provider: 'paddle' }));
@@ -209,7 +224,7 @@ describe('ReconciliationWorker', () => {
 
     expect(
       log.mock.calls.filter(([message]) =>
-        String(message).includes('paddle again'),
+        String(message).includes(`${SEED_PADDLE_ACCOUNT_ID} again`),
       ),
     ).toHaveLength(1);
     expect(warn).toHaveBeenCalledTimes(1);
@@ -219,7 +234,8 @@ describe('ReconciliationWorker', () => {
     claimRows(1);
     reconcile.mockResolvedValueOnce({
       outcome: 'provider_failed',
-      scopeKey: 'paddle',
+      scopeKey: SEED_PADDLE_ACCOUNT_ID,
+      provider: 'paddle',
       failure: { kind: 'misconfigured', detail: 'no key' },
     });
 

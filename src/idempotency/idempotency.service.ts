@@ -150,6 +150,21 @@ export class IdempotencyService {
     return this.recover(request, handlers.onInterrupted);
   }
 
+  // For checks that must not turn a finished request's stored answer into a new error.
+  async findReplay(
+    request: IdempotentRequest,
+  ): Promise<IdempotentResponse | null> {
+    const state = await this.idempotencyRepository.findLiveCompleted(request);
+    if (state?.requestHash !== request.requestHash) return null;
+
+    const storedResponse = storedResponseOf(
+      state.responseStatus,
+      state.responseBody,
+    );
+
+    return storedResponse ? { ...storedResponse, isReplayed: true } : null;
+  }
+
   // The key is locked before record locks the payment, in the order recovery
   // takes them, so the two cannot deadlock.
   complete(

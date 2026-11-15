@@ -15,11 +15,9 @@ import {
   type IdempotentResponse,
 } from '@/idempotency/idempotency.service';
 import { SEED_PROJECT_ID } from '@/projects/projects.constants';
-import {
-  ProviderAccountsService,
-  type AccountRef,
-} from '@/provider-accounts/provider-accounts.service';
+import { ProviderAccountsService } from '@/provider-accounts/provider-accounts.service';
 import type {
+  BoundProvider,
   CreatedPayment,
   ProviderErrorKind,
 } from '@/providers/payment-provider.port';
@@ -28,7 +26,6 @@ import {
   providerFailureOf,
   type ProviderFailure,
 } from '@/providers/provider-failure';
-import { ProviderRegistry } from '@/providers/provider.registry';
 
 import type { CreatePaymentDto } from './dto/create-payment.dto';
 import { CreatedPaymentResponseDto } from './dto/created-payment-response.dto';
@@ -93,7 +90,6 @@ export class PaymentCreationService {
     private readonly idempotencyService: IdempotencyService,
     private readonly paymentsService: PaymentsService,
     private readonly providerAccountsService: ProviderAccountsService,
-    private readonly providerRegistry: ProviderRegistry,
     configService: ConfigService<Env, true>,
   ) {
     this.publicBaseUrl = configService.get('PUBLIC_BASE_URL', { infer: true });
@@ -103,14 +99,18 @@ export class PaymentCreationService {
     idempotencyKey: string,
     dto: CreatePaymentDto,
   ): Promise<IdempotentResponse> {
-    const account = await this.availableAccountFor(dto.provider);
     const request = requestOf(idempotencyKey, dto);
+    // Before the account check: a retry after the account was disabled still gets its stored answer.
+    const replayed = await this.idempotencyService.findReplay(request);
+    if (replayed) return replayed;
+
+    const provider = await this.availableProviderFor(dto.provider);
     const claim = await this.idempotencyService.claim(request, {
       onClaimed: async (tx) => ({
         paymentId: (
           await this.paymentsService.recordRequested(tx, {
-            projectId: account.projectId,
-            providerAccountId: account.id,
+            projectId: provider.projectId,
+            providerAccountId: provider.accountId,
             provider: dto.provider,
             amountMinor: dto.amountMinor,
             currency: dto.currency,
@@ -131,7 +131,7 @@ export class PaymentCreationService {
     }
 
     const ref = { paymentId: claim.claimed.paymentId, provider: dto.provider };
-    const outcome = await this.callProvider(ref.paymentId, dto);
+    const outcome = await this.callProvider(provider, ref.paymentId, dto);
     const { response, isLeaseLost } = await this.idempotencyService.complete(
       request,
       ref.paymentId,
@@ -164,14 +164,14 @@ export class PaymentCreationService {
     );
   }
 
-  private async availableAccountFor(
-    provider: ProviderCode,
-  ): Promise<AccountRef> {
-    const account = await this.providerAccountsService.activeAccountFor(
+  private async availableProviderFor(
+    providerCode: ProviderCode,
+  ): Promise<BoundProvider> {
+    const provider = await this.providerAccountsService.bindForNewPayment(
       SEED_PROJECT_ID,
-      provider,
+      providerCode,
     );
-    if (account) return account;
+    if (provider) return provider;
 
     throw new ApiException({
       statusCode: HttpStatus.UNPROCESSABLE_ENTITY,
@@ -181,20 +181,19 @@ export class PaymentCreationService {
   }
 
   private async callProvider(
+    provider: BoundProvider,
     paymentId: string,
     dto: CreatePaymentDto,
   ): Promise<ProviderOutcome> {
     try {
-      const created = await this.providerRegistry
-        .get(dto.provider)
-        .createPayment({
-          reference: paymentId,
-          amountMinor: dto.amountMinor,
-          currency: dto.currency,
-          description: dto.description,
-          returnUrl: dto.returnUrl,
-          webhookUrl: this.webhookUrlOf(dto.provider),
-        });
+      const created = await provider.createPayment({
+        reference: paymentId,
+        amountMinor: dto.amountMinor,
+        currency: dto.currency,
+        description: dto.description,
+        returnUrl: dto.returnUrl,
+        webhookUrl: this.webhookUrlOf(provider),
+      });
 
       return { isCreated: true, created };
     } catch (error) {
@@ -249,7 +248,7 @@ export class PaymentCreationService {
     this.logger.warn(message);
   }
 
-  private webhookUrlOf(provider: ProviderCode): string {
-    return `${this.publicBaseUrl}/webhooks/${provider}`;
+  private webhookUrlOf(provider: BoundProvider): string {
+    return `${this.publicBaseUrl}/webhooks/${provider.code}/${provider.accountId}`;
   }
 }

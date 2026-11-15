@@ -14,7 +14,9 @@ import {
   requestHashOf,
   type IdempotentResponse,
 } from '@/idempotency/idempotency.service';
+import { accountIdOf } from '@/payments/payment-account';
 import { PaymentsService } from '@/payments/payments.service';
+import { ProviderAccountsService } from '@/provider-accounts/provider-accounts.service';
 import type {
   CreatedRefund,
   ProviderErrorKind,
@@ -25,7 +27,6 @@ import {
   providerFailureOf,
   type ProviderFailure,
 } from '@/providers/provider-failure';
-import { ProviderRegistry } from '@/providers/provider.registry';
 
 import type { CreateRefundDto } from './dto/create-refund.dto';
 import { CreatedRefundResponseDto } from './dto/created-refund-response.dto';
@@ -45,6 +46,7 @@ type RefundReservation = {
   refundId: string;
   refundIdentity: RefundIdentity;
   provider: ProviderCode;
+  providerAccountId: string;
   providerPaymentId: string;
   amountMinor: number;
   currency: string;
@@ -101,6 +103,7 @@ const ingestInputOf = (
 ): IngestRefundInput => ({
   reference: reservation.paymentId,
   provider: reservation.provider,
+  providerAccountId: reservation.providerAccountId,
   providerPaymentId: reservation.providerPaymentId,
   refundReference: reservation.refundId,
   providerRefundId: created.providerRefundId,
@@ -120,7 +123,7 @@ export class RefundCreationService {
     private readonly idempotencyService: IdempotencyService,
     private readonly paymentsService: PaymentsService,
     private readonly refundsService: RefundsService,
-    private readonly providerRegistry: ProviderRegistry,
+    private readonly providerAccountsService: ProviderAccountsService,
   ) {}
 
   async createRefund(
@@ -177,8 +180,11 @@ export class RefundCreationService {
     const reservation: RefundReservation = {
       paymentId: payment.id,
       refundId: randomUUID(),
-      refundIdentity: this.providerRegistry.refundIdentityOf(payment.provider),
+      refundIdentity: this.providerAccountsService.refundIdentityOf(
+        payment.provider,
+      ),
       provider: payment.provider,
+      providerAccountId: accountIdOf(payment),
       providerPaymentId: payment.providerPaymentId,
       amountMinor,
       currency: payment.currency,
@@ -259,14 +265,15 @@ export class RefundCreationService {
     reservation: RefundReservation,
   ): Promise<ProviderOutcome> {
     try {
-      const created = await this.providerRegistry
-        .get(reservation.provider)
-        .refund({
-          reference: reservation.refundId,
-          providerPaymentId: reservation.providerPaymentId,
-          amountMinor: reservation.amountMinor,
-          currency: reservation.currency,
-        });
+      const provider = await this.providerAccountsService.bind(
+        reservation.providerAccountId,
+      );
+      const created = await provider.refund({
+        reference: reservation.refundId,
+        providerPaymentId: reservation.providerPaymentId,
+        amountMinor: reservation.amountMinor,
+        currency: reservation.currency,
+      });
 
       return { isCreated: true, created };
     } catch (error) {

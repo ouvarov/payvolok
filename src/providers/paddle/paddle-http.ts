@@ -1,3 +1,8 @@
+import type {
+  PaddleEnvironment,
+  RedactedSecret,
+} from '@/provider-accounts/provider-credentials';
+
 import {
   ProviderError,
   type ProviderErrorKind,
@@ -14,7 +19,15 @@ type PaddleRequest = {
 
 type PaddleResponse = { status: number; body: unknown };
 
-const PADDLE_API_BASE_URL = 'https://sandbox-api.paddle.com';
+type PaddleApiAccess = {
+  apiKey: RedactedSecret;
+  environment: PaddleEnvironment;
+};
+
+const PADDLE_API_BASE_URLS: Readonly<Record<PaddleEnvironment, string>> = {
+  sandbox: 'https://sandbox-api.paddle.com',
+  live: 'https://api.paddle.com',
+};
 const PADDLE_API_VERSION = '1';
 const PADDLE_REQUEST_TIMEOUT_MS = 8000;
 const PADDLE_MAX_REQUESTS_PER_CALL = 3;
@@ -40,8 +53,11 @@ const paddleError = (
 const isOk = ({ status }: PaddleResponse): boolean =>
   status >= HTTP_OK_MIN && status <= HTTP_OK_MAX;
 
-const urlOf = ({ path, query }: PaddleRequest): string => {
-  const url = new URL(path, PADDLE_API_BASE_URL);
+const urlOf = (
+  environment: PaddleEnvironment,
+  { path, query }: PaddleRequest,
+): string => {
+  const url = new URL(path, PADDLE_API_BASE_URLS[environment]);
   for (const [name, value] of Object.entries(query ?? {})) {
     url.searchParams.set(name, value);
   }
@@ -51,14 +67,14 @@ const urlOf = ({ path, query }: PaddleRequest): string => {
 
 const sendPaddleRequest = async (
   fetchFn: typeof fetch,
-  apiKey: string,
+  { apiKey, environment }: PaddleApiAccess,
   request: PaddleRequest,
 ): Promise<PaddleResponse> => {
   try {
-    const response = await fetchFn(urlOf(request), {
+    const response = await fetchFn(urlOf(environment, request), {
       method: request.method,
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${apiKey.reveal()}`,
         'Paddle-Version': PADDLE_API_VERSION,
         ...(request.body === undefined
           ? {}
@@ -129,11 +145,11 @@ const paddleErrorOf = (response: PaddleResponse): ProviderError => {
 
 export {
   isOk,
-  PADDLE_API_BASE_URL,
+  PADDLE_API_BASE_URLS,
   PADDLE_MAX_REQUESTS_PER_CALL,
   PADDLE_REQUEST_TIMEOUT_MS,
   paddleError,
   paddleErrorOf,
   sendPaddleRequest,
 };
-export type { PaddleRequest, PaddleResponse };
+export type { PaddleApiAccess, PaddleRequest, PaddleResponse };

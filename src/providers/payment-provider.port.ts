@@ -90,20 +90,47 @@ type ResourceStatus =
       currency: string;
     };
 
-type PaymentProvider = {
+// Adapters keep no keys: every call gets the credentials of the account it runs for.
+type PaymentProvider<Credentials> = {
   readonly code: ProviderCode;
   readonly capabilities: ProviderCapabilities;
   // Lowercase names of the headers verifyWebhook or parseWebhook needs.
   readonly webhookHeaders: readonly string[];
-  createPayment(input: CreatePaymentInput): Promise<CreatedPayment>;
-  refund(input: RefundInput): Promise<CreatedRefund>;
+  createPayment(
+    credentials: Credentials,
+    input: CreatePaymentInput,
+  ): Promise<CreatedPayment>;
+  refund(credentials: Credentials, input: RefundInput): Promise<CreatedRefund>;
   // Null means the provider does not know the resource.
-  getStatus(query: StatusQuery): Promise<ResourceStatus | null>;
+  getStatus(
+    credentials: Credentials,
+    query: StatusQuery,
+  ): Promise<ResourceStatus | null>;
   // Rejects rather than answer a partial list: a missing refund would look never made.
   listRefunds(
+    credentials: Credentials,
     providerPaymentId: string,
   ): Promise<readonly ProviderRefundRecord[]>;
   // Rejects when verification was impossible: an outage must not become a permanent 401.
+  verifyWebhook(
+    credentials: Credentials,
+    request: WebhookRequest,
+  ): Promise<boolean>;
+  parseWebhook(request: WebhookRequest): ProviderEvents;
+};
+
+type BoundProvider = {
+  readonly accountId: string;
+  readonly projectId: string;
+  readonly code: ProviderCode;
+  readonly capabilities: ProviderCapabilities;
+  readonly webhookHeaders: readonly string[];
+  createPayment(input: CreatePaymentInput): Promise<CreatedPayment>;
+  refund(input: RefundInput): Promise<CreatedRefund>;
+  getStatus(query: StatusQuery): Promise<ResourceStatus | null>;
+  listRefunds(
+    providerPaymentId: string,
+  ): Promise<readonly ProviderRefundRecord[]>;
   verifyWebhook(request: WebhookRequest): Promise<boolean>;
   parseWebhook(request: WebhookRequest): ProviderEvents;
 };
@@ -133,6 +160,7 @@ export class ProviderError extends Error {
 }
 
 export type {
+  BoundProvider,
   CreatedPayment,
   CreatedRefund,
   CreatePaymentInput,

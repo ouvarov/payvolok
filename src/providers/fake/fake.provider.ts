@@ -1,5 +1,10 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
+import type {
+  FakeCredentials,
+  RedactedSecret,
+} from '@/provider-accounts/provider-credentials';
+
 import {
   ProviderError,
   type CreatedPayment,
@@ -125,14 +130,29 @@ const refundStatusOf = (
   };
 };
 
-export class FakeProvider implements PaymentProvider {
+const signatureOf = (secret: RedactedSecret, rawBody: Buffer): string =>
+  createHmac('sha256', secret.reveal()).update(rawBody).digest('hex');
+
+// Compared as text: decoding as hex would silently drop invalid characters.
+const isSameSignature = (received: string, expected: string): boolean => {
+  const receivedBytes = Buffer.from(received);
+  const expectedBytes = Buffer.from(expected);
+
+  return (
+    receivedBytes.length === expectedBytes.length &&
+    timingSafeEqual(receivedBytes, expectedBytes)
+  );
+};
+
+export class FakeProvider implements PaymentProvider<FakeCredentials> {
   readonly code = 'fake';
   readonly capabilities = FAKE_CAPABILITIES;
   readonly webhookHeaders = [SIGNATURE_HEADER];
 
-  constructor(private readonly webhookSecret: Buffer) {}
-
-  createPayment(input: CreatePaymentInput): Promise<CreatedPayment> {
+  createPayment(
+    _credentials: FakeCredentials,
+    input: CreatePaymentInput,
+  ): Promise<CreatedPayment> {
     const identity = fakePaymentIdentitySchema.safeParse({
       reference: input.reference,
       amountMinor: input.amountMinor,
@@ -155,7 +175,10 @@ export class FakeProvider implements PaymentProvider {
     });
   }
 
-  refund(input: RefundInput): Promise<CreatedRefund> {
+  refund(
+    _credentials: FakeCredentials,
+    input: RefundInput,
+  ): Promise<CreatedRefund> {
     const payment = decodeFakePaymentId(input.providerPaymentId);
 
     if (!payment) {
@@ -189,7 +212,10 @@ export class FakeProvider implements PaymentProvider {
     });
   }
 
-  getStatus(query: StatusQuery): Promise<ResourceStatus | null> {
+  getStatus(
+    _credentials: FakeCredentials,
+    query: StatusQuery,
+  ): Promise<ResourceStatus | null> {
     return Promise.resolve(
       query.resource === 'payment'
         ? paymentStatusOf(query.providerPaymentId)
@@ -202,17 +228,26 @@ export class FakeProvider implements PaymentProvider {
     return Promise.resolve([]);
   }
 
-  verifyWebhook(request: WebhookRequest): Promise<boolean> {
+  verifyWebhook(
+    credentials: FakeCredentials,
+    request: WebhookRequest,
+  ): Promise<boolean> {
+    if (credentials.webhookSecrets.length === 0) {
+      return Promise.reject(
+        new ProviderError('fake webhook secret is not configured', {
+          providerCode: 'fake',
+          kind: 'misconfigured',
+        }),
+      );
+    }
+
     const signature = request.headers[SIGNATURE_HEADER];
     if (typeof signature !== 'string') return Promise.resolve(false);
 
-    // Compared as text: decoding as hex would silently drop invalid characters.
-    const receivedSignature = Buffer.from(signature);
-    const expectedSignature = Buffer.from(this.signatureOf(request.rawBody));
-
     return Promise.resolve(
-      receivedSignature.length === expectedSignature.length &&
-        timingSafeEqual(receivedSignature, expectedSignature),
+      credentials.webhookSecrets.some((secret) =>
+        isSameSignature(signature, signatureOf(secret, request.rawBody)),
+      ),
     );
   }
 
@@ -241,6 +276,7 @@ export class FakeProvider implements PaymentProvider {
   }
 
   buildPaymentWebhooks(
+    secret: RedactedSecret,
     providerPaymentId: string,
     startedAt: Date,
   ): WebhookRequest[] {
@@ -248,6 +284,7 @@ export class FakeProvider implements PaymentProvider {
     if (!payment) throw rejectedError('Payment id is not recognised');
 
     return this.buildScenarioWebhooks(
+      secret,
       providerPaymentId,
       paymentScenarioFor(payment.amountMinor).eventTypes,
       startedAt,
@@ -265,6 +302,7 @@ export class FakeProvider implements PaymentProvider {
   }
 
   buildRefundWebhooks(
+    secret: RedactedSecret,
     providerRefundId: string,
     startedAt: Date,
   ): WebhookRequest[] {
@@ -275,6 +313,7 @@ export class FakeProvider implements PaymentProvider {
     }
 
     return this.buildScenarioWebhooks(
+      secret,
       providerRefundId,
       refundScenarioFor(refund.amountMinor).eventTypes,
       startedAt,
@@ -290,25 +329,26 @@ export class FakeProvider implements PaymentProvider {
     );
   }
 
-  buildWebhook(wireBody: FakeWireBody): WebhookRequest {
-    return this.signRawBody(Buffer.from(JSON.stringify(wireBody)));
+  buildWebhook(secret: RedactedSecret, wireBody: FakeWireBody): WebhookRequest {
+    return this.signRawBody(secret, Buffer.from(JSON.stringify(wireBody)));
   }
 
-  signRawBody(rawBody: Buffer): WebhookRequest {
+  signRawBody(secret: RedactedSecret, rawBody: Buffer): WebhookRequest {
     return {
       rawBody,
-      headers: { [SIGNATURE_HEADER]: this.signatureOf(rawBody) },
+      headers: { [SIGNATURE_HEADER]: signatureOf(secret, rawBody) },
     };
   }
 
   private buildScenarioWebhooks<EventType extends string>(
+    secret: RedactedSecret,
     resourceId: string,
     eventTypes: readonly EventType[],
     startedAt: Date,
     wireEventOf: (type: EventType) => unknown,
   ): WebhookRequest[] {
     return eventTypes.map((type, stepIndex) =>
-      this.buildWebhook({
+      this.buildWebhook(secret, {
         eventId: eventIdOf(resourceId, type, stepIndex),
         occurredAt: new Date(
           startedAt.getTime() + stepIndex * STEP_INTERVAL_MS,
@@ -316,11 +356,5 @@ export class FakeProvider implements PaymentProvider {
         events: [wireEventOf(type)],
       }),
     );
-  }
-
-  private signatureOf(rawBody: Buffer): string {
-    return createHmac('sha256', this.webhookSecret)
-      .update(rawBody)
-      .digest('hex');
   }
 }

@@ -14,20 +14,20 @@ import {
   storableText,
 } from '@/common/storable-text';
 import { describeError } from '@/database/postgres-errors';
-import {
-  ProviderAccountsService,
-  type AccountRef,
-} from '@/provider-accounts/provider-accounts.service';
+import { SEED_PADDLE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
+import { ProviderAccountsService } from '@/provider-accounts/provider-accounts.service';
 import type {
-  PaymentProvider,
+  BoundProvider,
   WebhookRequest,
 } from '@/providers/payment-provider.port';
-import type { ProviderCode } from '@/providers/provider.constants';
+import {
+  isProviderCode,
+  type ProviderCode,
+} from '@/providers/provider.constants';
 import {
   dedupKeyFromBody,
   type ProviderEvents,
 } from '@/providers/provider-events';
-import { ProviderRegistry } from '@/providers/provider.registry';
 
 import {
   INVALID_DEDUP_KEY_PREFIX,
@@ -40,8 +40,12 @@ import { WebhooksRepository } from './webhooks.repository';
 const MAX_INVALID_ROWS_PER_WINDOW = 20;
 const webhookEventIdSchema = z.uuid();
 const INVALID_ROWS_WINDOW_MS = 60 * 60 * 1000;
+const ALIAS_WARN_INTERVAL_MS = 60 * 60 * 1000;
 
 type InvalidAttemptWindow = { startedAtEpochMs: number; attempts: number };
+
+const labelOf = (provider: BoundProvider): string =>
+  `${provider.code} account ${provider.accountId}`;
 
 const firstFailureReasonOf = (events: ProviderEvents): string | null => {
   for (const event of events) {
@@ -56,14 +60,15 @@ const firstFailureReasonOf = (events: ProviderEvents): string | null => {
 @Injectable()
 export class WebhooksService {
   private readonly logger = new Logger(WebhooksService.name);
+  // Keyed by account id; only accounts that exist get here, so the map stays small.
   private readonly invalidAttemptWindows = new Map<
-    ProviderCode,
+    string,
     InvalidAttemptWindow
   >();
+  private lastAliasWarnAtEpochMs: number | null = null;
 
   constructor(
     private readonly providerAccountsService: ProviderAccountsService,
-    private readonly providerRegistry: ProviderRegistry,
     private readonly webhooksRepository: WebhooksRepository,
     private readonly webhookWorker: WebhookWorker,
   ) {}
@@ -77,15 +82,28 @@ export class WebhooksService {
     return replayId;
   }
 
-  async receive(
-    providerCode: string,
+  // The URL Paddle was given before accounts existed, kept until Paddle is switched.
+  receiveOnPaddleAlias(
     body: unknown,
     headers: WebhookRequest['headers'],
   ): Promise<void> {
-    const provider = this.providerRegistry.find(providerCode);
+    this.warnAboutAliasHourly();
+
+    return this.receive('paddle', SEED_PADDLE_ACCOUNT_ID, body, headers);
+  }
+
+  async receive(
+    providerCode: string,
+    providerAccountId: string,
+    body: unknown,
+    headers: WebhookRequest['headers'],
+  ): Promise<void> {
+    if (!isProviderCode(providerCode)) throw new NotFoundException();
+    const provider = await this.boundProviderFor(
+      providerCode,
+      providerAccountId,
+    );
     if (!provider) throw new NotFoundException();
-    const account = await this.seedAccountOf(provider.code);
-    if (!account) throw new NotFoundException();
 
     const request: WebhookRequest = {
       rawBody: Buffer.isBuffer(body) ? body : Buffer.alloc(0),
@@ -93,54 +111,68 @@ export class WebhooksService {
     };
 
     if (!(await this.isSignatureValid(provider, request))) {
-      await this.storeInvalidDelivery(
-        provider.code,
-        account.id,
-        request.rawBody,
-      );
+      await this.storeInvalidDelivery(provider, request.rawBody);
       throw new UnauthorizedException();
     }
 
-    await this.storeDelivery(provider, account.id, request);
+    await this.storeDelivery(provider, request);
   }
 
-  private async seedAccountOf(
-    provider: ProviderCode,
-  ): Promise<AccountRef | null> {
+  private warnAboutAliasHourly(): void {
+    const nowEpochMs = Date.now();
+    if (
+      this.lastAliasWarnAtEpochMs !== null &&
+      nowEpochMs - this.lastAliasWarnAtEpochMs < ALIAS_WARN_INTERVAL_MS
+    ) {
+      return;
+    }
+
+    this.lastAliasWarnAtEpochMs = nowEpochMs;
+    this.logger.warn(
+      `Webhook received on /webhooks/paddle; point Paddle at /webhooks/paddle/${SEED_PADDLE_ACCOUNT_ID}`,
+    );
+  }
+
+  private async boundProviderFor(
+    providerCode: ProviderCode,
+    providerAccountId: string,
+  ): Promise<BoundProvider | null> {
     try {
-      return await this.providerAccountsService.seedAccountOf(provider);
+      return await this.providerAccountsService.bindForWebhook(
+        providerCode,
+        providerAccountId,
+      );
     } catch (error) {
       this.logger.error(
-        `Webhook account lookup failed for ${provider}: ${describeError(error)}`,
+        `Webhook account lookup failed for ${providerCode}: ${describeError(error)}`,
       );
       throw new ServiceUnavailableException();
     }
   }
 
   private async isSignatureValid(
-    provider: PaymentProvider,
+    provider: BoundProvider,
     request: WebhookRequest,
   ): Promise<boolean> {
     try {
       return await provider.verifyWebhook(request);
     } catch (error) {
       this.logger.warn(
-        `Webhook verification unavailable for ${provider.code}: ${describeError(error)}`,
+        `Webhook verification unavailable for ${labelOf(provider)}: ${describeError(error)}`,
       );
       throw new ServiceUnavailableException();
     }
   }
 
   private async storeInvalidDelivery(
-    provider: ProviderCode,
-    providerAccountId: string,
+    provider: BoundProvider,
     rawBody: Buffer,
   ): Promise<void> {
-    const attempts = this.countInvalidAttempt(provider);
+    const attempts = this.countInvalidAttempt(provider.accountId);
     if (attempts > MAX_INVALID_ROWS_PER_WINDOW) {
       if (attempts === MAX_INVALID_ROWS_PER_WINDOW + 1) {
         this.logger.warn(
-          `Webhooks with an invalid signature for ${provider} reached the row cap for this hour`,
+          `Webhooks with an invalid signature for ${labelOf(provider)} reached the row cap for this hour`,
         );
       }
       return;
@@ -150,26 +182,26 @@ export class WebhooksService {
 
     try {
       await this.webhooksRepository.insertInvalidIfAbsent({
-        provider,
-        providerAccountId,
+        provider: provider.code,
+        providerAccountId: provider.accountId,
         dedupKey: `${INVALID_DEDUP_KEY_PREFIX}${bodyHash}`,
       });
     } catch (error) {
       this.logger.error(
-        `Webhook invalid-signature row failed for ${provider}: ${describeError(error)}`,
+        `Webhook invalid-signature row failed for ${labelOf(provider)}: ${describeError(error)}`,
       );
     }
   }
 
-  private countInvalidAttempt(provider: ProviderCode): number {
+  private countInvalidAttempt(providerAccountId: string): number {
     const nowEpochMs = Date.now();
-    const window = this.invalidAttemptWindows.get(provider);
+    const window = this.invalidAttemptWindows.get(providerAccountId);
 
     if (
       !window ||
       nowEpochMs - window.startedAtEpochMs >= INVALID_ROWS_WINDOW_MS
     ) {
-      this.invalidAttemptWindows.set(provider, {
+      this.invalidAttemptWindows.set(providerAccountId, {
         startedAtEpochMs: nowEpochMs,
         attempts: 1,
       });
@@ -181,8 +213,7 @@ export class WebhooksService {
   }
 
   private async storeDelivery(
-    provider: PaymentProvider,
-    providerAccountId: string,
+    provider: BoundProvider,
     request: WebhookRequest,
   ): Promise<void> {
     const events = this.parseOrNull(provider, request);
@@ -191,7 +222,7 @@ export class WebhooksService {
     try {
       isInserted = await this.webhooksRepository.insertReceivedIfAbsent({
         provider: provider.code,
-        providerAccountId,
+        providerAccountId: provider.accountId,
         dedupKey: events
           ? storableDedupKey(events[0].dedupKey)
           : dedupKeyFromBody(request.rawBody),
@@ -202,7 +233,7 @@ export class WebhooksService {
       });
     } catch (error) {
       this.logger.error(
-        `Webhook insert failed for ${provider.code}: ${describeError(error)}`,
+        `Webhook insert failed for ${labelOf(provider)}: ${describeError(error)}`,
       );
       throw new ServiceUnavailableException();
     }
@@ -211,14 +242,14 @@ export class WebhooksService {
   }
 
   private parseOrNull(
-    provider: PaymentProvider,
+    provider: BoundProvider,
     request: WebhookRequest,
   ): ProviderEvents | null {
     try {
       return provider.parseWebhook(request);
     } catch (error) {
       this.logger.warn(
-        `Webhook parse failed for ${provider.code}: ${describeError(error)}`,
+        `Webhook parse failed for ${labelOf(provider)}: ${describeError(error)}`,
       );
       return null;
     }

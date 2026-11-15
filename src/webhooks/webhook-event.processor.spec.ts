@@ -2,13 +2,18 @@ import { Logger } from '@nestjs/common';
 import { DrizzleQueryError } from 'drizzle-orm';
 
 import {
+  ForeignAccountError,
   PaymentMismatchError,
   PaymentNotFoundError,
   type PaymentsService,
 } from '@/payments/payments.service';
+import { SEED_PROJECT_ID } from '@/projects/projects.constants';
 import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
+import type { ProviderAccountsService } from '@/provider-accounts/provider-accounts.service';
+import { RedactedSecret } from '@/provider-accounts/provider-credentials';
 import { FakeProvider } from '@/providers/fake/fake.provider';
-import type { ProviderRegistry } from '@/providers/provider.registry';
+import type { BoundProvider } from '@/providers/payment-provider.port';
+import { boundProviderOf } from '@/providers/bound-provider';
 import {
   RefundEventInvalidError,
   RefundPaymentNotFoundError,
@@ -23,6 +28,7 @@ import type {
 
 const WEBHOOK_EVENT_ID = 'webhook-event-1';
 const LEAK_MARKER = 'LEAKMARKER';
+const SECRET = new RedactedSecret('s'.repeat(32));
 
 const paymentEventWith = (overrides: Record<string, unknown> = {}) => ({
   type: 'payment.failed',
@@ -76,19 +82,27 @@ const queryErrorWithCode = (code: string): DrizzleQueryError =>
 const notFoundError = (): PaymentNotFoundError =>
   new PaymentNotFoundError({
     reference: null,
-    provider: 'fake',
     providerPaymentId: 'provider-payment-1',
   });
 
 describe('WebhookEventProcessor', () => {
-  const fakeProvider = new FakeProvider(Buffer.alloc(32, 1));
+  const fakeProvider = new FakeProvider();
+  const boundFakeProvider: BoundProvider = {
+    ...boundProviderOf(
+      { id: SEED_FAKE_ACCOUNT_ID, projectId: SEED_PROJECT_ID },
+      fakeProvider,
+      { provider: 'fake', webhookSecrets: [SECRET] },
+    ),
+    capabilities: { ...fakeProvider.capabilities, refundIdentity: 'reference' },
+  };
+  let bind: jest.Mock;
   let ingestPayment: jest.Mock;
   let ingestRefund: jest.Mock;
   let warn: jest.SpyInstance;
   let processor: WebhookEventProcessor;
 
   const deliveryWith = (events: readonly unknown[]): StoredDelivery => ({
-    rawBody: fakeProvider.buildWebhook({
+    rawBody: fakeProvider.buildWebhook(SECRET, {
       eventId: 'event-1',
       occurredAt: null,
       events,
@@ -99,9 +113,9 @@ describe('WebhookEventProcessor', () => {
   const processEvents = (events: readonly unknown[], claimed = claimedWith()) =>
     processor.process(claimed, deliveryWith(events));
 
-  const processorWith = (registry: Partial<ProviderRegistry>) =>
+  const processorWith = () =>
     new WebhookEventProcessor(
-      registry as ProviderRegistry,
+      { bind } as unknown as ProviderAccountsService,
       { ingestPayment } as unknown as PaymentsService,
       { ingestRefund } as unknown as RefundsService,
     );
@@ -121,10 +135,8 @@ describe('WebhookEventProcessor', () => {
       paymentOutcome: 'unchanged',
       refundedTotalMinor: 0,
     });
-    processor = processorWith({
-      find: () => fakeProvider,
-      refundIdentityOf: () => 'reference',
-    });
+    bind = jest.fn().mockResolvedValue(boundFakeProvider);
+    processor = processorWith();
   });
 
   afterEach(() => {
@@ -135,9 +147,11 @@ describe('WebhookEventProcessor', () => {
     it('passes the event facts, its reason, the inbox id and its account to the ingest', async () => {
       await processEvents([paymentEventWith()]);
 
+      expect(bind).toHaveBeenCalledWith(SEED_FAKE_ACCOUNT_ID);
       expect(ingestPayment).toHaveBeenCalledWith({
         reference: 'reference-1',
         provider: 'fake',
+        projectId: SEED_PROJECT_ID,
         providerAccountId: SEED_FAKE_ACCOUNT_ID,
         providerPaymentId: 'provider-payment-1',
         status: 'failed',
@@ -225,12 +239,13 @@ describe('WebhookEventProcessor', () => {
   });
 
   describe('refund events', () => {
-    it('takes the refund identity from the registry and the status from the type', async () => {
+    it('takes the refund identity from the bound account and the status from the type', async () => {
       await processEvents([refundEventWith()]);
 
       expect(ingestRefund).toHaveBeenCalledWith({
         reference: 'reference-1',
         provider: 'fake',
+        providerAccountId: SEED_FAKE_ACCOUNT_ID,
         providerPaymentId: 'provider-payment-1',
         refundReference: 'refund-reference-1',
         providerRefundId: 'provider-refund-1',
@@ -270,6 +285,24 @@ describe('WebhookEventProcessor', () => {
         paymentIds: ['payment-1'],
       });
     });
+
+    it.each([
+      ['payment', paymentEventWith(), () => ingestPayment],
+      ['refund', refundEventWith(), () => ingestRefund],
+    ])(
+      'ignores a %s event for another account in one attempt and says why',
+      async (_case, event, ingestOf) => {
+        ingestOf().mockRejectedValue(
+          new ForeignAccountError('Reference reference-1'),
+        );
+
+        await expect(processEvents([event])).resolves.toEqual({
+          status: 'ignored',
+          lastError: 'Reference reference-1 belongs to another account',
+          paymentIds: [],
+        });
+      },
+    );
 
     it('ignores a delivery of only unknown and subscription events', async () => {
       await expect(
@@ -345,14 +378,26 @@ describe('WebhookEventProcessor', () => {
       expect(ingestPayment).not.toHaveBeenCalled();
     });
 
-    it('fails a row of an unregistered provider', async () => {
-      processor = processorWith({ find: () => null });
+    it('retries when the account of the row does not bind', async () => {
+      bind.mockRejectedValue(new TypeError(LEAK_MARKER));
 
       await expect(processEvents([paymentEventWith()])).resolves.toEqual({
-        status: 'failed',
-        lastError: 'Provider is not registered',
+        status: 'received',
+        retryDelaySeconds: 30,
+        lastError: 'TypeError',
         paymentIds: [],
       });
+      expect(ingestPayment).not.toHaveBeenCalled();
+    });
+
+    it('retries a row without an account without binding', async () => {
+      await expect(
+        processEvents(
+          [paymentEventWith()],
+          claimedWith({ providerAccountId: null }),
+        ),
+      ).resolves.toMatchObject({ status: 'received', retryDelaySeconds: 30 });
+      expect(bind).not.toHaveBeenCalled();
     });
 
     it('fails a row with no stored body', async () => {
