@@ -188,16 +188,23 @@ describe('ProviderAccountsService', () => {
     });
   });
 
-  describe('paddleClientTokenOf', () => {
-    it('returns the client token of a Paddle account', async () => {
-      await expect(
-        serviceWith(collaboratorsWith(accountWith())).paddleClientTokenOf(
-          SEED_PADDLE_ACCOUNT_ID,
-        ),
-      ).resolves.toBe(CLIENT_TOKEN);
-    });
+  describe('paddleCheckoutOf', () => {
+    it.each(['sandbox', 'live'] as const)(
+      'returns the client token and the %s environment of a Paddle account',
+      async (environment) => {
+        const collaborators = collaboratorsWith(accountWith());
+        collaborators.resolve.mockResolvedValue({
+          ...PADDLE_CREDENTIALS,
+          environment,
+        });
 
-    it('returns null for a Paddle account without a client token', async () => {
+        await expect(
+          serviceWith(collaborators).paddleCheckoutOf(SEED_PADDLE_ACCOUNT_ID),
+        ).resolves.toEqual({ clientToken: CLIENT_TOKEN, environment });
+      },
+    );
+
+    it('returns a null token for a Paddle account without a client token', async () => {
       const collaborators = collaboratorsWith(accountWith());
       collaborators.resolve.mockResolvedValue({
         ...PADDLE_CREDENTIALS,
@@ -205,18 +212,18 @@ describe('ProviderAccountsService', () => {
       });
 
       await expect(
-        serviceWith(collaborators).paddleClientTokenOf(SEED_PADDLE_ACCOUNT_ID),
-      ).resolves.toBeNull();
+        serviceWith(collaborators).paddleCheckoutOf(SEED_PADDLE_ACCOUNT_ID),
+      ).resolves.toEqual({ clientToken: null, environment: 'sandbox' });
     });
 
     it.each([
       ['a fake account', FAKE_ACCOUNT, SEED_FAKE_ACCOUNT_ID],
       ['an unknown account', null, SEED_PADDLE_ACCOUNT_ID],
       ['a non-uuid', accountWith(), 'not-a-uuid'],
-    ])('returns undefined for %s', async (_case, account, accountId) => {
+    ])('returns null for %s', async (_case, account, accountId) => {
       await expect(
-        serviceWith(collaboratorsWith(account)).paddleClientTokenOf(accountId),
-      ).resolves.toBeUndefined();
+        serviceWith(collaboratorsWith(account)).paddleCheckoutOf(accountId),
+      ).resolves.toBeNull();
     });
   });
 });

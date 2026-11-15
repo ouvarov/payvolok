@@ -5,6 +5,7 @@ import type {
   BoundProvider,
   RefundIdentity,
 } from '@/providers/payment-provider.port';
+import type { PaddleEnvironment } from '@/providers/provider-credentials';
 import type { ProviderCode } from '@/providers/provider.constants';
 import { ProviderRegistry } from '@/providers/provider.registry';
 
@@ -15,6 +16,11 @@ import {
 import { ProviderCredentialsResolver } from './provider-credentials.resolver';
 
 const providerAccountIdSchema = z.uuid();
+
+type PaddleCheckoutAccount = {
+  clientToken: string | null;
+  environment: PaddleEnvironment;
+};
 
 @Injectable()
 export class ProviderAccountsService {
@@ -58,17 +64,19 @@ export class ProviderAccountsService {
     return this.bindAccount(account);
   }
 
-  // undefined: no such Paddle account; null: the account has no client token.
-  async paddleClientTokenOf(
+  async paddleCheckoutOf(
     accountId: string,
-  ): Promise<string | null | undefined> {
+  ): Promise<PaddleCheckoutAccount | null> {
     const account = await this.findAccount(accountId);
-    if (account?.provider !== 'paddle') return undefined;
+    if (account?.provider !== 'paddle') return null;
 
     const credentials = await this.providerCredentialsResolver.resolve(account);
-    if (credentials.provider !== 'paddle') return undefined;
+    if (credentials.provider !== 'paddle') return null;
 
-    return credentials.clientToken?.reveal() ?? null;
+    return {
+      clientToken: credentials.clientToken?.reveal() ?? null,
+      environment: credentials.environment,
+    };
   }
 
   refundIdentityOf(provider: ProviderCode): RefundIdentity {
@@ -89,3 +97,5 @@ export class ProviderAccountsService {
     return this.providerRegistry.bind(account, credentials);
   }
 }
+
+export type { PaddleCheckoutAccount };

@@ -25,7 +25,9 @@ import {
 import {
   SEED_FAKE_ACCOUNT_ID,
   SEED_PADDLE_ACCOUNT_ID,
+  SEED_PADDLE_CREDENTIALS_REF,
 } from '@/provider-accounts/provider-accounts.constants';
+import { ProviderCredentialsResolver } from '@/provider-accounts/provider-credentials.resolver';
 import { PaddleProvider } from '@/providers/paddle/paddle.provider';
 
 import {
@@ -537,7 +539,12 @@ describe('Paddle provider', () => {
     const nonceOf = (contentSecurityPolicy: string): string | undefined =>
       /script-src 'nonce-([^']+)'/.exec(contentSecurityPolicy)?.[1];
 
-    it('serves Paddle.js with the account client token and a fresh nonce, the alias as the seed account', async () => {
+    it('serves Paddle.js with the account client token, environment and a fresh nonce, the alias as the seed account', async () => {
+      const credentials = await app.get(ProviderCredentialsResolver).resolve({
+        id: SEED_PADDLE_ACCOUNT_ID,
+        provider: 'paddle',
+        credentialsRef: SEED_PADDLE_CREDENTIALS_REF,
+      });
       const first = await request(serverOf(app))
         .get(`/checkout/paddle/${SEED_PADDLE_ACCOUNT_ID}`)
         .query({ _ptxn: syntheticPaddleId('txn') })
@@ -552,6 +559,7 @@ describe('Paddle provider', () => {
       expect(first.text).toContain(
         'src="https://cdn.paddle.com/paddle/v2/paddle.js"',
       );
+      expect(credentials).toMatchObject({ environment: 'sandbox' });
       expect(first.text).toContain("Paddle.Environment.set('sandbox');");
       expect(first.text).toContain(`token: "${CLIENT_TOKEN}"`);
       expect(first.text).toContain(`<script nonce="${nonce}">`);

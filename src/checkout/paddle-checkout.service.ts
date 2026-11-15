@@ -8,7 +8,10 @@ import {
 } from '@nestjs/common';
 
 import { describeError } from '@/database/postgres-errors';
-import { ProviderAccountsService } from '@/provider-accounts/provider-accounts.service';
+import {
+  ProviderAccountsService,
+  type PaddleCheckoutAccount,
+} from '@/provider-accounts/provider-accounts.service';
 
 import { checkoutPageOf, type CheckoutPage } from './paddle-checkout-page';
 
@@ -25,24 +28,24 @@ export class PaddleCheckoutService {
   ) {}
 
   async render(providerAccountId: string): Promise<CheckoutPage> {
-    const clientToken = await this.clientTokenOf(providerAccountId);
-    if (clientToken === undefined) throw new NotFoundException();
-    if (clientToken === null) {
+    const account = await this.checkoutAccountOf(providerAccountId);
+    if (!account) throw new NotFoundException();
+    if (account.clientToken === null) {
       this.logMissingTokenOnce(providerAccountId);
       throw new ServiceUnavailableException();
     }
 
     return checkoutPageOf(
-      clientToken,
+      { clientToken: account.clientToken, environment: account.environment },
       randomBytes(NONCE_BYTES).toString('base64'),
     );
   }
 
-  private async clientTokenOf(
+  private async checkoutAccountOf(
     providerAccountId: string,
-  ): Promise<string | null | undefined> {
+  ): Promise<PaddleCheckoutAccount | null> {
     try {
-      return await this.providerAccountsService.paddleClientTokenOf(
+      return await this.providerAccountsService.paddleCheckoutOf(
         providerAccountId,
       );
     } catch (error) {
