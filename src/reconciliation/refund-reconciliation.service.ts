@@ -3,6 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { Refund } from '@/database/schemas/refunds.schema';
 import type { PaymentStatus } from '@/payments/payment.constants';
 import { IngestRejectedError } from '@/payments/payments.service';
+import { accountLabelOf } from '@/providers/bound-provider';
 import type {
   BoundProvider,
   ProviderRefundRecord,
@@ -58,9 +59,6 @@ const askProvider = async <Value>(
     return { isAnswered: false, failure: providerFailureOf(error) };
   }
 };
-
-const labelOf = (provider: BoundProvider): string =>
-  `${provider.code} account ${provider.accountId}`;
 
 const refundInputOf = (
   provider: BoundProvider,
@@ -188,13 +186,13 @@ export class RefundReconciliationService {
     const status = answer.value;
     if (status === null) {
       this.logger.warn(
-        `Refund ${refund.id} of payment ${payment.id} is unknown to ${labelOf(provider)}; left pending`,
+        `Refund ${refund.id} of payment ${payment.id} is unknown to ${accountLabelOf(provider)}; left pending`,
       );
       return { isAnswered: true, value: null };
     }
     if (status.resource !== 'refund') {
       this.logger.error(
-        `Refund ${refund.id} of payment ${payment.id}: ${labelOf(provider)} answered with a ${status.resource}`,
+        `Refund ${refund.id} of payment ${payment.id}: ${accountLabelOf(provider)} answered with a ${status.resource}`,
       );
       return { isAnswered: true, value: null };
     }
@@ -210,7 +208,7 @@ export class RefundReconciliationService {
     if (failure.kind !== 'rejected') return { isAnswered: false, failure };
 
     this.logger.error(
-      `Refunds of payment ${payment.id} were rejected by ${labelOf(provider)}: ${failure.detail}`,
+      `Refunds of payment ${payment.id} were rejected by ${accountLabelOf(provider)}: ${failure.detail}`,
     );
     return UNCHANGED;
   }
@@ -247,7 +245,7 @@ export class RefundReconciliationService {
   ): void {
     if (refundOutcome === 'created') {
       this.logger.warn(
-        `Refund ${refund.id} (${refund.providerRefundId}) of payment ${payment.id} found only at ${labelOf(provider)}; recorded ${refund.status}`,
+        `Refund ${refund.id} (${refund.providerRefundId}) of payment ${payment.id} found only at ${accountLabelOf(provider)}; recorded ${refund.status}`,
       );
     } else if (refundOutcome === 'applied') {
       this.logger.log(

@@ -21,5 +21,8 @@ const boundProviderOf = <Credentials>(
   parseWebhook: (request) => adapter.parseWebhook(request),
 });
 
-export { boundProviderOf };
+const accountLabelOf = (provider: BoundProvider): string =>
+  `${provider.code} account ${provider.accountId}`;
+
+export { accountLabelOf, boundProviderOf };
 export type { BoundAccountIds };

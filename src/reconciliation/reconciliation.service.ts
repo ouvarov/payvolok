@@ -9,6 +9,7 @@ import {
   type IngestPaymentResult,
 } from '@/payments/payments.service';
 import { ProviderAccountsService } from '@/provider-accounts/provider-accounts.service';
+import { accountLabelOf } from '@/providers/bound-provider';
 import type {
   BoundProvider,
   ResourceStatus,
@@ -94,9 +95,6 @@ const localCheckOf = (
   isStopped,
   boundProvider: null,
 });
-
-const labelOf = (provider: BoundProvider): string =>
-  `${provider.code} account ${provider.accountId}`;
 
 const isUnsettled = (status: PaymentStatus): boolean =>
   status === 'created' || status === 'pending';
@@ -227,7 +225,7 @@ export class ReconciliationService {
     if (!answer.isAnswered) {
       if (answer.failure.kind === 'rejected') {
         this.logger.error(
-          `Payment ${claimed.id} status was rejected by ${labelOf(provider)}: ${answer.failure.detail}`,
+          `Payment ${claimed.id} status was rejected by ${accountLabelOf(provider)}: ${answer.failure.detail}`,
         );
         return unchanged;
       }
@@ -244,13 +242,13 @@ export class ReconciliationService {
     }
     if (answer.value === null) {
       this.logger.warn(
-        `Payment ${claimed.id} is unknown to ${labelOf(provider)}; left ${claimed.status}`,
+        `Payment ${claimed.id} is unknown to ${accountLabelOf(provider)}; left ${claimed.status}`,
       );
       return unchanged;
     }
     if (answer.value.resource !== 'payment') {
       this.logger.error(
-        `Payment ${claimed.id}: ${labelOf(provider)} answered with a ${answer.value.resource}`,
+        `Payment ${claimed.id}: ${accountLabelOf(provider)} answered with a ${answer.value.resource}`,
       );
       return unchanged;
     }

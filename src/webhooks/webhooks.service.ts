@@ -16,6 +16,7 @@ import {
 import { describeError } from '@/database/postgres-errors';
 import { SEED_PADDLE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
 import { ProviderAccountsService } from '@/provider-accounts/provider-accounts.service';
+import { accountLabelOf } from '@/providers/bound-provider';
 import type {
   BoundProvider,
   WebhookRequest,
@@ -43,9 +44,6 @@ const INVALID_ROWS_WINDOW_MS = 60 * 60 * 1000;
 const ALIAS_WARN_INTERVAL_MS = 60 * 60 * 1000;
 
 type InvalidAttemptWindow = { startedAtEpochMs: number; attempts: number };
-
-const labelOf = (provider: BoundProvider): string =>
-  `${provider.code} account ${provider.accountId}`;
 
 const firstFailureReasonOf = (events: ProviderEvents): string | null => {
   for (const event of events) {
@@ -158,7 +156,7 @@ export class WebhooksService {
       return await provider.verifyWebhook(request);
     } catch (error) {
       this.logger.warn(
-        `Webhook verification unavailable for ${labelOf(provider)}: ${describeError(error)}`,
+        `Webhook verification unavailable for ${accountLabelOf(provider)}: ${describeError(error)}`,
       );
       throw new ServiceUnavailableException();
     }
@@ -172,7 +170,7 @@ export class WebhooksService {
     if (attempts > MAX_INVALID_ROWS_PER_WINDOW) {
       if (attempts === MAX_INVALID_ROWS_PER_WINDOW + 1) {
         this.logger.warn(
-          `Webhooks with an invalid signature for ${labelOf(provider)} reached the row cap for this hour`,
+          `Webhooks with an invalid signature for ${accountLabelOf(provider)} reached the row cap for this hour`,
         );
       }
       return;
@@ -188,7 +186,7 @@ export class WebhooksService {
       });
     } catch (error) {
       this.logger.error(
-        `Webhook invalid-signature row failed for ${labelOf(provider)}: ${describeError(error)}`,
+        `Webhook invalid-signature row failed for ${accountLabelOf(provider)}: ${describeError(error)}`,
       );
     }
   }
@@ -233,7 +231,7 @@ export class WebhooksService {
       });
     } catch (error) {
       this.logger.error(
-        `Webhook insert failed for ${labelOf(provider)}: ${describeError(error)}`,
+        `Webhook insert failed for ${accountLabelOf(provider)}: ${describeError(error)}`,
       );
       throw new ServiceUnavailableException();
     }
@@ -249,7 +247,7 @@ export class WebhooksService {
       return provider.parseWebhook(request);
     } catch (error) {
       this.logger.warn(
-        `Webhook parse failed for ${labelOf(provider)}: ${describeError(error)}`,
+        `Webhook parse failed for ${accountLabelOf(provider)}: ${describeError(error)}`,
       );
       return null;
     }
