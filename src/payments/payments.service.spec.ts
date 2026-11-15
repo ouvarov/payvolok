@@ -74,7 +74,7 @@ const repositoryWith = (
     requestReconciliation: jest.fn().mockResolvedValue(undefined),
     insertIfAbsent: jest.fn().mockResolvedValue(null),
     findByProviderRefForUpdate: jest.fn().mockResolvedValue(null),
-    hasProviderRefElsewhere: jest.fn().mockResolvedValue(false),
+    findProviderRefElsewhere: jest.fn().mockResolvedValue(null),
     findByIdAndProviderForUpdate: jest.fn().mockResolvedValue(null),
     setProviderPaymentId: jest.fn().mockResolvedValue(null),
     updateStatus: jest.fn().mockResolvedValue(null),
@@ -415,19 +415,27 @@ describe('PaymentsService', () => {
 
       await expect(
         paymentsService.lockPaymentForRefund(TX, LOOKUP),
-      ).rejects.toThrow(new ForeignAccountError(`Reference ${REFERENCE}`));
+      ).rejects.toMatchObject({
+        message: `Reference ${REFERENCE} belongs to another account`,
+        ownerAccountId: OTHER_ACCOUNT_ID,
+      });
     });
 
     it('refuses a provider ref that only another account has', async () => {
-      const hasProviderRefElsewhere = jest.fn().mockResolvedValue(true);
+      const findProviderRefElsewhere = jest
+        .fn()
+        .mockResolvedValue({ providerAccountId: OTHER_ACCOUNT_ID });
       const paymentsService = new PaymentsService(
-        repositoryWith({ hasProviderRefElsewhere }),
+        repositoryWith({ findProviderRefElsewhere }),
       );
 
-      await expect(
-        paymentsService.lockPaymentForRefund(TX, LOOKUP),
-      ).rejects.toBeInstanceOf(ForeignAccountError);
-      expect(hasProviderRefElsewhere).toHaveBeenCalledWith(TX, LOOKUP);
+      const error: unknown = await paymentsService
+        .lockPaymentForRefund(TX, LOOKUP)
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(ForeignAccountError);
+      expect(error).toMatchObject({ ownerAccountId: OTHER_ACCOUNT_ID });
+      expect(findProviderRefElsewhere).toHaveBeenCalledWith(TX, LOOKUP);
     });
   });
 
@@ -460,7 +468,9 @@ describe('PaymentsService', () => {
     it('ignores a provider ref that another account owns', async () => {
       const paymentsService = new PaymentsService(
         repositoryWith({
-          hasProviderRefElsewhere: jest.fn().mockResolvedValue(true),
+          findProviderRefElsewhere: jest
+            .fn()
+            .mockResolvedValue({ providerAccountId: OTHER_ACCOUNT_ID }),
         }),
       );
 

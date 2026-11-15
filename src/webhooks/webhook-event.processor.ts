@@ -16,6 +16,7 @@ import {
 } from '@/payments/payments.service';
 import { PAYMENT_STATUS_BY_EVENT_TYPE } from '@/payments/provider-event-status';
 import { ProviderAccountsService } from '@/provider-accounts/provider-accounts.service';
+import { accountLabelOf } from '@/providers/bound-provider';
 import type { BoundProvider } from '@/providers/payment-provider.port';
 import type {
   ProviderEvent,
@@ -160,8 +161,22 @@ export class WebhookEventProcessor {
     try {
       return await this.apply(claimed, provider, event);
     } catch (error) {
+      if (error instanceof ForeignAccountError) {
+        this.warnForeignAccount(claimed, provider, error);
+      }
       return failedResultOf(error);
     }
+  }
+
+  // A signed event naming another account's payment means a misrouted destination or a shared secret.
+  private warnForeignAccount(
+    claimed: ClaimedWebhookEvent,
+    provider: BoundProvider,
+    error: ForeignAccountError,
+  ): void {
+    this.logger.warn(
+      `Webhook event ${claimed.id} on ${accountLabelOf(provider)} ignored: ${error.message}, account ${error.ownerAccountId ?? 'none'}`,
+    );
   }
 
   private apply(

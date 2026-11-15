@@ -117,12 +117,12 @@ export class PaymentsRepository {
     return payment ?? null;
   }
 
-  async hasProviderRefElsewhere(
+  async findProviderRefElsewhere(
     tx: DatabaseTransaction,
     ref: ProviderRef,
-  ): Promise<boolean> {
+  ): Promise<Pick<Payment, 'providerAccountId'> | null> {
     const [payment] = await tx
-      .select({ id: payments.id })
+      .select({ providerAccountId: payments.providerAccountId })
       .from(payments)
       .where(
         and(
@@ -136,7 +136,7 @@ export class PaymentsRepository {
       )
       .limit(1);
 
-    return payment !== undefined;
+    return payment ?? null;
   }
 
   async findByIdForUpdate(

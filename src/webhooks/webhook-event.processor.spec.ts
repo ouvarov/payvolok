@@ -28,6 +28,7 @@ import type {
 
 const WEBHOOK_EVENT_ID = 'webhook-event-1';
 const LEAK_MARKER = 'LEAKMARKER';
+const OTHER_ACCOUNT_ID = '0b9d6f0e-5a4b-4c1e-9f3a-cccccccccccc';
 const SECRET = new RedactedSecret('s'.repeat(32));
 
 const paymentEventWith = (overrides: Record<string, unknown> = {}) => ({
@@ -290,10 +291,10 @@ describe('WebhookEventProcessor', () => {
       ['payment', paymentEventWith(), () => ingestPayment],
       ['refund', refundEventWith(), () => ingestRefund],
     ])(
-      'ignores a %s event for another account in one attempt and says why',
+      'ignores a %s event for another account in one attempt, says why and warns with both accounts',
       async (_case, event, ingestOf) => {
         ingestOf().mockRejectedValue(
-          new ForeignAccountError('Reference reference-1'),
+          new ForeignAccountError('Reference reference-1', OTHER_ACCOUNT_ID),
         );
 
         await expect(processEvents([event])).resolves.toEqual({
@@ -301,8 +302,24 @@ describe('WebhookEventProcessor', () => {
           lastError: 'Reference reference-1 belongs to another account',
           paymentIds: [],
         });
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn).toHaveBeenCalledWith(
+          `Webhook event ${WEBHOOK_EVENT_ID} on fake account ${SEED_FAKE_ACCOUNT_ID} ignored: Reference reference-1 belongs to another account, account ${OTHER_ACCOUNT_ID}`,
+        );
       },
     );
+
+    it('warns about a foreign event whose payment has no account', async () => {
+      ingestPayment.mockRejectedValue(
+        new ForeignAccountError('Provider payment provider-payment-1', null),
+      );
+
+      await processEvents([paymentEventWith()]);
+
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringMatching(/belongs to another account, account none$/),
+      );
+    });
 
     it('ignores a delivery of only unknown and subscription events', async () => {
       await expect(

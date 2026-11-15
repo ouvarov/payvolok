@@ -164,7 +164,10 @@ export class PaymentNotFoundError extends Error {
 
 // Neither rejected nor retried: an event for another account's payment is ignored at once.
 export class ForeignAccountError extends Error {
-  constructor(subject: string) {
+  constructor(
+    subject: string,
+    readonly ownerAccountId: string | null,
+  ) {
     super(`${subject} belongs to another account`);
     this.name = 'ForeignAccountError';
   }
@@ -484,7 +487,10 @@ export class PaymentsService {
       input.provider,
     );
     if (payment && payment.providerAccountId !== input.providerAccountId) {
-      throw new ForeignAccountError(`Reference ${reference.data}`);
+      throw new ForeignAccountError(
+        `Reference ${reference.data}`,
+        payment.providerAccountId,
+      );
     }
 
     return payment;
@@ -501,13 +507,12 @@ export class PaymentsService {
     );
     if (payment) return payment;
 
-    const isForeign = await this.paymentsRepository.hasProviderRefElsewhere(
-      tx,
-      lookup,
-    );
-    if (isForeign) {
+    const foreignPayment =
+      await this.paymentsRepository.findProviderRefElsewhere(tx, lookup);
+    if (foreignPayment) {
       throw new ForeignAccountError(
         `Provider payment ${lookup.providerPaymentId}`,
+        foreignPayment.providerAccountId,
       );
     }
 
