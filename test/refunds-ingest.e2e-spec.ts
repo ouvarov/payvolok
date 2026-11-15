@@ -18,6 +18,7 @@ import {
   PaymentProviderRefOwnedError,
   PaymentsService,
 } from '@/payments/payments.service';
+import { SEED_PROJECT_ID } from '@/projects/projects.constants';
 import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
 import {
   RefundEventInvalidError,
@@ -36,6 +37,7 @@ import {
   insertInboxEvent,
   trackSettled,
   waitUntilBlockedBy,
+  seedColumnsOf,
 } from './helpers';
 
 const POOL_WARMUP_SLEEP_SECONDS = 0.1;
@@ -52,6 +54,7 @@ const refundInputFor = (
 ): IngestRefundInput => ({
   reference: null,
   provider: 'fake',
+  providerAccountId: SEED_FAKE_ACCOUNT_ID,
   providerPaymentId: payment.providerPaymentId as string,
   refundReference: null,
   providerRefundId: randomUUID(),
@@ -83,6 +86,7 @@ describe('Refunds ingest', () => {
         status: 'succeeded',
         amountMinor: 1000,
         currency: 'USD',
+        ...seedColumnsOf(overrides.provider ?? 'fake'),
         ...overrides,
       })
       .returning();
@@ -418,6 +422,7 @@ describe('Refunds ingest', () => {
           await paymentsService.ingestPayment({
             reference: null,
             provider: 'fake',
+            projectId: SEED_PROJECT_ID,
             providerAccountId: SEED_FAKE_ACCOUNT_ID,
             providerPaymentId: payment.providerPaymentId as string,
             status: 'succeeded',
@@ -529,6 +534,7 @@ describe('Refunds ingest', () => {
           await paymentsService.ingestPayment({
             reference: null,
             provider: 'fake',
+            projectId: SEED_PROJECT_ID,
             providerAccountId: SEED_FAKE_ACCOUNT_ID,
             providerPaymentId: payment.providerPaymentId as string,
             status: 'succeeded',
@@ -1002,9 +1008,11 @@ describe('Refunds ingest', () => {
         '/api/v1/payments/:id',
         '/api/v1/payments/:paymentId/refunds',
         '/checkout/paddle',
+        '/checkout/paddle/:providerAccountId',
         '/health/live',
         '/health/ready',
-        '/webhooks/:provider',
+        '/webhooks/:provider/:providerAccountId',
+        '/webhooks/paddle',
       ]);
     });
   });

@@ -23,7 +23,7 @@ import { PaddleProvider } from '@/providers/paddle/paddle.provider';
 import { REFUNDABLE_RECONCILE_DELAY_SECONDS } from '@/reconciliation/reconciliation.constants';
 import { ReconciliationWorker } from '@/reconciliation/reconciliation.worker';
 
-import { createE2eApp, serverOf, TEST_API_KEY } from './helpers';
+import { createE2eApp, seedColumnsOf, serverOf, TEST_API_KEY } from './helpers';
 import { scopedReconciliation } from './scoped-reconciliation';
 
 type FetchHandler = (init: RequestInit | undefined) => Promise<Response>;
@@ -142,6 +142,7 @@ describe('Reconciliation of Paddle refunds', () => {
     const [payment] = await db
       .insert(payments)
       .values({
+        ...seedColumnsOf('paddle'),
         provider: 'paddle',
         providerPaymentId: syntheticPaddleId('txn'),
         purpose: 'one_off',
@@ -214,6 +215,7 @@ describe('Reconciliation of Paddle refunds', () => {
       .insert(refunds)
       .values({
         paymentId: payment.id,
+        ...seedColumnsOf('paddle'),
         provider: 'paddle',
         providerRefundId,
         origin: 'api',
@@ -233,11 +235,7 @@ describe('Reconciliation of Paddle refunds', () => {
         PADDLE_API_KEY: API_KEY,
         PADDLE_WEBHOOK_SECRET: WEBHOOK_SECRET,
       },
-      paddleProvider: new PaddleProvider(
-        { apiKey: API_KEY, webhookSecret: WEBHOOK_SECRET },
-        stubFetch,
-        () => FIXED_NOW_EPOCH_MS,
-      ),
+      paddleProvider: new PaddleProvider(stubFetch, () => FIXED_NOW_EPOCH_MS),
     });
     db = app.get<Database>(DRIZZLE);
     worker = app.get(ReconciliationWorker);

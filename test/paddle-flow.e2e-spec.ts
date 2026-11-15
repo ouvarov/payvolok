@@ -22,9 +22,18 @@ import {
   transactionEventFixture,
   transactionResponseFixture,
 } from '@/providers/paddle/fixtures/paddle-fixtures';
+import {
+  SEED_FAKE_ACCOUNT_ID,
+  SEED_PADDLE_ACCOUNT_ID,
+} from '@/provider-accounts/provider-accounts.constants';
 import { PaddleProvider } from '@/providers/paddle/paddle.provider';
 
-import { createE2eApp, serverOf, TEST_API_KEY } from './helpers';
+import {
+  createE2eApp,
+  SEED_PADDLE_WEBHOOK_PATH,
+  serverOf,
+  TEST_API_KEY,
+} from './helpers';
 import { tick } from './webhook-replay';
 
 type FetchHandler = (init: RequestInit | undefined) => Promise<Response>;
@@ -116,9 +125,10 @@ describe('Paddle provider', () => {
     target: INestApplication,
     rawBody: Buffer,
     signature?: string,
+    path = SEED_PADDLE_WEBHOOK_PATH,
   ) => {
     const delivery = request(serverOf(target))
-      .post('/webhooks/paddle')
+      .post(path)
       .set('Content-Type', 'application/json');
     if (signature !== undefined) {
       delivery.set(PADDLE_SIGNATURE_HEADER, signature);
@@ -301,11 +311,7 @@ describe('Paddle provider', () => {
         PADDLE_WEBHOOK_SECRET: WEBHOOK_SECRET,
         PADDLE_CLIENT_TOKEN: CLIENT_TOKEN,
       },
-      paddleProvider: new PaddleProvider(
-        { apiKey: API_KEY, webhookSecret: WEBHOOK_SECRET },
-        stubFetch,
-        () => FIXED_NOW_EPOCH_MS,
-      ),
+      paddleProvider: new PaddleProvider(stubFetch, () => FIXED_NOW_EPOCH_MS),
     });
     await app.listen(0);
     db = app.get<Database>(DRIZZLE);
@@ -501,13 +507,39 @@ describe('Paddle provider', () => {
     });
   });
 
+  describe('the webhook alias', () => {
+    it('stores a delivery to /webhooks/paddle under the seed Paddle account', async () => {
+      const event = transactionEventFixture('event-transaction-paid');
+      event.event_id = syntheticPaddleId('evt');
+      const webhook = signedPaddleWebhook(
+        event,
+        WEBHOOK_SECRET,
+        FIXED_NOW_EPOCH_MS,
+      );
+
+      await deliver(
+        app,
+        webhook.rawBody,
+        webhook.headers[PADDLE_SIGNATURE_HEADER] as string,
+        '/webhooks/paddle',
+      ).expect(200);
+
+      expect(await inboxRowsWithKey(event.event_id)).toEqual([
+        expect.objectContaining({
+          providerAccountId: SEED_PADDLE_ACCOUNT_ID,
+          signatureValid: true,
+        }),
+      ]);
+    });
+  });
+
   describe('checkout page', () => {
     const nonceOf = (contentSecurityPolicy: string): string | undefined =>
       /script-src 'nonce-([^']+)'/.exec(contentSecurityPolicy)?.[1];
 
-    it('serves Paddle.js with the client token and a fresh nonce, without an API key', async () => {
+    it('serves Paddle.js with the account client token and a fresh nonce, the alias as the seed account', async () => {
       const first = await request(serverOf(app))
-        .get('/checkout/paddle')
+        .get(`/checkout/paddle/${SEED_PADDLE_ACCOUNT_ID}`)
         .query({ _ptxn: syntheticPaddleId('txn') })
         .expect(200);
       const second = await request(serverOf(app))
@@ -527,6 +559,19 @@ describe('Paddle provider', () => {
       expect(nonceOf(second.headers['content-security-policy'])).not.toBe(
         nonce,
       );
+      expect(second.text).toContain(`token: "${CLIENT_TOKEN}"`);
+    });
+
+    it.each([
+      ['an unknown account', '0b9d6f0e-5a4b-4c1e-9f3a-dddddddddddd'],
+      ['a fake account', SEED_FAKE_ACCOUNT_ID],
+      ['a non-uuid', 'not-an-account'],
+    ])('answers 404 for %s', async (_case, accountId) => {
+      const response = await request(serverOf(app))
+        .get(`/checkout/paddle/${accountId}`)
+        .expect(404);
+
+      expect(response.text).not.toContain(CLIENT_TOKEN);
     });
 
     it('never puts the API key, the webhook secret or the query into the page', async () => {
@@ -570,7 +615,7 @@ describe('Paddle provider without configuration', () => {
     const webhook = signedPaddleWebhook(event, WEBHOOK_SECRET, Date.now());
 
     await request(serverOf(app))
-      .post('/webhooks/paddle')
+      .post(SEED_PADDLE_WEBHOOK_PATH)
       .set('Content-Type', 'application/json')
       .set(
         PADDLE_SIGNATURE_HEADER,
@@ -611,7 +656,7 @@ describe('Paddle provider without configuration', () => {
 
     expect(response.body).toMatchObject({ code: 'provider_unavailable' });
     expect(error).toHaveBeenCalledWith(
-      expect.stringContaining('PADDLE_API_KEY is not configured'),
+      expect.stringContaining('paddle api key is not configured'),
     );
   });
 
@@ -628,7 +673,9 @@ describe('Paddle provider without configuration', () => {
     });
     expect(response.text).not.toContain('test_');
     expect(error).toHaveBeenCalledWith(
-      expect.stringContaining('PADDLE_CLIENT_TOKEN'),
+      expect.stringContaining(
+        `paddle account ${SEED_PADDLE_ACCOUNT_ID} has no client token`,
+      ),
     );
   });
 });

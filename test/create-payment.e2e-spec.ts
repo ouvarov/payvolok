@@ -26,6 +26,7 @@ import { IdempotencyRepository } from '@/idempotency/idempotency.repository';
 import { PaymentsRepository } from '@/payments/payments.repository';
 import { PaymentsService } from '@/payments/payments.service';
 import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
+import type { FakeCredentials } from '@/provider-accounts/provider-credentials';
 import { FakeProvider } from '@/providers/fake/fake.provider';
 import {
   ProviderError,
@@ -40,14 +41,20 @@ import {
   databasePoolMax,
   databaseUrl,
   describeOnRealPostgres,
+  fakeSignerOf,
   serverOf,
   TEST_API_KEY,
   waitUntilBlockedBy,
+  type FakeSigner,
 } from './helpers';
 
 const PAYMENTS_PATH = `/${API_V1_PREFIX}/payments`;
 const RETURN_URL = 'https://shop.example.test/return';
-const EXPECTED_WEBHOOK_URL = 'https://payvolok.e2e.test/webhooks/fake';
+const EXPECTED_WEBHOOK_URL = `https://payvolok.e2e.test/webhooks/fake/${SEED_FAKE_ACCOUNT_ID}`;
+const UNUSED_CREDENTIALS: FakeCredentials = {
+  provider: 'fake',
+  webhookSecrets: [],
+};
 const SIGNATURE_HEADER = 'x-fake-signature';
 const LEAK_MARKER = 'LEAKMARKER';
 const PARALLEL_REQUESTS = 20;
@@ -114,16 +121,21 @@ const waitFor = async (isDone: () => boolean): Promise<void> => {
 describe('POST /api/v1/payments', () => {
   let app: INestApplication;
   let db: Database;
-  let fakeProvider: FakeProvider;
+  let fakeProvider: FakeSigner;
+  let fakeAdapter: FakeProvider;
   let createPayment: jest.SpyInstance<
     Promise<CreatedPayment>,
-    [CreatePaymentInput]
+    [FakeCredentials, CreatePaymentInput]
   >;
 
   const realCreatePayment = (
     input: CreatePaymentInput,
   ): Promise<CreatedPayment> =>
-    FakeProvider.prototype.createPayment.call(fakeProvider, input);
+    FakeProvider.prototype.createPayment.call(
+      fakeAdapter,
+      UNUSED_CREDENTIALS,
+      input,
+    );
 
   const postPayment = (
     body: unknown,
@@ -238,7 +250,8 @@ describe('POST /api/v1/payments', () => {
     app = await createE2eApp();
     await app.listen(0);
     db = app.get<Database>(DRIZZLE);
-    fakeProvider = app.get(FakeProvider);
+    fakeAdapter = app.get(FakeProvider);
+    fakeProvider = await fakeSignerOf(app);
   }, SLOW_TEST_TIMEOUT_MS);
 
   afterAll(async () => {
@@ -246,7 +259,7 @@ describe('POST /api/v1/payments', () => {
   });
 
   beforeEach(() => {
-    createPayment = jest.spyOn(fakeProvider, 'createPayment');
+    createPayment = jest.spyOn(fakeAdapter, 'createPayment');
   });
 
   afterEach(() => {
@@ -269,7 +282,7 @@ describe('POST /api/v1/payments', () => {
       });
       expect(response.headers['idempotent-replayed']).toBeUndefined();
       expect(createPayment).toHaveBeenCalledTimes(1);
-      expect(createPayment).toHaveBeenCalledWith({
+      expect(createPayment).toHaveBeenCalledWith(expect.anything(), {
         reference: paymentId,
         amountMinor: body.amountMinor,
         currency: 'USD',
@@ -315,7 +328,7 @@ describe('POST /api/v1/payments', () => {
       async (_case, webhookCount, finalStatus, laterEvents) => {
         const body = paymentBodyWith();
         let providerPaymentId = '';
-        createPayment.mockImplementation(async (input) => {
+        createPayment.mockImplementation(async (_credentials, input) => {
           const created = await realCreatePayment(input);
           providerPaymentId = created.providerPaymentId;
           const webhooks = fakeProvider
@@ -523,7 +536,7 @@ describe('POST /api/v1/payments', () => {
       const key = newKey();
       const body = paymentBodyWith();
       let concurrent: request.Response | null = null;
-      createPayment.mockImplementation(async (input) => {
+      createPayment.mockImplementation(async (_credentials, input) => {
         concurrent = await postPayment(body, key);
 
         return realCreatePayment(input);
@@ -726,7 +739,7 @@ describe('POST /api/v1/payments', () => {
       let recovery: request.Response | null = null;
       let keyAfterRecovery: IdempotencyKey | null = null;
       let providerPaymentId = '';
-      createPayment.mockImplementation(async (input) => {
+      createPayment.mockImplementation(async (_credentials, input) => {
         await ageKey(key, IDEMPOTENCY_LEASE_SECONDS + 1);
         recovery = await postPayment(body, key);
         keyAfterRecovery = await keyRowOf(key);
@@ -762,7 +775,7 @@ describe('POST /api/v1/payments', () => {
       const { warn } = muteLogs();
       const key = newKey();
       const body = paymentBodyWith();
-      createPayment.mockImplementation(async (input) => {
+      createPayment.mockImplementation(async (_credentials, input) => {
         await ageKey(key, IDEMPOTENCY_LEASE_SECONDS + 1);
         await postPayment(body, key).expect(503);
 
@@ -784,7 +797,7 @@ describe('POST /api/v1/payments', () => {
       const key = newKey();
       const body = paymentBodyWith();
       let recovery: request.Response | null = null;
-      createPayment.mockImplementation(async (input) => {
+      createPayment.mockImplementation(async (_credentials, input) => {
         const created = await realCreatePayment(input);
         const [pendingWebhook] = fakeProvider.buildPaymentWebhooks(
           created.providerPaymentId,
@@ -821,7 +834,7 @@ describe('POST /api/v1/payments', () => {
 
     it('keeps a pending status a webhook set when the provider call then fails', async () => {
       muteLogs();
-      createPayment.mockImplementation(async (input) => {
+      createPayment.mockImplementation(async (_credentials, input) => {
         const created = await realCreatePayment(input);
         const [pendingWebhook] = fakeProvider.buildPaymentWebhooks(
           created.providerPaymentId,
@@ -880,7 +893,7 @@ describe('POST /api/v1/payments', () => {
         const queryAnswers: boolean[] = [];
         jest
           .spyOn(provider, 'createPayment')
-          .mockImplementation(async (input) => {
+          .mockImplementation(async (credentials, input) => {
             queryAnswers.push(
               await isSettledWithin(
                 singleConnectionDb.execute(sql`select 1`),
@@ -888,7 +901,11 @@ describe('POST /api/v1/payments', () => {
               ),
             );
 
-            return FakeProvider.prototype.createPayment.call(provider, input);
+            return FakeProvider.prototype.createPayment.call(
+              provider,
+              credentials,
+              input,
+            );
           });
 
         try {
@@ -940,7 +957,7 @@ describe('POST /api/v1/payments', () => {
 
             return insertIfAbsent(tx, row);
           });
-        createPayment.mockImplementation(async (input) => {
+        createPayment.mockImplementation(async (_credentials, input) => {
           await waitFor(() => settledCount === PARALLEL_REQUESTS - 1);
 
           return realCreatePayment(input);

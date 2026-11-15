@@ -9,10 +9,9 @@ import { refunds } from '@/database/schemas/refunds.schema';
 import { webhookEvents } from '@/database/schemas/webhook-events.schema';
 import { SEED_PROJECT_ID } from '@/projects/projects.constants';
 import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
-import { FakeProvider } from '@/providers/fake/fake.provider';
 import { WebhooksService } from '@/webhooks/webhooks.service';
 
-import { createE2eApp } from './helpers';
+import { createE2eApp, fakeSignerOf } from './helpers';
 import {
   createApiPayment,
   createApiRefund,
@@ -48,9 +47,10 @@ describe('project and account columns of API rows', () => {
       app,
       uniqueAmountMinor(),
     );
-    const webhooks = app
-      .get(FakeProvider)
-      .buildPaymentWebhooks(providerPaymentId, new Date());
+    const webhooks = (await fakeSignerOf(app)).buildPaymentWebhooks(
+      providerPaymentId,
+      new Date(),
+    );
     for (const webhook of webhooks) {
       expect(await deliverWebhook(app, webhook)).toBe(200);
     }

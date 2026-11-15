@@ -24,6 +24,7 @@ import { IDEMPOTENCY_LEASE_SECONDS } from '@/idempotency/idempotency.constants';
 import { IdempotencyRepository } from '@/idempotency/idempotency.repository';
 import { PaymentsRepository } from '@/payments/payments.repository';
 import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
+import type { FakeCredentials } from '@/provider-accounts/provider-credentials';
 import { encodeFakeId } from '@/providers/fake/fake-wire-format';
 import { FakeProvider } from '@/providers/fake/fake.provider';
 import {
@@ -32,7 +33,6 @@ import {
   type RefundInput,
   type WebhookRequest,
 } from '@/providers/payment-provider.port';
-import { ProviderRegistry } from '@/providers/provider.registry';
 import { UNCONFIRMED_REFUND_RECONCILE_DELAY_SECONDS } from '@/refunds/refund.constants';
 import { RefundsService } from '@/refunds/refunds.service';
 import { WebhookEventProcessor } from '@/webhooks/webhook-event.processor';
@@ -41,9 +41,12 @@ import {
   createE2eApp,
   databaseUrl,
   describeOnRealPostgres,
+  fakeSignerOf,
   serverOf,
   TEST_API_KEY,
   waitUntilBlockedBy,
+  seedColumnsOf,
+  type FakeSigner,
 } from './helpers';
 
 const SIGNATURE_HEADER = 'x-fake-signature';
@@ -74,16 +77,25 @@ const waitFor = async (isDone: () => boolean): Promise<void> => {
 describe('POST /api/v1/payments/:paymentId/refunds', () => {
   let app: INestApplication;
   let db: Database;
-  let fakeProvider: FakeProvider;
-  let refund: jest.SpyInstance<Promise<CreatedRefund>, [RefundInput]>;
+  let fakeProvider: FakeSigner;
+  let fakeAdapter: FakeProvider;
+  let refund: jest.SpyInstance<
+    Promise<CreatedRefund>,
+    [FakeCredentials, RefundInput]
+  >;
 
   const realRefund = (input: RefundInput): Promise<CreatedRefund> =>
-    FakeProvider.prototype.refund.call(fakeProvider, input);
+    FakeProvider.prototype.refund.call(
+      fakeAdapter,
+      { provider: 'fake', webhookSecrets: [] },
+      input,
+    );
 
   const useReferenceIdentity = () =>
-    jest
-      .spyOn(app.get(ProviderRegistry), 'refundIdentityOf')
-      .mockReturnValue('reference');
+    jest.replaceProperty(fakeAdapter, 'capabilities', {
+      ...fakeAdapter.capabilities,
+      refundIdentity: 'reference',
+    });
 
   const postRefund = (
     paymentId: string,
@@ -120,6 +132,7 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
         origin: 'api',
         status: 'succeeded',
         currency: 'USD',
+        ...seedColumnsOf(overrides.provider ?? 'fake'),
         ...overrides,
         amountMinor,
       })
@@ -135,6 +148,7 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
   ): Promise<void> => {
     await db.insert(refunds).values({
       paymentId,
+      ...seedColumnsOf('fake'),
       provider: 'fake',
       providerRefundId: randomUUID(),
       origin: 'provider',
@@ -268,7 +282,8 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
     app = await createE2eApp();
     await app.listen(0);
     db = app.get<Database>(DRIZZLE);
-    fakeProvider = app.get(FakeProvider);
+    fakeAdapter = app.get(FakeProvider);
+    fakeProvider = await fakeSignerOf(app);
   }, SLOW_TEST_TIMEOUT_MS);
 
   afterAll(async () => {
@@ -276,7 +291,7 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
   });
 
   beforeEach(() => {
-    refund = jest.spyOn(fakeProvider, 'refund');
+    refund = jest.spyOn(fakeAdapter, 'refund');
   });
 
   afterEach(() => {
@@ -288,7 +303,7 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
       const payment = await insertPayment();
       const key = newKey();
       let rowsDuringCall: Refund[] | null = null;
-      refund.mockImplementation(async (input) => {
+      refund.mockImplementation(async (_credentials, input) => {
         rowsDuringCall = await refundRowsOf(payment.id);
 
         return realRefund(input);
@@ -311,7 +326,7 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
       expect(response.headers['idempotent-replayed']).toBeUndefined();
       expect(rowsDuringCall).toEqual([]);
       expect(refund).toHaveBeenCalledTimes(1);
-      expect(refund).toHaveBeenCalledWith({
+      expect(refund).toHaveBeenCalledWith(expect.anything(), {
         reference: refundId,
         providerPaymentId: payment.providerPaymentId,
         amountMinor: REFUND_AMOUNT_MINOR,
@@ -339,7 +354,7 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
 
     it('counts the money once when the webhook lands during the provider call', async () => {
       const payment = await insertPayment();
-      refund.mockImplementation(async (input) => {
+      refund.mockImplementation(async (_credentials, input) => {
         const created = await realRefund(input);
         await processSignedWebhook(
           fakeProvider.buildWebhook({
@@ -423,7 +438,7 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
       useReferenceIdentity();
       const payment = await insertPayment();
       let rowsDuringCall: Refund[] = [];
-      refund.mockImplementation(async (input) => {
+      refund.mockImplementation(async (_credentials, input) => {
         rowsDuringCall = await refundRowsOf(payment.id);
 
         return realRefund(input);
@@ -441,6 +456,7 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
       const created = await (refund.mock.results[0]
         .value as Promise<CreatedRefund>);
       expect(refund).toHaveBeenCalledWith(
+        expect.anything(),
         expect.objectContaining({ reference: refundId }),
       );
       expect(rowsDuringCall).toEqual([
@@ -694,7 +710,7 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
       const key = newKey();
       const body = { amountMinor: REFUND_AMOUNT_MINOR };
       let concurrent: request.Response | null = null;
-      refund.mockImplementation(async (input) => {
+      refund.mockImplementation(async (_credentials, input) => {
         concurrent = await postRefund(payment.id, body, key);
 
         return realRefund(input);
@@ -717,7 +733,7 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
       const payment = await insertPayment();
       const otherKey = newKey();
       let concurrent: request.Response | null = null;
-      refund.mockImplementation(async (input) => {
+      refund.mockImplementation(async (_credentials, input) => {
         concurrent = await postRefund(
           payment.id,
           { amountMinor: REFUND_AMOUNT_MINOR },
@@ -839,7 +855,7 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
       muteLogs();
       useReferenceIdentity();
       const payment = await insertPayment();
-      refund.mockImplementation(async (input) => {
+      refund.mockImplementation(async (_credentials, input) => {
         const created = await realRefund(input);
         for (const webhook of fakeProvider.buildRefundWebhooks(
           created.providerRefundId as string,
@@ -1021,7 +1037,7 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
       const key = newKey();
       const body = { amountMinor: REFUND_AMOUNT_MINOR };
       let recovery: request.Response | null = null;
-      refund.mockImplementation(async (input) => {
+      refund.mockImplementation(async (_credentials, input) => {
         await ageKey(key, IDEMPOTENCY_LEASE_SECONDS + 1);
         recovery = await postRefund(payment.id, body, key);
 
@@ -1030,7 +1046,7 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
 
       const owner = await postRefund(payment.id, body, key).expect(503);
 
-      const refundId = refund.mock.calls[0][0].reference;
+      const refundId = refund.mock.calls[0][1].reference;
       expect(recovery).toMatchObject({ status: 503, text: owner.text });
       expect(await refundRowsOf(payment.id)).toEqual([
         expect.objectContaining({ id: refundId, status: 'succeeded' }),
@@ -1128,7 +1144,7 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
 
             return locked;
           });
-        refund.mockImplementation(async (input) => {
+        refund.mockImplementation(async (_credentials, input) => {
           await waitFor(() => settledCount === 1);
 
           return realRefund(input);

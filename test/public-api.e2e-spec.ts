@@ -18,7 +18,15 @@ import { payments, type Payment } from '@/database/schemas/payments.schema';
 import { PaymentsRepository } from '@/payments/payments.repository';
 import { FakeProvider } from '@/providers/fake/fake.provider';
 
-import { createE2eApp, serverOf, TEST_API_KEY } from './helpers';
+import {
+  createE2eApp,
+  fakeSignerOf,
+  seedColumnsOf,
+  SEED_FAKE_WEBHOOK_PATH,
+  serverOf,
+  TEST_API_KEY,
+  type FakeSigner,
+} from './helpers';
 
 const SIGNATURE_HEADER = 'x-fake-signature';
 const LEAK_MARKER = 'LEAKMARKER';
@@ -81,7 +89,7 @@ class UndeclaredOutsideApiController {
 describe('Public API', () => {
   let app: INestApplication;
   let db: Database;
-  let fakeProvider: FakeProvider;
+  let fakeProvider: FakeSigner;
 
   const get = (path: string, authorization?: string) => {
     const call = request(serverOf(app)).get(path);
@@ -105,6 +113,7 @@ describe('Public API', () => {
         status: 'pending',
         amountMinor: 1000,
         currency: 'USD',
+        ...seedColumnsOf('fake'),
       })
       .returning();
 
@@ -131,7 +140,7 @@ describe('Public API', () => {
       SIGNATURE_HEADER
     ] as string;
     const call = request(serverOf(app))
-      .post('/webhooks/fake')
+      .post(SEED_FAKE_WEBHOOK_PATH)
       .set('Content-Type', 'application/octet-stream')
       .set(SIGNATURE_HEADER, signature);
 
@@ -159,7 +168,7 @@ describe('Public API', () => {
     });
     await app.listen(0);
     db = app.get<Database>(DRIZZLE);
-    fakeProvider = app.get(FakeProvider);
+    fakeProvider = await fakeSignerOf(app);
   });
 
   afterAll(async () => {

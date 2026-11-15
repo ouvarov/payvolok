@@ -48,9 +48,10 @@ import {
   ProviderError,
   type WebhookRequest,
 } from '@/providers/payment-provider.port';
+import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
+import { ProviderAccountsModule } from '@/provider-accounts/provider-accounts.module';
+import { ProviderAccountsService } from '@/provider-accounts/provider-accounts.service';
 import { dedupKeyFromBody } from '@/providers/provider-events';
-import { ProviderRegistry } from '@/providers/provider.registry';
-import { ProvidersModule } from '@/providers/providers.module';
 import {
   MAX_ATTEMPTS,
   WebhookEventProcessor,
@@ -68,6 +69,9 @@ import {
   deliverTo,
   describeOnRealPostgres,
   FAKE_SIGNATURE_HEADER,
+  fakeSignerOf,
+  SEED_FAKE_WEBHOOK_PATH,
+  type FakeSigner,
   insertInboxEvent,
   seedColumnsOf,
   serverOf,
@@ -179,7 +183,7 @@ const invalidKeyOf = (rawBody: Buffer): string =>
 describe('Webhooks route', () => {
   let app: INestApplication;
   let db: Database;
-  let fakeProvider: FakeProvider;
+  let fakeProvider: FakeSigner;
 
   const signatureOf = (rawBody: Buffer): string =>
     fakeProvider.signRawBody(rawBody).headers[FAKE_SIGNATURE_HEADER] as string;
@@ -211,7 +215,7 @@ describe('Webhooks route', () => {
     app = await createE2eApp();
     await app.listen(0);
     db = app.get<Database>(DRIZZLE);
-    fakeProvider = app.get(FakeProvider);
+    fakeProvider = await fakeSignerOf(app);
   };
 
   beforeAll(startApp, SLOW_TEST_TIMEOUT_MS);
@@ -328,7 +332,7 @@ describe('Webhooks route', () => {
       const rawBody = Buffer.alloc(0);
 
       await request(serverOf(app))
-        .post('/webhooks/fake')
+        .post(SEED_FAKE_WEBHOOK_PATH)
         .set(FAKE_SIGNATURE_HEADER, signatureOf(rawBody))
         .expect(200);
 
@@ -445,7 +449,7 @@ describe('Webhooks route', () => {
       const rawBody = nonJsonBody();
 
       await request(serverOf(app))
-        .post('/webhooks/fake')
+        .post(SEED_FAKE_WEBHOOK_PATH)
         .send(rawBody)
         .expect(401);
 
@@ -465,7 +469,7 @@ describe('Webhooks route', () => {
 
     it('rejects an empty body with a signature that is not for zero bytes', async () => {
       await request(serverOf(app))
-        .post('/webhooks/fake')
+        .post(SEED_FAKE_WEBHOOK_PATH)
         .set(FAKE_SIGNATURE_HEADER, WRONG_SIGNATURE)
         .expect(401);
     });
@@ -518,7 +522,7 @@ describe('Webhooks route', () => {
 
         try {
           await freshApp.listen(0);
-          const freshProvider = freshApp.get(FakeProvider);
+          const freshProvider = await fakeSignerOf(freshApp);
           const bodies = Array.from(
             { length: INVALID_ROWS_CAP + 1 },
             nonJsonBody,
@@ -540,7 +544,7 @@ describe('Webhooks route', () => {
           expect(warn).toHaveBeenCalledTimes(1);
 
           await request(serverOf(freshApp))
-            .post('/webhooks/fake')
+            .post(SEED_FAKE_WEBHOOK_PATH)
             .set(
               FAKE_SIGNATURE_HEADER,
               freshProvider.signRawBody(lastBody).headers[
@@ -560,7 +564,7 @@ describe('Webhooks route', () => {
   describe('failures', () => {
     it('answers 503 and stores nothing when verification is impossible', async () => {
       const logs = errorAndWarnLogs();
-      jest.spyOn(fakeProvider, 'verifyWebhook').mockRejectedValue(
+      jest.spyOn(app.get(FakeProvider), 'verifyWebhook').mockRejectedValue(
         new ProviderError(LEAK_MARKER, {
           providerCode: 'fake',
           kind: 'unavailable',
@@ -585,7 +589,7 @@ describe('Webhooks route', () => {
       const logs = errorAndWarnLogs();
       const eventId = randomUUID();
       const rawBody = wireBody(eventId);
-      jest.spyOn(fakeProvider, 'parseWebhook').mockReturnValue([
+      jest.spyOn(app.get(FakeProvider), 'parseWebhook').mockReturnValue([
         {
           type: `unknown\u0000${LEAK_MARKER}`,
           rawType: null,
@@ -674,9 +678,11 @@ describe('Webhooks route', () => {
   describe('a parse failure', () => {
     it('stores a received row under the body hash and answers 200', async () => {
       const logs = errorAndWarnLogs();
-      jest.spyOn(fakeProvider, 'parseWebhook').mockImplementation(() => {
-        throw new Error(LEAK_MARKER);
-      });
+      jest
+        .spyOn(app.get(FakeProvider), 'parseWebhook')
+        .mockImplementation(() => {
+          throw new Error(LEAK_MARKER);
+        });
       const rawBody = wireBody();
 
       const response = await deliver(rawBody).expect(200);
@@ -728,15 +734,17 @@ describe('Webhooks route', () => {
         '/api/v1/payments/:id',
         '/api/v1/payments/:paymentId/refunds',
         '/checkout/paddle',
+        '/checkout/paddle/:providerAccountId',
         '/health/live',
         '/health/ready',
-        '/webhooks/:provider',
+        '/webhooks/:provider/:providerAccountId',
+        '/webhooks/paddle',
       ]);
     });
 
-    it('exports only the registry from ProvidersModule', () => {
-      expect(Reflect.getMetadata('exports', ProvidersModule)).toEqual([
-        ProviderRegistry,
+    it('exports only its service from ProviderAccountsModule', () => {
+      expect(Reflect.getMetadata('exports', ProviderAccountsModule)).toEqual([
+        ProviderAccountsService,
       ]);
     });
   });
@@ -1126,6 +1134,7 @@ describe('Webhooks route', () => {
         .values(
           Array.from({ length: count }, (_value, index) => ({
             provider: 'fake' as const,
+            providerAccountId: SEED_FAKE_ACCOUNT_ID,
             dedupKey: randomUUID(),
             status: 'received' as const,
             signatureValid: true,
@@ -1151,6 +1160,7 @@ describe('Webhooks route', () => {
           status: 'created',
           amountMinor: 1000,
           currency: 'USD',
+          ...seedColumnsOf(overrides.provider ?? 'fake'),
           ...overrides,
         })
         .returning();
@@ -2602,7 +2612,7 @@ describe('Webhooks route', () => {
                     headers[FAKE_SIGNATURE_HEADER] as string,
                   ).expect(401);
                   await request(serverOf(app))
-                    .post('/webhooks/fake')
+                    .post(SEED_FAKE_WEBHOOK_PATH)
                     .send(unsignedBody)
                     .expect(401);
                 },
@@ -2746,7 +2756,7 @@ describe('Webhooks route', () => {
           await deliverTo(
             closedApp,
             pendingWebhook.rawBody,
-            closedApp.get(FakeProvider).signRawBody(pendingWebhook.rawBody)
+            (await fakeSignerOf(closedApp)).signRawBody(pendingWebhook.rawBody)
               .headers[FAKE_SIGNATURE_HEADER] as string,
           ).expect(200);
           await closedApp.close();
@@ -2792,7 +2802,7 @@ describe('Webhooks route', () => {
             }
             await claimNext.mock.results[0].value;
             await sleep(WORKER_WAIT_POLL_MS);
-            const workerProvider = workerApp.get(FakeProvider);
+            const workerProvider = await fakeSignerOf(workerApp);
             const webhook = workerProvider.buildWebhook({
               eventId: randomUUID(),
               occurredAt: null,
@@ -2899,9 +2909,9 @@ describe('Webhooks route', () => {
             const workerDb = workerApp.get<Database>(DRIZZLE);
             await warmPool(workerDb);
             const { payment, providerPaymentId } = await rowFirstPayment(1000);
-            const [pendingWebhook] = workerApp
-              .get(FakeProvider)
-              .buildPaymentWebhooks(providerPaymentId, new Date());
+            const [pendingWebhook] = (
+              await fakeSignerOf(workerApp)
+            ).buildPaymentWebhooks(providerPaymentId, new Date());
 
             const responses = await Promise.all(
               Array.from({ length: PARALLEL_DELIVERIES }, () =>
@@ -2951,9 +2961,9 @@ describe('Webhooks route', () => {
           });
           try {
             const { payment, providerPaymentId } = await rowFirstPayment(1000);
-            const [pendingWebhook] = receiverApp
-              .get(FakeProvider)
-              .buildPaymentWebhooks(providerPaymentId, new Date());
+            const [pendingWebhook] = (
+              await fakeSignerOf(receiverApp)
+            ).buildPaymentWebhooks(providerPaymentId, new Date());
 
             await post(pendingWebhook, receiverApp);
             const { id } = await inboxRowFor(pendingWebhook);
