@@ -37,9 +37,7 @@ describe('PaddleCheckoutService', () => {
   });
 
   it('renders Paddle.js in sandbox mode with the account token and a matching nonce', async () => {
-    const paddleCheckoutOf = jest
-      .fn()
-      .mockResolvedValue(checkoutAccountWith());
+    const paddleCheckoutOf = jest.fn().mockResolvedValue(checkoutAccountWith());
 
     const page = await serviceWith(paddleCheckoutOf).render(
       SEED_PADDLE_ACCOUNT_ID,
@@ -61,9 +59,7 @@ describe('PaddleCheckoutService', () => {
 
   it('renders Paddle.js in live mode for a live account', async () => {
     const page = await serviceWith(
-      jest
-        .fn()
-        .mockResolvedValue(checkoutAccountWith({ environment: 'live' })),
+      jest.fn().mockResolvedValue(checkoutAccountWith({ environment: 'live' })),
     ).render(SEED_PADDLE_ACCOUNT_ID);
 
     expect(page.html).not.toContain('Paddle.Environment');
