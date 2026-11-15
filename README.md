@@ -32,7 +32,7 @@ Copy `.env.example` to `.env` first. The app refuses to start when `DATABASE_URL
 docker compose up --build
 ```
 
-This starts Postgres, applies migrations and then starts the API on <http://localhost:3000>. The credentials in `docker-compose.yml` are local development values only. To use the `fake` provider, seed its account once: `docker compose run --rm migrate node dist/database/seed-fake-account.js` (see Projects and provider accounts).
+This starts Postgres, applies migrations and then starts the API on <http://localhost:3000>. The credentials in `docker-compose.yml` are local development values only. To use the `fake` provider, seed its account once: `docker compose run --rm migrate node dist/database/seed-fake-account.js --target-host db` (see Projects and provider accounts).
 
 ### Without Docker
 
@@ -45,7 +45,7 @@ In another terminal, set `DATABASE_URL=postgres://postgres@127.0.0.1:55432/postg
 
 ```bash
 npm run db:migrate
-npm run db:seed:fake   # only to use the fake provider
+npm run db:seed:fake -- --target-host 127.0.0.1   # only to use the fake provider
 npm run start:dev
 ```
 
@@ -57,19 +57,19 @@ The e2e tests apply migrations to `E2E_DATABASE_URL` once, before the Jest worke
 
 ## Scripts
 
-| Script                                        | What it does                                                                                                                               |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `npm run build`                               | Compile to `dist/`                                                                                                                         |
-| `npm run start:dev`                           | Run with file watching                                                                                                                     |
-| `npm run start:prod`                          | Run the compiled build                                                                                                                     |
-| `npm run lint` / `format:check` / `typecheck` | ESLint, Prettier check, `tsc --noEmit`                                                                                                     |
-| `npm run check`                               | typecheck, lint and format check                                                                                                           |
-| `npm test`                                    | Unit tests                                                                                                                                 |
-| `npm run test:e2e`                            | End-to-end tests; read `E2E_DATABASE_URL` from `.env`, which must name an existing throwaway database other than the one in `DATABASE_URL` |
-| `npm run db:generate`                         | Generate a Drizzle migration from the schema                                                                                               |
-| `npm run db:migrate` / `db:migrate:prod`      | Apply migrations from sources / from the build                                                                                             |
-| `npm run db:seed:fake`                        | Add the seed project's `fake` provider account to `DATABASE_URL`; refuses `NODE_ENV=production`                                            |
-| `npm run db:local`                            | In-memory Postgres for development and e2e                                                                                                 |
+| Script                                         | What it does                                                                                                                               |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `npm run build`                                | Compile to `dist/`                                                                                                                         |
+| `npm run start:dev`                            | Run with file watching                                                                                                                     |
+| `npm run start:prod`                           | Run the compiled build                                                                                                                     |
+| `npm run lint` / `format:check` / `typecheck`  | ESLint, Prettier check, `tsc --noEmit`                                                                                                     |
+| `npm run check`                                | typecheck, lint and format check                                                                                                           |
+| `npm test`                                     | Unit tests                                                                                                                                 |
+| `npm run test:e2e`                             | End-to-end tests; read `E2E_DATABASE_URL` from `.env`, which must name an existing throwaway database other than the one in `DATABASE_URL` |
+| `npm run db:generate`                          | Generate a Drizzle migration from the schema                                                                                               |
+| `npm run db:migrate` / `db:migrate:prod`       | Apply migrations from sources / from the build                                                                                             |
+| `npm run db:seed:fake -- --target-host <host>` | Add the seed project's `fake` provider account to `DATABASE_URL`, whose host must equal `<host>`; refuses `NODE_ENV=production`            |
+| `npm run db:local`                             | In-memory Postgres for development and e2e                                                                                                 |
 
 The role's 10 s `statement_timeout` also applies to migrations: a long statement in a migration needs `SET LOCAL statement_timeout = 0` before it.
 
@@ -181,7 +181,7 @@ Migration `0008` adds the schedule columns. It must be applied to the production
 
 ## Projects and provider accounts
 
-Every payment, refund and idempotency key belongs to a project, and every payment, refund and webhook row to a provider account of that project. A project has at most one account per provider. For now there is one project, `payvolok-demo` (`5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a01`), with the Paddle account `5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a02` (credentials from the `PADDLE_*` variables); the API and the webhook routes use it. The `fake` account `5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a03` exists only where fake rows already existed when migration `0009` ran, or after `npm run db:seed:fake`; without it `fake` payments answer `422 provider_not_available` and `POST /webhooks/fake` answers 404. Production has no fake account. The e2e setup seeds it after the migrations.
+Every payment, refund and idempotency key belongs to a project, and every payment, refund and webhook row to a provider account of that project. A project has at most one account per provider. For now there is one project, `payvolok-demo` (`5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a01`), with the Paddle account `5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a02` (credentials from the `PADDLE_*` variables); the API and the webhook routes use it. The `fake` account `5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a03` exists only where fake rows already existed when migration `0009` ran, or after `npm run db:seed:fake -- --target-host <host>`, where `<host>` must be the host of `DATABASE_URL`: the script prints the host it would write to and refuses a missing or different one, so a `.env` pointed at another database cannot get the account by mistake; without it `fake` payments answer `422 provider_not_available` and `POST /webhooks/fake` answers 404. Production has no fake account. The e2e setup seeds it after the migrations.
 
 ## Fake provider
 

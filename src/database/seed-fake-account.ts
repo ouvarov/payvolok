@@ -1,3 +1,5 @@
+import { parseArgs } from 'node:util';
+
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
@@ -9,17 +11,46 @@ import {
   SEED_FAKE_CREDENTIALS_REF,
 } from '../provider-accounts/provider-accounts.constants';
 
-type SeedTarget = { databaseUrl: string; nodeEnv: string };
+type SeedTarget = {
+  databaseUrl: string;
+  nodeEnv: string;
+  targetHost: string | null;
+};
 
-const seedFakeAccount = async ({
+const hostOf = (databaseUrl: string): string =>
+  new URL(databaseUrl).hostname.toLowerCase();
+
+// NODE_ENV defaults to development, so a .env pointed at production would pass
+// on it alone; the operator has to name the host the row goes to.
+const assertSeedTarget = ({
   databaseUrl,
   nodeEnv,
-}: SeedTarget): Promise<void> => {
+  targetHost,
+}: SeedTarget): void => {
   if (nodeEnv === 'production') {
     throw new Error('The fake provider account is never seeded in production');
   }
 
-  const client = postgres(databaseUrl, { max: 1, onnotice: () => {} });
+  const databaseHost = hostOf(databaseUrl);
+  if (targetHost === null) {
+    throw new Error(
+      `DATABASE_URL points at ${databaseHost}; pass --target-host ${databaseHost} to seed it`,
+    );
+  }
+  if (targetHost.toLowerCase() !== databaseHost) {
+    throw new Error(
+      `--target-host ${targetHost} does not match the DATABASE_URL host ${databaseHost}`,
+    );
+  }
+};
+
+const seedFakeAccount = async (target: SeedTarget): Promise<void> => {
+  assertSeedTarget(target);
+
+  const client = postgres(target.databaseUrl, {
+    max: 1,
+    onnotice: () => {},
+  });
 
   try {
     await drizzle(client).execute(sql`
@@ -36,8 +67,16 @@ const runSeed = async (): Promise<void> => {
   const { DATABASE_URL, NODE_ENV } = envSchema
     .pick({ DATABASE_URL: true, NODE_ENV: true })
     .parse(process.env);
+  const { values } = parseArgs({
+    options: { 'target-host': { type: 'string' } },
+  });
 
-  await seedFakeAccount({ databaseUrl: DATABASE_URL, nodeEnv: NODE_ENV });
+  console.log(`Seeding the fake provider account on ${hostOf(DATABASE_URL)}`);
+  await seedFakeAccount({
+    databaseUrl: DATABASE_URL,
+    nodeEnv: NODE_ENV,
+    targetHost: values['target-host'] ?? null,
+  });
   console.log('Fake provider account seeded');
 };
 
@@ -48,4 +87,4 @@ if (require.main === module) {
   });
 }
 
-export { seedFakeAccount };
+export { assertSeedTarget, seedFakeAccount };
