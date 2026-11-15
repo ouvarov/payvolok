@@ -69,6 +69,7 @@ import {
   describeOnRealPostgres,
   FAKE_SIGNATURE_HEADER,
   insertInboxEvent,
+  seedColumnsOf,
   serverOf,
 } from './helpers';
 import {
@@ -1246,7 +1247,7 @@ describe('Webhooks route', () => {
         },
       );
 
-      it('births one provider row from a signed renewal and dedups its redelivery', async () => {
+      it('births one provider row under the delivery account from a signed renewal and dedups its redelivery', async () => {
         const event = paymentWireEvent({
           purpose: 'subscription_renewal',
           providerSubscriptionId: randomUUID(),
@@ -1266,11 +1267,13 @@ describe('Webhooks route', () => {
           origin: 'provider',
           purpose: 'subscription_renewal',
           status: 'succeeded',
+          ...seedColumnsOf('fake'),
         });
         expect(inboxRows[0]).toMatchObject({
           status: 'processed',
           attempts: 1,
           paymentIds: [payment.id],
+          providerAccountId: seedColumnsOf('fake').providerAccountId,
         });
         expect(await paymentEventsOf(payment.id)).toMatchObject([
           {

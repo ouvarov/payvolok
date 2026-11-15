@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { DatabaseModule } from '@/database/database.module';
 import { PaymentsModule } from '@/payments/payments.module';
+import { ProviderAccountsModule } from '@/provider-accounts/provider-accounts.module';
 import { ProvidersModule } from '@/providers/providers.module';
 import { RefundsModule } from '@/refunds/refunds.module';
 
@@ -12,7 +13,13 @@ import { WebhooksRepository } from './webhooks.repository';
 import { WebhooksService } from './webhooks.service';
 
 @Module({
-  imports: [DatabaseModule, PaymentsModule, ProvidersModule, RefundsModule],
+  imports: [
+    DatabaseModule,
+    PaymentsModule,
+    ProviderAccountsModule,
+    ProvidersModule,
+    RefundsModule,
+  ],
   controllers: [WebhooksController],
   providers: [
     WebhookEventProcessor,

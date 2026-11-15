@@ -228,6 +228,7 @@ export class ReconciliationService {
       const ingested = await this.paymentsService.ingestPayment({
         reference: claimed.id,
         provider: claimed.provider,
+        providerAccountId: claimed.providerAccountId,
         providerPaymentId: providerStatus.providerPaymentId,
         status: targetStatus,
         amountMinor: providerStatus.amountMinor,

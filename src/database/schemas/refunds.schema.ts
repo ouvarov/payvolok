@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import {
   bigint,
   check,
+  foreignKey,
   index,
   pgTable,
   text,
@@ -11,9 +12,11 @@ import {
 } from 'drizzle-orm/pg-core';
 
 import { PAYMENT_ORIGINS } from '../../payments/payment.constants';
+import { SEED_PROJECT_ID } from '../../projects/projects.constants';
 import { PROVIDER_CODES } from '../../providers/provider.constants';
 import {
   REFUND_STATUSES,
+  REFUNDS_ACCOUNT_PROVIDER_REF_UNIQUE,
   REFUNDS_PROVIDER_REF_UNIQUE,
 } from '../../refunds/refund.constants';
 
@@ -39,12 +42,27 @@ const refunds = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
       .default(sql`clock_timestamp()`),
+    projectId: uuid('project_id').notNull().default(SEED_PROJECT_ID),
+    providerAccountId: uuid('provider_account_id'),
   },
   (table) => [
     unique(REFUNDS_PROVIDER_REF_UNIQUE).on(
       table.provider,
       table.providerRefundId,
     ),
+    unique(REFUNDS_ACCOUNT_PROVIDER_REF_UNIQUE).on(
+      table.providerAccountId,
+      table.providerRefundId,
+    ),
+    foreignKey({
+      name: 'refunds_payment_project_account_fk',
+      columns: [table.paymentId, table.projectId, table.providerAccountId],
+      foreignColumns: [
+        payments.id,
+        payments.projectId,
+        payments.providerAccountId,
+      ],
+    }),
     index('refunds_payment_id_created_at_id_idx').on(
       table.paymentId,
       table.createdAt,

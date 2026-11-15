@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import {
   bigint,
   check,
+  foreignKey,
   index,
   integer,
   pgTable,
@@ -16,12 +17,16 @@ import {
   PAYMENT_ORIGINS,
   PAYMENT_PURPOSES,
   PAYMENT_STATUSES,
+  PAYMENTS_ACCOUNT_PROVIDER_REF_UNIQUE,
   PAYMENTS_PROVIDER_REF_UNIQUE,
   RECONCILABLE_PAYMENT_STATUSES,
   RECONCILE_GRACE_SECONDS,
 } from '../../payments/payment.constants';
+import { SEED_PROJECT_ID } from '../../projects/projects.constants';
 import { PROVIDER_CODES } from '../../providers/provider.constants';
 
+import { projects } from './projects.schema';
+import { providerAccounts } from './provider-accounts.schema';
 import { quotedList } from './schema-helpers';
 import { webhookEvents } from './webhook-events.schema';
 
@@ -52,12 +57,38 @@ const payments = pgTable(
     ),
     reconciledAt: timestamp('reconciled_at', { withTimezone: true }),
     reconcileAttempts: integer('reconcile_attempts').notNull().default(0),
+    projectId: uuid('project_id').notNull().default(SEED_PROJECT_ID),
+    providerAccountId: uuid('provider_account_id'),
   },
   (table) => [
     unique(PAYMENTS_PROVIDER_REF_UNIQUE).on(
       table.provider,
       table.providerPaymentId,
     ),
+    unique(PAYMENTS_ACCOUNT_PROVIDER_REF_UNIQUE).on(
+      table.providerAccountId,
+      table.providerPaymentId,
+    ),
+    unique('payments_id_project_id_provider_account_id_unique').on(
+      table.id,
+      table.projectId,
+      table.providerAccountId,
+    ),
+    unique('payments_id_project_id_unique').on(table.id, table.projectId),
+    foreignKey({
+      name: 'payments_project_id_projects_id_fk',
+      columns: [table.projectId],
+      foreignColumns: [projects.id],
+    }),
+    foreignKey({
+      name: 'payments_provider_account_fk',
+      columns: [table.providerAccountId, table.projectId, table.provider],
+      foreignColumns: [
+        providerAccounts.id,
+        providerAccounts.projectId,
+        providerAccounts.provider,
+      ],
+    }),
     check(
       'payments_purpose_check',
       sql`${table.purpose} IN (${quotedList(PAYMENT_PURPOSES)})`,

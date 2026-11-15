@@ -8,6 +8,7 @@ import {
   type IngestPaymentResult,
   type PaymentsService,
 } from '@/payments/payments.service';
+import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
 import {
   ProviderError,
   type PaymentProvider,
@@ -40,6 +41,7 @@ const claimedWith = (
 ): ClaimedPayment => ({
   id: PAYMENT_ID,
   provider: 'fake',
+  providerAccountId: SEED_FAKE_ACCOUNT_ID,
   providerPaymentId: 'provider-1',
   status: 'pending',
   purpose: 'one_off',
@@ -140,6 +142,7 @@ describe('ReconciliationService', () => {
       expect(ingestPayment).toHaveBeenCalledWith({
         reference: PAYMENT_ID,
         provider: 'fake',
+        providerAccountId: SEED_FAKE_ACCOUNT_ID,
         providerPaymentId: 'provider-1',
         status: 'succeeded',
         amountMinor: 1000,

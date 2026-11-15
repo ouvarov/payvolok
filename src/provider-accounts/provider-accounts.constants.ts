@@ -1,0 +1,17 @@
+const PROVIDER_ACCOUNT_STATUSES = ['active', 'disabled'] as const;
+
+const SEED_PADDLE_ACCOUNT_ID = '5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a02';
+const SEED_FAKE_ACCOUNT_ID = '5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a03';
+const SEED_PADDLE_CREDENTIALS_REF = 'env:PADDLE';
+const SEED_FAKE_CREDENTIALS_REF = 'env:FAKE';
+
+type ProviderAccountStatus = (typeof PROVIDER_ACCOUNT_STATUSES)[number];
+
+export {
+  PROVIDER_ACCOUNT_STATUSES,
+  SEED_FAKE_ACCOUNT_ID,
+  SEED_FAKE_CREDENTIALS_REF,
+  SEED_PADDLE_ACCOUNT_ID,
+  SEED_PADDLE_CREDENTIALS_REF,
+};
+export type { ProviderAccountStatus };

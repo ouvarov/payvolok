@@ -3,6 +3,7 @@ import {
   boolean,
   check,
   customType,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -17,6 +18,7 @@ import {
 import { PROVIDER_CODES } from '../../providers/provider.constants';
 import { WEBHOOK_EVENT_STATUSES } from '../../webhooks/webhook-event.constants';
 
+import { providerAccounts } from './provider-accounts.schema';
 import { quotedList } from './schema-helpers';
 
 const bytea = customType<{ data: Buffer; driverData: Buffer }>({
@@ -54,11 +56,20 @@ const webhookEvents = pgTable(
       .notNull()
       .default(sql`clock_timestamp()`),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
+    providerAccountId: uuid('provider_account_id'),
   },
   (table) => [
     uniqueIndex('webhook_events_provider_dedup_key_unique')
       .on(table.provider, table.dedupKey)
       .where(sql`${table.replayOf} IS NULL`),
+    uniqueIndex('webhook_events_provider_account_id_dedup_key_unique')
+      .on(table.providerAccountId, table.dedupKey)
+      .where(sql`${table.replayOf} IS NULL`),
+    foreignKey({
+      name: 'webhook_events_provider_account_id_provider_accounts_id_fk',
+      columns: [table.providerAccountId],
+      foreignColumns: [providerAccounts.id],
+    }),
     index('webhook_events_replay_of_idx')
       .on(table.replayOf)
       .where(sql`${table.replayOf} IS NOT NULL`),

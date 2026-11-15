@@ -38,6 +38,8 @@ const RECONCILIATION_INTERRUPTED_REASON = 'reconciliation_interrupted';
 
 const PAYMENTS_PROVIDER_REF_UNIQUE =
   'payments_provider_provider_payment_id_unique';
+const PAYMENTS_ACCOUNT_PROVIDER_REF_UNIQUE =
+  'payments_provider_account_id_provider_payment_id_unique';
 
 type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
 type PaymentPurpose = (typeof PAYMENT_PURPOSES)[number];
@@ -50,6 +52,7 @@ export {
   PAYMENT_ORIGINS,
   PAYMENT_PURPOSES,
   PAYMENT_STATUSES,
+  PAYMENTS_ACCOUNT_PROVIDER_REF_UNIQUE,
   PAYMENTS_PROVIDER_REF_UNIQUE,
   RECONCILABLE_PAYMENT_STATUSES,
   RECONCILE_GRACE_SECONDS,

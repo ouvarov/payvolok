@@ -8,7 +8,6 @@ import {
   type NewWebhookEvent,
   type WebhookEvent,
 } from '@/database/schemas/webhook-events.schema';
-import type { ProviderCode } from '@/providers/provider.constants';
 
 // The 10 s statement_timeout bounds each statement, not a delivery that runs one transaction per event.
 const LEASE_SECONDS = 300;
@@ -16,6 +15,7 @@ const LEASE_SECONDS = 300;
 type ReceivedDelivery = Pick<
   NewWebhookEvent,
   | 'provider'
+  | 'providerAccountId'
   | 'dedupKey'
   | 'rawBody'
   | 'headers'
@@ -23,9 +23,15 @@ type ReceivedDelivery = Pick<
   | 'failureReason'
 >;
 
+type InvalidDelivery = Pick<
+  NewWebhookEvent,
+  'provider' | 'providerAccountId' | 'dedupKey'
+>;
+
 type ClaimedWebhookEvent = {
   id: string;
   provider: string;
+  providerAccountId: string | null;
   replayOf: string | null;
   attempts: number;
 };
@@ -51,6 +57,7 @@ type WebhookEventFinish =
 type ClaimedRow = {
   id: string;
   provider: string;
+  provider_account_id: string | null;
   replay_of: string | null;
   attempts: number;
 };
@@ -68,13 +75,9 @@ export class WebhooksRepository {
     });
   }
 
-  async insertInvalidIfAbsent(
-    provider: ProviderCode,
-    dedupKey: string,
-  ): Promise<void> {
+  async insertInvalidIfAbsent(delivery: InvalidDelivery): Promise<void> {
     await this.insertIfAbsent({
-      provider,
-      dedupKey,
+      ...delivery,
       status: 'ignored',
       signatureValid: false,
       finishedAt: sql`clock_timestamp()`,
@@ -95,13 +98,14 @@ export class WebhooksRepository {
         LIMIT 1
         FOR UPDATE SKIP LOCKED
       )
-      RETURNING id, provider, replay_of, attempts
+      RETURNING id, provider, provider_account_id, replay_of, attempts
     `);
     if (!row) return null;
 
     return {
       id: row.id,
       provider: row.provider,
+      providerAccountId: row.provider_account_id,
       replayOf: row.replay_of,
       attempts: row.attempts,
     };
@@ -153,8 +157,8 @@ export class WebhooksRepository {
   async insertReplay(originalId: string): Promise<string | null> {
     const [row] = await this.db.execute<{ id: string }>(sql`
       INSERT INTO webhook_events
-        (provider, dedup_key, status, signature_valid, replay_of, next_attempt_at)
-      SELECT provider, dedup_key, 'received', true, coalesce(replay_of, id), clock_timestamp()
+        (provider, provider_account_id, dedup_key, status, signature_valid, replay_of, next_attempt_at)
+      SELECT provider, provider_account_id, dedup_key, 'received', true, coalesce(replay_of, id), clock_timestamp()
       FROM webhook_events
       WHERE id = ${originalId} AND signature_valid
       RETURNING id

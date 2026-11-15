@@ -14,6 +14,10 @@ import {
   storableText,
 } from '@/common/storable-text';
 import { describeError } from '@/database/postgres-errors';
+import {
+  ProviderAccountsService,
+  type AccountRef,
+} from '@/provider-accounts/provider-accounts.service';
 import type {
   PaymentProvider,
   WebhookRequest,
@@ -58,6 +62,7 @@ export class WebhooksService {
   >();
 
   constructor(
+    private readonly providerAccountsService: ProviderAccountsService,
     private readonly providerRegistry: ProviderRegistry,
     private readonly webhooksRepository: WebhooksRepository,
     private readonly webhookWorker: WebhookWorker,
@@ -79,6 +84,8 @@ export class WebhooksService {
   ): Promise<void> {
     const provider = this.providerRegistry.find(providerCode);
     if (!provider) throw new NotFoundException();
+    const account = await this.seedAccountOf(provider.code);
+    if (!account) throw new NotFoundException();
 
     const request: WebhookRequest = {
       rawBody: Buffer.isBuffer(body) ? body : Buffer.alloc(0),
@@ -86,11 +93,28 @@ export class WebhooksService {
     };
 
     if (!(await this.isSignatureValid(provider, request))) {
-      await this.storeInvalidDelivery(provider.code, request.rawBody);
+      await this.storeInvalidDelivery(
+        provider.code,
+        account.id,
+        request.rawBody,
+      );
       throw new UnauthorizedException();
     }
 
-    await this.storeDelivery(provider, request);
+    await this.storeDelivery(provider, account.id, request);
+  }
+
+  private async seedAccountOf(
+    provider: ProviderCode,
+  ): Promise<AccountRef | null> {
+    try {
+      return await this.providerAccountsService.seedAccountOf(provider);
+    } catch (error) {
+      this.logger.error(
+        `Webhook account lookup failed for ${provider}: ${describeError(error)}`,
+      );
+      throw new ServiceUnavailableException();
+    }
   }
 
   private async isSignatureValid(
@@ -109,6 +133,7 @@ export class WebhooksService {
 
   private async storeInvalidDelivery(
     provider: ProviderCode,
+    providerAccountId: string,
     rawBody: Buffer,
   ): Promise<void> {
     const attempts = this.countInvalidAttempt(provider);
@@ -124,10 +149,11 @@ export class WebhooksService {
     const bodyHash = createHash('sha256').update(rawBody).digest('hex');
 
     try {
-      await this.webhooksRepository.insertInvalidIfAbsent(
+      await this.webhooksRepository.insertInvalidIfAbsent({
         provider,
-        `${INVALID_DEDUP_KEY_PREFIX}${bodyHash}`,
-      );
+        providerAccountId,
+        dedupKey: `${INVALID_DEDUP_KEY_PREFIX}${bodyHash}`,
+      });
     } catch (error) {
       this.logger.error(
         `Webhook invalid-signature row failed for ${provider}: ${describeError(error)}`,
@@ -156,6 +182,7 @@ export class WebhooksService {
 
   private async storeDelivery(
     provider: PaymentProvider,
+    providerAccountId: string,
     request: WebhookRequest,
   ): Promise<void> {
     const events = this.parseOrNull(provider, request);
@@ -164,6 +191,7 @@ export class WebhooksService {
     try {
       isInserted = await this.webhooksRepository.insertReceivedIfAbsent({
         provider: provider.code,
+        providerAccountId,
         dedupKey: events
           ? storableDedupKey(events[0].dedupKey)
           : dedupKeyFromBody(request.rawBody),

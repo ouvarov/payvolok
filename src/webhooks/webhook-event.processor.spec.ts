@@ -6,6 +6,7 @@ import {
   PaymentNotFoundError,
   type PaymentsService,
 } from '@/payments/payments.service';
+import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
 import { FakeProvider } from '@/providers/fake/fake.provider';
 import type { ProviderRegistry } from '@/providers/provider.registry';
 import {
@@ -59,6 +60,7 @@ const claimedWith = (
 ): ClaimedWebhookEvent => ({
   id: WEBHOOK_EVENT_ID,
   provider: 'fake',
+  providerAccountId: SEED_FAKE_ACCOUNT_ID,
   replayOf: null,
   attempts: 1,
   ...overrides,
@@ -130,12 +132,13 @@ describe('WebhookEventProcessor', () => {
   });
 
   describe('payment events', () => {
-    it('passes the event facts, its reason and the inbox id to the ingest', async () => {
+    it('passes the event facts, its reason, the inbox id and its account to the ingest', async () => {
       await processEvents([paymentEventWith()]);
 
       expect(ingestPayment).toHaveBeenCalledWith({
         reference: 'reference-1',
         provider: 'fake',
+        providerAccountId: SEED_FAKE_ACCOUNT_ID,
         providerPaymentId: 'provider-payment-1',
         status: 'failed',
         amountMinor: 1000,

@@ -25,6 +25,7 @@ import {
 import { IdempotencyRepository } from '@/idempotency/idempotency.repository';
 import { PaymentsRepository } from '@/payments/payments.repository';
 import { PaymentsService } from '@/payments/payments.service';
+import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
 import { FakeProvider } from '@/providers/fake/fake.provider';
 import {
   ProviderError,
@@ -213,12 +214,16 @@ describe('POST /api/v1/payments', () => {
       })
       .returning({ id: webhookEvents.id });
 
-    const finish = await app
-      .get(WebhookEventProcessor)
-      .process(
-        { id, provider: 'fake', replayOf: null, attempts: 1 },
-        { rawBody: webhook.rawBody, headers },
-      );
+    const finish = await app.get(WebhookEventProcessor).process(
+      {
+        id,
+        provider: 'fake',
+        providerAccountId: SEED_FAKE_ACCOUNT_ID,
+        replayOf: null,
+        attempts: 1,
+      },
+      { rawBody: webhook.rawBody, headers },
+    );
 
     expect(finish.status).toBe('processed');
   };
