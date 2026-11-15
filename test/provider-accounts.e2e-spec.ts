@@ -24,6 +24,10 @@ import {
   SEED_FAKE_ACCOUNT_ID,
   SEED_PADDLE_ACCOUNT_ID,
 } from '@/provider-accounts/provider-accounts.constants';
+import {
+  ProviderAccountsRepository,
+  type StoredAccount,
+} from '@/provider-accounts/provider-accounts.repository';
 import { ProviderAccountsService } from '@/provider-accounts/provider-accounts.service';
 import { encodeFakeId } from '@/providers/fake/fake-wire-format';
 import type { WebhookRequest } from '@/providers/payment-provider.port';
@@ -153,7 +157,7 @@ describe('provider accounts', () => {
   };
 
   const insertPayment = async (
-    account: TestAccount,
+    account: Pick<TestAccount, 'projectId' | 'accountId'>,
     overrides: Partial<NewPayment> = {},
   ): Promise<Payment> => {
     const id = randomUUID();
@@ -460,7 +464,69 @@ describe('provider accounts', () => {
   });
 
   describe('a disabled account', () => {
-    // The API refund is left out: until 3.5c its idempotency key gets the seed project, which project B's payment refuses.
+    // Only this app reads the seed account as disabled: other spec files create fake payments on it in parallel.
+    const readSeedFakeAccountAsDisabled = (): void => {
+      const repository = app.get(ProviderAccountsRepository);
+      const findById = repository.findById.bind(repository);
+      const findByProjectAndProvider =
+        repository.findByProjectAndProvider.bind(repository);
+      const asDisabled = (account: StoredAccount | null) =>
+        account?.id === SEED_FAKE_ACCOUNT_ID
+          ? { ...account, status: 'disabled' as const }
+          : account;
+
+      jest
+        .spyOn(repository, 'findById')
+        .mockImplementation(async (accountId) =>
+          asDisabled(await findById(accountId)),
+        );
+      jest
+        .spyOn(repository, 'findByProjectAndProvider')
+        .mockImplementation(async (projectId, provider) =>
+          asDisabled(await findByProjectAndProvider(projectId, provider)),
+        );
+    };
+
+    // Project B cannot take the API refund until 3.5c: its idempotency key gets the seed project.
+    it('refunds a payment of the seed account through the API while refusing it new payments', async () => {
+      const payment = await insertPayment(
+        { projectId: SEED_PROJECT_ID, accountId: SEED_FAKE_ACCOUNT_ID },
+        { status: 'succeeded' },
+      );
+      readSeedFakeAccountAsDisabled();
+
+      const newPayment = await request(serverOf(app))
+        .post(PAYMENTS_PATH)
+        .set('Authorization', `Bearer ${TEST_API_KEY}`)
+        .set('Idempotency-Key', randomUUID())
+        .send({
+          provider: 'fake',
+          amountMinor: 1000,
+          currency: 'USD',
+          description: 'disabled account check',
+          returnUrl: 'https://shop.example.test/return',
+        })
+        .expect(422);
+      const refund = await request(serverOf(app))
+        .post(`${PAYMENTS_PATH}/${payment.id}/refunds`)
+        .set('Authorization', `Bearer ${TEST_API_KEY}`)
+        .set('Idempotency-Key', randomUUID())
+        .send({ amountMinor: 100 })
+        .expect(201);
+
+      expect(newPayment.body).toMatchObject({ code: 'provider_not_available' });
+      expect(refund.body).toMatchObject({
+        paymentId: payment.id,
+        status: 'succeeded',
+      });
+      expect(
+        await db
+          .select({ providerAccountId: refunds.providerAccountId })
+          .from(refunds)
+          .where(eq(refunds.paymentId, payment.id)),
+      ).toEqual([{ providerAccountId: SEED_FAKE_ACCOUNT_ID }]);
+    });
+
     it('still takes its webhooks and its reconciliation', async () => {
       const pendingPayment = await insertPayment(b);
       const duePayment = await insertDuePayment(b);
