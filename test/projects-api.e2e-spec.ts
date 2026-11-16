@@ -26,6 +26,7 @@ import {
   IdempotencyRepository,
   type IdempotentRequest,
 } from '@/idempotency/idempotency.repository';
+import { PaymentsService } from '@/payments/payments.service';
 import { API_KEY_PATTERN } from '@/projects/api-key';
 import { createApiKey } from '@/projects/create-api-key';
 import { FakeProvider } from '@/providers/fake/fake.provider';
@@ -495,6 +496,35 @@ describe('projects in the API', () => {
 
     it('is 404 on refund and leaves no refund and no key', async () => {
       const payment = await insertPaymentOf(b, 'succeeded');
+      const key = newKey();
+
+      const response = await request(serverOf(app))
+        .post(`${PAYMENTS_PATH}/${payment.id}/refunds`)
+        .set('Authorization', `Bearer ${a.apiKey}`)
+        .set('Idempotency-Key', key)
+        .send({ amountMinor: 100 })
+        .expect(404);
+
+      expect(response.body).toMatchObject({ code: 'payment_not_found' });
+      expect(
+        await db
+          .select()
+          .from(refunds)
+          .where(eq(refunds.paymentId, payment.id)),
+      ).toEqual([]);
+      expect(await keyRowsNamed(key)).toEqual([]);
+    });
+
+    it('is 404 on refund from the lock alone when the pre-check lets it through', async () => {
+      const payment = await insertPaymentOf(b, 'succeeded');
+      const paymentsService = app.get(PaymentsService);
+      const findPaymentInProject =
+        paymentsService.findPaymentInProject.bind(paymentsService);
+      jest
+        .spyOn(paymentsService, 'findPaymentInProject')
+        .mockImplementation((_projectId, paymentId) =>
+          findPaymentInProject(b.projectId, paymentId),
+        );
       const key = newKey();
 
       const response = await request(serverOf(app))
