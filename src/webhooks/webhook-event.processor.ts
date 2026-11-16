@@ -9,19 +9,21 @@ import {
   isPermanentDataError,
 } from '@/database/postgres-errors';
 import {
+  ForeignAccountError,
   IngestRejectedError,
   PaymentNotFoundError,
   PaymentsService,
 } from '@/payments/payments.service';
 import { PAYMENT_STATUS_BY_EVENT_TYPE } from '@/payments/provider-event-status';
-import type { ProviderCode } from '@/providers/provider.constants';
+import { ProviderAccountsService } from '@/provider-accounts/provider-accounts.service';
+import { accountLabelOf } from '@/providers/bound-provider';
+import type { BoundProvider } from '@/providers/payment-provider.port';
 import type {
   ProviderEvent,
   ProviderEvents,
   ProviderPaymentEvent,
   ProviderRefundEvent,
 } from '@/providers/provider-events';
-import { ProviderRegistry } from '@/providers/provider.registry';
 import { REFUND_STATUS_BY_EVENT_TYPE } from '@/refunds/refund-event-status';
 import {
   RefundPaymentNotFoundError,
@@ -40,7 +42,7 @@ const MAX_LAST_ERROR_LENGTH = 1000;
 
 type EventResult =
   | { kind: 'handled'; paymentId: string; note: string | null }
-  | { kind: 'skipped' }
+  | { kind: 'skipped'; note: string | null }
   | { kind: 'rejected' | 'retryable'; error: string };
 
 const isDomainError = (error: unknown): error is Error =>
@@ -56,10 +58,21 @@ const lastErrorOf = (error: unknown): string =>
     ? storableText(error.message, MAX_LAST_ERROR_LENGTH)
     : describeError(error);
 
-const failedResultOf = (error: unknown): EventResult => ({
-  kind: isRejected(error) ? 'rejected' : 'retryable',
-  error: lastErrorOf(error),
-});
+const SKIPPED: EventResult = { kind: 'skipped', note: null };
+
+const failedResultOf = (error: unknown): EventResult => {
+  if (error instanceof ForeignAccountError) {
+    return {
+      kind: 'skipped',
+      note: storableText(error.message, MAX_LAST_ERROR_LENGTH),
+    };
+  }
+
+  return {
+    kind: isRejected(error) ? 'rejected' : 'retryable',
+    error: lastErrorOf(error),
+  };
+};
 
 const paymentIdsOf = (results: readonly EventResult[]): string[] => [
   ...new Set(
@@ -78,7 +91,10 @@ const firstErrorOf = (results: readonly EventResult[]): string | null =>
 
 const firstNoteOf = (results: readonly EventResult[]): string | null =>
   results.flatMap((result) =>
-    result.kind === 'handled' && result.note !== null ? [result.note] : [],
+    (result.kind === 'handled' || result.kind === 'skipped') &&
+    result.note !== null
+      ? [result.note]
+      : [],
   )[0] ?? null;
 
 @Injectable()
@@ -86,7 +102,7 @@ export class WebhookEventProcessor {
   private readonly logger = new Logger(WebhookEventProcessor.name);
 
   constructor(
-    private readonly providerRegistry: ProviderRegistry,
+    private readonly providerAccountsService: ProviderAccountsService,
     private readonly paymentsService: PaymentsService,
     private readonly refundsService: RefundsService,
   ) {}
@@ -99,11 +115,16 @@ export class WebhookEventProcessor {
       return this.fail(claimed, 'Attempts ran out in an interrupted run', []);
     }
 
-    const provider = this.providerRegistry.find(claimed.provider);
-    if (!provider) {
-      return this.fail(claimed, 'Provider is not registered', []);
-    }
     if (!delivery) return this.fail(claimed, 'Delivery has no body', []);
+
+    let provider: BoundProvider;
+    try {
+      provider = await this.bind(claimed);
+    } catch (error) {
+      return this.finishOf(claimed, [
+        { kind: 'retryable', error: lastErrorOf(error) },
+      ]);
+    }
 
     let events: ProviderEvents;
     try {
@@ -116,27 +137,51 @@ export class WebhookEventProcessor {
 
     const results: EventResult[] = [];
     for (const event of events) {
-      results.push(await this.handle(claimed, provider.code, event));
+      results.push(await this.handle(claimed, provider, event));
     }
 
     return this.finishOf(claimed, results);
   }
 
+  private bind(claimed: ClaimedWebhookEvent): Promise<BoundProvider> {
+    if (claimed.providerAccountId === null) {
+      return Promise.reject(
+        new Error(`Webhook event ${claimed.id} has no provider account`),
+      );
+    }
+
+    return this.providerAccountsService.bind(claimed.providerAccountId);
+  }
+
   private async handle(
     claimed: ClaimedWebhookEvent,
-    providerCode: ProviderCode,
+    provider: BoundProvider,
     event: ProviderEvent,
   ): Promise<EventResult> {
     try {
-      return await this.apply(claimed, providerCode, event);
+      return await this.apply(claimed, provider, event);
     } catch (error) {
+      if (error instanceof ForeignAccountError) {
+        this.warnForeignAccount(claimed, provider, error);
+      }
       return failedResultOf(error);
     }
   }
 
+  // A signed event naming another account's payment means a misrouted destination or a shared secret.
+  private warnForeignAccount(
+    claimed: ClaimedWebhookEvent,
+    provider: BoundProvider,
+    error: ForeignAccountError,
+  ): void {
+    this.logger.warn(
+      `Webhook event ${claimed.id} on ${accountLabelOf(provider)} ignored: ${error.message}, account ${error.ownerAccountId ?? 'none'}`,
+    );
+  }
+
   private apply(
     claimed: ClaimedWebhookEvent,
-    providerCode: ProviderCode,
+    provider: BoundProvider,
     event: ProviderEvent,
   ): Promise<EventResult> {
     switch (event.type) {
@@ -145,18 +190,18 @@ export class WebhookEventProcessor {
       case 'payment.succeeded':
       case 'payment.failed':
       case 'payment.expired':
-        return this.applyPayment(claimed, providerCode, event);
+        return this.applyPayment(claimed.id, provider, event);
       case 'refund.pending':
       case 'refund.succeeded':
       case 'refund.failed':
-        return this.applyRefund(claimed.id, providerCode, event);
+        return this.applyRefund(claimed.id, provider, event);
       case 'subscription.activated':
       case 'subscription.past_due':
       case 'subscription.paused':
       case 'subscription.canceled':
       case 'subscription.expired':
       case 'unknown':
-        return Promise.resolve({ kind: 'skipped' });
+        return Promise.resolve(SKIPPED);
       default: {
         const unhandledEvent: never = event;
         throw new Error(`Unhandled event ${String(unhandledEvent)}`);
@@ -165,15 +210,16 @@ export class WebhookEventProcessor {
   }
 
   private async applyPayment(
-    claimed: ClaimedWebhookEvent,
-    providerCode: ProviderCode,
+    webhookEventId: string,
+    provider: BoundProvider,
     event: ProviderPaymentEvent,
   ): Promise<EventResult> {
     const status = PAYMENT_STATUS_BY_EVENT_TYPE[event.type];
     const { payment, outcome } = await this.paymentsService.ingestPayment({
       reference: event.reference,
-      provider: providerCode,
-      providerAccountId: claimed.providerAccountId,
+      provider: provider.code,
+      projectId: provider.projectId,
+      providerAccountId: provider.accountId,
       providerPaymentId: event.providerPaymentId,
       status,
       amountMinor: event.amountMinor,
@@ -183,7 +229,7 @@ export class WebhookEventProcessor {
         event.failureReason ?? event.type,
         MAX_FAILURE_REASON_LENGTH,
       ),
-      webhookEventId: claimed.id,
+      webhookEventId,
     });
 
     return {
@@ -198,18 +244,19 @@ export class WebhookEventProcessor {
 
   private async applyRefund(
     webhookEventId: string,
-    providerCode: ProviderCode,
+    provider: BoundProvider,
     event: ProviderRefundEvent,
   ): Promise<EventResult> {
     const status = REFUND_STATUS_BY_EVENT_TYPE[event.type];
     const { refund, refundOutcome, payment } =
       await this.refundsService.ingestRefund({
         reference: event.reference,
-        provider: providerCode,
+        provider: provider.code,
+        providerAccountId: provider.accountId,
         providerPaymentId: event.providerPaymentId,
         refundReference: event.refundReference,
         providerRefundId: event.providerRefundId,
-        refundIdentity: this.providerRegistry.refundIdentityOf(providerCode),
+        refundIdentity: provider.capabilities.refundIdentity,
         status,
         amountMinor: event.amountMinor,
         currency: event.currency,
@@ -247,7 +294,7 @@ export class WebhookEventProcessor {
       };
     }
 
-    return { status: 'ignored', lastError: null, paymentIds };
+    return { status: 'ignored', lastError: firstNoteOf(results), paymentIds };
   }
 
   private retryOrFail(

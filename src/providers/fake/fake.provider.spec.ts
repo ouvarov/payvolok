@@ -1,10 +1,35 @@
 import { ProviderError, type WebhookRequest } from '../payment-provider.port';
+import { RedactedSecret } from '../provider-credentials';
 import type { ProviderPaymentEvent } from '../provider-events';
+import { boundProviderOf } from '../bound-provider';
 
+import type { FakeWireBody } from './fake-wire-format';
 import { FakeProvider } from './fake.provider';
 
-const SECRET = Buffer.alloc(32, 1);
-const OTHER_SECRET = Buffer.alloc(32, 2);
+const SECRET = new RedactedSecret('1'.repeat(64));
+const OTHER_SECRET = new RedactedSecret('2'.repeat(64));
+const ACCOUNT = {
+  id: '0b9d6f0e-5a4b-4c1e-9f3a-aaaaaaaaaaaa',
+  projectId: '0b9d6f0e-5a4b-4c1e-9f3a-bbbbbbbbbbbb',
+};
+
+const fakeProviderWith = (
+  secret: RedactedSecret,
+  webhookSecrets: readonly RedactedSecret[] = [secret],
+) => {
+  const adapter = new FakeProvider();
+
+  return {
+    ...boundProviderOf(ACCOUNT, adapter, { provider: 'fake', webhookSecrets }),
+    buildWebhook: (wireBody: FakeWireBody) =>
+      adapter.buildWebhook(secret, wireBody),
+    signRawBody: (rawBody: Buffer) => adapter.signRawBody(secret, rawBody),
+    buildPaymentWebhooks: (providerPaymentId: string, startedAt: Date) =>
+      adapter.buildPaymentWebhooks(secret, providerPaymentId, startedAt),
+    buildRefundWebhooks: (providerRefundId: string, startedAt: Date) =>
+      adapter.buildRefundWebhooks(secret, providerRefundId, startedAt),
+  };
+};
 const STARTED_AT = new Date('2026-01-01T00:00:00.000Z');
 const SIGNATURE_HEADER = 'x-fake-signature';
 
@@ -51,7 +76,7 @@ const withHeader = (
 });
 
 describe('FakeProvider', () => {
-  const fakeProvider = new FakeProvider(SECRET);
+  const fakeProvider = fakeProviderWith(SECRET);
 
   const eventTypesOf = (webhooks: WebhookRequest[]): string[] =>
     webhooks.flatMap((webhook) =>
@@ -146,8 +171,27 @@ describe('FakeProvider', () => {
       ).resolves.toBe(false);
     });
 
+    it('accepts a signature made with any of its secrets', async () => {
+      const rotatingProvider = fakeProviderWith(SECRET, [OTHER_SECRET, SECRET]);
+
+      await expect(
+        rotatingProvider.verifyWebhook(
+          fakeProviderWith(OTHER_SECRET).signRawBody(signedRequest.rawBody),
+        ),
+      ).resolves.toBe(true);
+      await expect(rotatingProvider.verifyWebhook(signedRequest)).resolves.toBe(
+        true,
+      );
+    });
+
+    it('rejects as misconfigured when the account has no secret', async () => {
+      await expect(
+        fakeProviderWith(SECRET, []).verifyWebhook(signedRequest),
+      ).rejects.toMatchObject({ providerCode: 'fake', kind: 'misconfigured' });
+    });
+
     it('rejects a signature made with another secret', async () => {
-      const otherProvider = new FakeProvider(OTHER_SECRET);
+      const otherProvider = fakeProviderWith(OTHER_SECRET);
 
       await expect(
         fakeProvider.verifyWebhook(
@@ -158,7 +202,7 @@ describe('FakeProvider', () => {
   });
 
   it('produces identical bytes from two instances with one secret', async () => {
-    const otherProvider = new FakeProvider(SECRET);
+    const otherProvider = fakeProviderWith(SECRET);
     const input = paymentInputWith(1002);
 
     const created = await fakeProvider.createPayment(input);
@@ -415,7 +459,7 @@ describe('FakeProvider', () => {
         const input = refundInputWith(providerPaymentId, amountMinor);
 
         const created = await fakeProvider.refund(input);
-        const freshProvider = new FakeProvider(SECRET);
+        const freshProvider = fakeProviderWith(SECRET);
 
         expect(created.status).toBe(status);
         await expect(freshProvider.refund(input)).resolves.toEqual(created);
@@ -648,7 +692,9 @@ describe('FakeProvider', () => {
         currency: 'USD',
       });
 
-      await expect(fakeProvider.listRefunds()).resolves.toEqual([]);
+      await expect(
+        fakeProvider.listRefunds(providerPaymentId),
+      ).resolves.toEqual([]);
     });
   });
 

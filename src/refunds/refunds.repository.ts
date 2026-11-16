@@ -11,7 +11,6 @@ import {
   type NewRefund,
   type Refund,
 } from '@/database/schemas/refunds.schema';
-import type { ProviderCode } from '@/providers/provider.constants';
 
 import type { RefundStatus } from './refund.constants';
 
@@ -86,7 +85,7 @@ export class RefundsRepository {
 
   async findByProviderRef(
     tx: DatabaseTransaction,
-    provider: ProviderCode,
+    providerAccountId: string,
     providerRefundId: string,
   ): Promise<Refund | null> {
     const [refund] = await tx
@@ -94,7 +93,7 @@ export class RefundsRepository {
       .from(refunds)
       .where(
         and(
-          eq(refunds.provider, provider),
+          eq(refunds.providerAccountId, providerAccountId),
           eq(refunds.providerRefundId, providerRefundId),
         ),
       );

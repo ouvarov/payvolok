@@ -2,9 +2,10 @@ import { Logger } from '@nestjs/common';
 
 import type { Payment } from '@/database/schemas/payments.schema';
 import type { Refund } from '@/database/schemas/refunds.schema';
+import { SEED_PADDLE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
 import {
   ProviderError,
-  type PaymentProvider,
+  type BoundProvider,
   type ProviderRefundRecord,
   type RefundIdentity,
   type ResourceStatus,
@@ -24,7 +25,6 @@ import {
 
 const PAYMENT: RefundablePayment = {
   id: '0b9d6f0e-5a4b-4c1e-9f3a-111111111111',
-  provider: 'paddle',
   providerPaymentId: 'txn_01jcsyntheticpayment000001',
 };
 const PENDING_REFUND_ID = '8c6f9a52-0d6c-4c8e-9a7b-1f2e3d4c5b6a';
@@ -75,12 +75,14 @@ describe('RefundReconciliationService', () => {
   let error: jest.SpyInstance;
   let service: RefundReconciliationService;
 
-  const providerWith = (refundIdentity: RefundIdentity): PaymentProvider =>
+  const providerWith = (refundIdentity: RefundIdentity): BoundProvider =>
     ({
+      accountId: SEED_PADDLE_ACCOUNT_ID,
+      code: 'paddle',
       capabilities: { refundIdentity },
       listRefunds,
       getStatus,
-    }) as unknown as PaymentProvider;
+    }) as unknown as BoundProvider;
 
   beforeEach(() => {
     listRefunds = jest
@@ -125,6 +127,7 @@ describe('RefundReconciliationService', () => {
       expect(ingestRefund).toHaveBeenCalledWith({
         reference: PAYMENT.id,
         provider: 'paddle',
+        providerAccountId: SEED_PADDLE_ACCOUNT_ID,
         providerPaymentId: PAYMENT.providerPaymentId,
         refundReference: null,
         providerRefundId: 'adj_01jcsyntheticrefund0000001',
@@ -149,7 +152,9 @@ describe('RefundReconciliationService', () => {
         paymentStatus: 'partially_refunded',
       });
       expect(warn).toHaveBeenCalledWith(
-        expect.stringContaining('found only at the provider'),
+        expect.stringContaining(
+          `found only at paddle account ${SEED_PADDLE_ACCOUNT_ID}`,
+        ),
       );
     });
 
@@ -233,6 +238,8 @@ describe('RefundReconciliationService', () => {
       expect(ingestRefund).toHaveBeenCalledWith(
         expect.objectContaining({
           reference: PAYMENT.id,
+          provider: 'paddle',
+          providerAccountId: SEED_PADDLE_ACCOUNT_ID,
           refundReference: PENDING_REFUND_ID,
           providerRefundId: null,
           refundIdentity: 'reference',

@@ -8,15 +8,17 @@ import {
   PaymentsService,
   type IngestPaymentResult,
 } from '@/payments/payments.service';
+import { ProviderAccountsService } from '@/provider-accounts/provider-accounts.service';
+import { accountLabelOf } from '@/providers/bound-provider';
 import type {
-  PaymentProvider,
+  BoundProvider,
   ResourceStatus,
 } from '@/providers/payment-provider.port';
+import type { ProviderCode } from '@/providers/provider.constants';
 import {
   providerFailureOf,
   type ProviderFailure,
 } from '@/providers/provider-failure';
-import { ProviderRegistry } from '@/providers/provider.registry';
 
 import {
   ingestableStatusOf,
@@ -36,33 +38,62 @@ import { RefundReconciliationService } from './refund-reconciliation.service';
 
 type PaymentStatusResource = Extract<ResourceStatus, { resource: 'payment' }>;
 
+type ScopedResult = {
+  scopeKey: ReconciliationScopeKey;
+  provider: ProviderCode;
+};
+
 type ReconcileResult =
   | { outcome: 'local'; isChanged: boolean }
-  | { outcome: 'checked'; scopeKey: ReconciliationScopeKey; isChanged: boolean }
-  | {
-      outcome: 'provider_failed';
-      scopeKey: ReconciliationScopeKey;
-      failure: ProviderFailure;
-    };
+  | (ScopedResult & { outcome: 'checked'; isChanged: boolean })
+  | (ScopedResult & { outcome: 'provider_failed'; failure: ProviderFailure });
 
 type PaymentCheck = {
   result: ReconcileResult;
   status: PaymentStatus;
   isStopped: boolean;
+  boundProvider: BoundProvider | null;
 };
 
-type ProviderAnswer =
-  | { isAnswered: true; status: ResourceStatus | null }
+type ProviderAnswer<Value> =
+  | { isAnswered: true; value: Value }
   | { isAnswered: false; failure: ProviderFailure };
 
+const askProvider = async <Value>(
+  call: () => Promise<Value>,
+): Promise<ProviderAnswer<Value>> => {
+  try {
+    return { isAnswered: true, value: await call() };
+  } catch (error) {
+    return { isAnswered: false, failure: providerFailureOf(error) };
+  }
+};
+
 const checkedCheckOf = (
-  scopeKey: ReconciliationScopeKey,
+  provider: BoundProvider,
   status: PaymentStatus,
   isChanged = false,
 ): PaymentCheck => ({
-  result: { outcome: 'checked', scopeKey, isChanged },
+  result: {
+    outcome: 'checked',
+    scopeKey: provider.accountId,
+    provider: provider.code,
+    isChanged,
+  },
   status,
   isStopped: false,
+  boundProvider: provider,
+});
+
+const localCheckOf = (
+  status: PaymentStatus,
+  isChanged: boolean,
+  isStopped = false,
+): PaymentCheck => ({
+  result: { outcome: 'local', isChanged },
+  status,
+  isStopped,
+  boundProvider: null,
 });
 
 const isUnsettled = (status: PaymentStatus): boolean =>
@@ -78,7 +109,7 @@ export class ReconciliationService {
   constructor(
     private readonly paymentsService: PaymentsService,
     private readonly paymentCreationService: PaymentCreationService,
-    private readonly providerRegistry: ProviderRegistry,
+    private readonly providerAccountsService: ProviderAccountsService,
     private readonly reconciliationRepository: ReconciliationRepository,
     private readonly refundReconciliationService: RefundReconciliationService,
   ) {}
@@ -95,9 +126,10 @@ export class ReconciliationService {
     claimed: ClaimedPayment,
     check: PaymentCheck,
   ): Promise<PaymentCheck> {
-    const { result } = check;
+    const { result, boundProvider } = check;
     if (
       result.outcome !== 'checked' ||
+      boundProvider === null ||
       !isRefundable(check.status) ||
       claimed.providerPaymentId === null
     ) {
@@ -105,12 +137,8 @@ export class ReconciliationService {
     }
 
     const refunds = await this.refundReconciliationService.reconcile(
-      this.providerOf(claimed),
-      {
-        id: claimed.id,
-        provider: claimed.provider,
-        providerPaymentId: claimed.providerPaymentId,
-      },
+      boundProvider,
+      { id: claimed.id, providerPaymentId: claimed.providerPaymentId },
     );
     if (!refunds.isAnswered) {
       return {
@@ -118,6 +146,7 @@ export class ReconciliationService {
         result: {
           outcome: 'provider_failed',
           scopeKey: result.scopeKey,
+          provider: result.provider,
           failure: refunds.failure,
         },
       };
@@ -140,11 +169,7 @@ export class ReconciliationService {
       `Payment ${claimed.id} is ${claimed.status} without a provider payment id; reconciliation stopped`,
     );
 
-    return Promise.resolve({
-      result: { outcome: 'local', isChanged: false },
-      status: claimed.status,
-      isStopped: true,
-    });
+    return Promise.resolve(localCheckOf(claimed.status, false, true));
   }
 
   private async closeInterrupted(
@@ -154,35 +179,53 @@ export class ReconciliationService {
       paymentId: claimed.id,
       provider: claimed.provider,
     });
-    if (!closed.isClosed) {
-      return {
-        result: { outcome: 'local', isChanged: false },
-        status: claimed.status,
-        isStopped: false,
-      };
-    }
+    if (!closed.isClosed) return localCheckOf(claimed.status, false);
 
     const isChanged = this.logTransition(claimed, closed.result);
 
-    return {
-      result: { outcome: 'local', isChanged },
-      status: closed.result.payment.status,
-      isStopped: false,
-    };
+    return localCheckOf(closed.result.payment.status, isChanged);
   }
 
+  // A bind failure is a provider failure of that account, so the cycle skips only that account.
   private async checkAtProvider(
     claimed: ClaimedPayment,
     providerPaymentId: string,
   ): Promise<PaymentCheck> {
     const scopeKey = reconciliationScopeKeyOf(claimed);
-    const unchanged = checkedCheckOf(scopeKey, claimed.status);
+    const bound = await askProvider(() =>
+      this.providerAccountsService.bind(scopeKey),
+    );
+    if (!bound.isAnswered) {
+      return {
+        result: {
+          outcome: 'provider_failed',
+          scopeKey,
+          provider: claimed.provider,
+          failure: bound.failure,
+        },
+        status: claimed.status,
+        isStopped: false,
+        boundProvider: null,
+      };
+    }
 
-    const answer = await this.askProvider(claimed, providerPaymentId);
+    return this.checkStatusAt(claimed, providerPaymentId, bound.value);
+  }
+
+  private async checkStatusAt(
+    claimed: ClaimedPayment,
+    providerPaymentId: string,
+    provider: BoundProvider,
+  ): Promise<PaymentCheck> {
+    const unchanged = checkedCheckOf(provider, claimed.status);
+
+    const answer = await askProvider(() =>
+      provider.getStatus({ resource: 'payment', providerPaymentId }),
+    );
     if (!answer.isAnswered) {
       if (answer.failure.kind === 'rejected') {
         this.logger.error(
-          `Payment ${claimed.id} status was rejected by ${claimed.provider}: ${answer.failure.detail}`,
+          `Payment ${claimed.id} status was rejected by ${accountLabelOf(provider)}: ${answer.failure.detail}`,
         );
         return unchanged;
       }
@@ -191,33 +234,34 @@ export class ReconciliationService {
         ...unchanged,
         result: {
           outcome: 'provider_failed',
-          scopeKey,
+          scopeKey: provider.accountId,
+          provider: provider.code,
           failure: answer.failure,
         },
       };
     }
-    if (answer.status === null) {
+    if (answer.value === null) {
       this.logger.warn(
-        `Payment ${claimed.id} is unknown to ${claimed.provider}; left ${claimed.status}`,
+        `Payment ${claimed.id} is unknown to ${accountLabelOf(provider)}; left ${claimed.status}`,
       );
       return unchanged;
     }
-    if (answer.status.resource !== 'payment') {
+    if (answer.value.resource !== 'payment') {
       this.logger.error(
-        `Payment ${claimed.id}: ${claimed.provider} answered with a ${answer.status.resource}`,
+        `Payment ${claimed.id}: ${accountLabelOf(provider)} answered with a ${answer.value.resource}`,
       );
       return unchanged;
     }
 
-    return this.applyProviderStatus(claimed, answer.status, scopeKey);
+    return this.applyProviderStatus(claimed, answer.value, provider);
   }
 
   private async applyProviderStatus(
     claimed: ClaimedPayment,
     providerStatus: PaymentStatusResource,
-    scopeKey: ReconciliationScopeKey,
+    provider: BoundProvider,
   ): Promise<PaymentCheck> {
-    const unchanged = checkedCheckOf(scopeKey, claimed.status);
+    const unchanged = checkedCheckOf(provider, claimed.status);
     const targetStatus = ingestableStatusOf(providerStatus.status);
     // A refunded payment reports a status behind ours; recording it as stale every day is noise.
     if (decideTransition(claimed.status, targetStatus) === 'stale') {
@@ -227,8 +271,9 @@ export class ReconciliationService {
     try {
       const ingested = await this.paymentsService.ingestPayment({
         reference: claimed.id,
-        provider: claimed.provider,
-        providerAccountId: claimed.providerAccountId,
+        provider: provider.code,
+        projectId: provider.projectId,
+        providerAccountId: provider.accountId,
         providerPaymentId: providerStatus.providerPaymentId,
         status: targetStatus,
         amountMinor: providerStatus.amountMinor,
@@ -239,7 +284,7 @@ export class ReconciliationService {
       });
       const isChanged = this.logTransition(claimed, ingested);
 
-      return checkedCheckOf(scopeKey, ingested.payment.status, isChanged);
+      return checkedCheckOf(provider, ingested.payment.status, isChanged);
     } catch (error) {
       if (!(error instanceof IngestRejectedError)) throw error;
 
@@ -248,26 +293,6 @@ export class ReconciliationService {
       );
       return unchanged;
     }
-  }
-
-  private async askProvider(
-    claimed: ClaimedPayment,
-    providerPaymentId: string,
-  ): Promise<ProviderAnswer> {
-    try {
-      const status = await this.providerOf(claimed).getStatus({
-        resource: 'payment',
-        providerPaymentId,
-      });
-
-      return { isAnswered: true, status };
-    } catch (error) {
-      return { isAnswered: false, failure: providerFailureOf(error) };
-    }
-  }
-
-  private providerOf(claimed: ClaimedPayment): PaymentProvider {
-    return this.providerRegistry.get(claimed.provider);
   }
 
   private async schedule(
@@ -286,7 +311,7 @@ export class ReconciliationService {
     });
     if (nextReconcileAfter === null && isUnsettled(check.status)) {
       this.logger.warn(
-        `Payment ${claimed.id} still ${check.status} at ${claimed.provider} after ${RECONCILE_WINDOW_DAYS} days; reconciliation stopped`,
+        `Payment ${claimed.id} still ${check.status} at ${claimed.provider} account ${claimed.providerAccountId} after ${RECONCILE_WINDOW_DAYS} days; reconciliation stopped`,
       );
     }
 

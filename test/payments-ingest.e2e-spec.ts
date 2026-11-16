@@ -30,14 +30,13 @@ import {
   type IngestPaymentInput,
 } from '@/payments/payments.service';
 import { PAYMENT_STATUS_BY_EVENT_TYPE } from '@/payments/provider-event-status';
+import { SEED_PROJECT_ID } from '@/projects/projects.constants';
 import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
-import { FakeProvider } from '@/providers/fake/fake.provider';
 import type { ProviderCode } from '@/providers/provider.constants';
 import type {
   ProviderEvent,
   ProviderPaymentEvent,
 } from '@/providers/provider-events';
-import { ProviderRegistry } from '@/providers/provider.registry';
 import {
   RefundsService,
   type IngestRefundInput,
@@ -50,9 +49,11 @@ import {
   databasePoolMax,
   databaseUrl,
   describeOnRealPostgres,
+  fakeSignerOf,
   insertInboxEvent,
   trackSettled,
   waitUntilBlockedBy,
+  seedColumnsOf,
 } from './helpers';
 
 const REPO_ROOT = join(__dirname, '..');
@@ -76,6 +77,7 @@ const ingestInputWith = (
 ): IngestPaymentInput => ({
   reference: null,
   provider: 'fake',
+  projectId: SEED_PROJECT_ID,
   providerAccountId: SEED_FAKE_ACCOUNT_ID,
   providerPaymentId: randomUUID(),
   status: 'succeeded',
@@ -98,6 +100,7 @@ const fullRefundInputOf = (
 ): IngestRefundInput => ({
   reference: null,
   provider: input.provider,
+  providerAccountId: input.providerAccountId,
   providerPaymentId: input.providerPaymentId,
   refundReference: null,
   providerRefundId: randomUUID(),
@@ -177,6 +180,7 @@ describe('Payments ingest', () => {
         status: 'created',
         amountMinor: 1000,
         currency: 'USD',
+        ...seedColumnsOf(overrides.provider ?? 'fake'),
         ...overrides,
       })
       .returning();
@@ -261,7 +265,7 @@ describe('Payments ingest', () => {
             `select tablename as name from pg_tables where schemaname = 'public' order by tablename`,
           );
 
-          expect(firstRunRows.rows).toHaveLength(10);
+          expect(firstRunRows.rows).toHaveLength(11);
           expect(secondRunRows.rows).toEqual(firstRunRows.rows);
           expect(tables.rows.map(({ name }) => name)).toEqual([
             'api_keys',
@@ -288,7 +292,7 @@ describe('Payments ingest', () => {
 
         await applyMigrations(databaseUrl);
 
-        expect(rowsBefore).toHaveLength(10);
+        expect(rowsBefore).toHaveLength(11);
         expect(await db.execute(migrationRowsSql)).toEqual(rowsBefore);
       },
       SLOW_TEST_TIMEOUT_MS,
@@ -326,24 +330,6 @@ describe('Payments ingest', () => {
         toStatus: 'succeeded',
         outcome: 'applied',
       });
-    });
-
-    it('creates a separate payment for the same id under another provider', async () => {
-      const providerPaymentId = randomUUID();
-
-      const first = await paymentsService.ingestPayment(
-        renewalInputWith({ provider: 'fake', providerPaymentId }),
-      );
-      const second = await paymentsService.ingestPayment(
-        renewalInputWith({
-          provider: OTHER_PROVIDER,
-          providerAccountId: null,
-          providerPaymentId,
-        }),
-      );
-
-      expect(second.outcome).toBe('created');
-      expect(second.payment.id).not.toBe(first.payment.id);
     });
 
     it('lets two rows with a null provider_payment_id coexist under one provider', async () => {
@@ -621,7 +607,7 @@ describe('Payments ingest', () => {
     });
 
     it('runs the real fake flow from createPayment to a succeeded payment', async () => {
-      const fakeProvider = app.get(FakeProvider);
+      const fakeProvider = await fakeSignerOf(app);
       const row = await insertNullRefPayment();
       const { providerPaymentId } = await fakeProvider.createPayment({
         reference: row.id,
@@ -1119,14 +1105,12 @@ describe('Payments ingest', () => {
         '/api/v1/payments/:id',
         '/api/v1/payments/:paymentId/refunds',
         '/checkout/paddle',
+        '/checkout/paddle/:providerAccountId',
         '/health/live',
         '/health/ready',
-        '/webhooks/:provider',
+        '/webhooks/:provider/:providerAccountId',
+        '/webhooks/paddle',
       ]);
-    });
-
-    it('registers the injected fake provider', () => {
-      expect(app.get(ProviderRegistry).get('fake')).toBe(app.get(FakeProvider));
     });
   });
 
@@ -1146,8 +1130,10 @@ describe('Payments ingest', () => {
       await connection.unsafe('begin');
       await connection`
         insert into payments
-          (provider, provider_payment_id, purpose, origin, status, amount_minor, currency)
+          (project_id, provider_account_id, provider, provider_payment_id, purpose, origin, status, amount_minor, currency)
         values (
+          ${input.projectId},
+          ${input.providerAccountId},
           ${input.provider},
           ${input.providerPaymentId},
           ${input.purpose},

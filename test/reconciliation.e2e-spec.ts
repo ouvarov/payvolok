@@ -40,6 +40,7 @@ import {
   RECONCILE_LEASE_SECONDS,
 } from '@/payments/payment.constants';
 import { PaymentsService } from '@/payments/payments.service';
+import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
 import { encodeFakeId } from '@/providers/fake/fake-wire-format';
 import { FakeProvider } from '@/providers/fake/fake.provider';
 import { PaddleProvider } from '@/providers/paddle/paddle.provider';
@@ -63,6 +64,7 @@ import {
   describeOnRealPostgres,
   serverOf,
   TEST_API_KEY,
+  seedColumnsOf,
 } from './helpers';
 import { scopedReconciliation } from './scoped-reconciliation';
 
@@ -163,6 +165,7 @@ describe('Reconciliation', () => {
     const [payment] = await db
       .insert(payments)
       .values({
+        ...seedColumnsOf(provider),
         provider,
         providerPaymentId,
         purpose: 'one_off',
@@ -471,7 +474,7 @@ describe('Reconciliation', () => {
 
       expect((await paymentOf(payment.id)).reconcileAfter).toBeNull();
       expect(warn).toHaveBeenCalledWith(
-        `Payment ${payment.id} still pending at fake after 30 days; reconciliation stopped`,
+        `Payment ${payment.id} still pending at fake account ${SEED_FAKE_ACCOUNT_ID} after 30 days; reconciliation stopped`,
       );
     });
 
@@ -503,6 +506,7 @@ describe('Reconciliation', () => {
         .insert(refunds)
         .values({
           paymentId,
+          ...seedColumnsOf('fake'),
           provider: 'fake',
           providerRefundId: null,
           origin: 'api',
@@ -527,7 +531,10 @@ describe('Reconciliation', () => {
 
       await worker.drain();
 
-      expect(listRefunds).toHaveBeenCalledWith(payment.providerPaymentId);
+      expect(listRefunds).toHaveBeenCalledWith(
+        expect.anything(),
+        payment.providerPaymentId,
+      );
       const stored = await paymentOf(payment.id);
       expect(stored.status).toBe('succeeded');
       expect(secondsScheduledAfterCheck(stored)).toBe(
@@ -547,7 +554,7 @@ describe('Reconciliation', () => {
 
         await worker.drain();
 
-        expect(getStatus).toHaveBeenCalledWith({
+        expect(getStatus).toHaveBeenCalledWith(expect.anything(), {
           resource: 'refund',
           providerPaymentId: payment.providerPaymentId,
           providerRefundId: null,
@@ -566,7 +573,7 @@ describe('Reconciliation', () => {
         const refund = await insertPendingRefund(payment.id);
         jest
           .spyOn(fakeProvider, 'getStatus')
-          .mockImplementation((query: StatusQuery) =>
+          .mockImplementation((credentials, query: StatusQuery) =>
             query.resource === 'refund' && query.reference === refund.id
               ? Promise.resolve({
                   resource: 'refund',
@@ -575,7 +582,11 @@ describe('Reconciliation', () => {
                   amountMinor: REFUND_AMOUNT_MINOR,
                   currency: 'USD',
                 })
-              : FakeProvider.prototype.getStatus.call(fakeProvider, query),
+              : FakeProvider.prototype.getStatus.call(
+                  fakeProvider,
+                  credentials,
+                  query,
+                ),
           );
 
         await worker.drain();
@@ -625,11 +636,12 @@ describe('Reconciliation', () => {
           const singleConnectionFake = singleConnectionApp.get(FakeProvider);
           jest
             .spyOn(singleConnectionFake, 'getStatus')
-            .mockImplementation(async (query: StatusQuery) => {
+            .mockImplementation(async (credentials, query: StatusQuery) => {
               await singleConnectionDb.execute(sql`select 1`);
 
               return FakeProvider.prototype.getStatus.call(
                 singleConnectionFake,
+                credentials,
                 query,
               );
             });

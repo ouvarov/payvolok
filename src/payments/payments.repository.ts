@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull, ne, or, sql } from 'drizzle-orm';
 
 import {
   DRIZZLE,
@@ -23,6 +23,12 @@ import {
   RECONCILE_NUDGE_THROTTLE_SECONDS,
   type PaymentStatus,
 } from './payment.constants';
+
+type ProviderRef = {
+  provider: ProviderCode;
+  providerAccountId: string;
+  providerPaymentId: string;
+};
 
 @Injectable()
 export class PaymentsRepository {
@@ -85,7 +91,7 @@ export class PaymentsRepository {
       .insert(payments)
       .values(newPayment)
       .onConflictDoNothing({
-        target: [payments.provider, payments.providerPaymentId],
+        target: [payments.providerAccountId, payments.providerPaymentId],
       })
       .returning();
 
@@ -94,7 +100,7 @@ export class PaymentsRepository {
 
   async findByProviderRefForUpdate(
     tx: DatabaseTransaction,
-    provider: ProviderCode,
+    providerAccountId: string,
     providerPaymentId: string,
   ): Promise<Payment | null> {
     const [payment] = await tx
@@ -102,11 +108,33 @@ export class PaymentsRepository {
       .from(payments)
       .where(
         and(
-          eq(payments.provider, provider),
+          eq(payments.providerAccountId, providerAccountId),
           eq(payments.providerPaymentId, providerPaymentId),
         ),
       )
       .for('update');
+
+    return payment ?? null;
+  }
+
+  async findProviderRefElsewhere(
+    tx: DatabaseTransaction,
+    ref: ProviderRef,
+  ): Promise<Pick<Payment, 'providerAccountId'> | null> {
+    const [payment] = await tx
+      .select({ providerAccountId: payments.providerAccountId })
+      .from(payments)
+      .where(
+        and(
+          eq(payments.provider, ref.provider),
+          eq(payments.providerPaymentId, ref.providerPaymentId),
+          or(
+            isNull(payments.providerAccountId),
+            ne(payments.providerAccountId, ref.providerAccountId),
+          ),
+        ),
+      )
+      .limit(1);
 
     return payment ?? null;
   }

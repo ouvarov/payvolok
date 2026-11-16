@@ -175,7 +175,9 @@ export class ReconciliationWorker
     if (result.outcome === 'local') return;
     if (result.outcome === 'checked') {
       if (this.failingScopeKeys.delete(result.scopeKey)) {
-        this.logger.log(`Reconciliation reaches ${result.scopeKey} again`);
+        this.logger.log(
+          `Reconciliation reaches ${result.provider} account ${result.scopeKey} again`,
+        );
       }
       return;
     }
@@ -183,7 +185,7 @@ export class ReconciliationWorker
 
     this.failingScopeKeys.add(result.scopeKey);
     const { kind, detail } = result.failure;
-    const message = `Reconciliation skips ${result.scopeKey} until it answers: provider_${kind}: ${detail}`;
+    const message = `Reconciliation skips ${result.provider} account ${result.scopeKey} until it answers: provider_${kind}: ${detail}`;
     if (kind === 'misconfigured') {
       this.logger.error(message);
       return;

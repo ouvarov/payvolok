@@ -174,7 +174,7 @@ export class WebhooksRepository {
       .insert(webhookEvents)
       .values(newEvent)
       .onConflictDoNothing({
-        target: [webhookEvents.provider, webhookEvents.dedupKey],
+        target: [webhookEvents.providerAccountId, webhookEvents.dedupKey],
         where: sql`${webhookEvents.replayOf} IS NULL`,
       })
       .returning({ id: webhookEvents.id });

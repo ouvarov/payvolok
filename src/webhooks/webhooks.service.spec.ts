@@ -6,12 +6,9 @@ import {
 } from '@nestjs/common';
 
 import { SEED_PROJECT_ID } from '@/projects/projects.constants';
-import type {
-  AccountRef,
-  ProviderAccountsService,
-} from '@/provider-accounts/provider-accounts.service';
-import type { PaymentProvider } from '@/providers/payment-provider.port';
-import type { ProviderRegistry } from '@/providers/provider.registry';
+import { SEED_PADDLE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
+import type { ProviderAccountsService } from '@/provider-accounts/provider-accounts.service';
+import type { BoundProvider } from '@/providers/payment-provider.port';
 
 import type { WebhookWorker } from './webhook.worker';
 import type { WebhooksRepository } from './webhooks.repository';
@@ -22,53 +19,42 @@ const HOUR_MS = 60 * 60 * 1000;
 const CAP = 20;
 const START_EPOCH_MS = 1_000_000;
 const ACCOUNT_ID = '5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7aff';
+const OTHER_ACCOUNT_ID = '5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7afe';
 
-const accountOf = (provider: string): AccountRef =>
-  ({ id: ACCOUNT_ID, projectId: SEED_PROJECT_ID, provider }) as AccountRef;
-
-const accountsServiceWith = (
-  seedAccountOf: jest.Mock = jest.fn((provider: string) =>
-    Promise.resolve(accountOf(provider)),
-  ),
-): ProviderAccountsService =>
-  ({ seedAccountOf }) as unknown as ProviderAccountsService;
-
-const rejectingProvider = (code: string): PaymentProvider =>
+const boundProviderWith = (
+  accountId: string,
+  overrides: Partial<BoundProvider> = {},
+): BoundProvider =>
   ({
-    code,
+    accountId,
+    projectId: SEED_PROJECT_ID,
+    code: 'fake',
+    webhookHeaders: [],
+    verifyWebhook: () => Promise.resolve(true),
+    parseWebhook: () => [
+      { type: 'unknown', rawType: null, dedupKey: 'event-1', occurredAt: null },
+    ],
+    ...overrides,
+  }) as BoundProvider;
+
+const rejectingProviderOf = (accountId: string): BoundProvider =>
+  boundProviderWith(accountId, {
     verifyWebhook: () => Promise.resolve(false),
-  }) as unknown as PaymentProvider;
+  });
 
-const serviceWith = (insertInvalidIfAbsent: jest.Mock): WebhooksService =>
-  new WebhooksService(
-    accountsServiceWith(),
-    {
-      find: (code: string) => rejectingProvider(code),
-    } as unknown as ProviderRegistry,
-    { insertInvalidIfAbsent } as unknown as WebhooksRepository,
-    { kick: jest.fn() } as unknown as WebhookWorker,
-  );
-
-const acceptingProvider = {
-  code: 'fake',
-  webhookHeaders: [],
-  verifyWebhook: () => Promise.resolve(true),
-  parseWebhook: () => [
-    { type: 'unknown', rawType: null, dedupKey: 'event-1', occurredAt: null },
-  ],
-} as unknown as PaymentProvider;
-
-const kickingServiceWith = (
-  repository: Partial<Record<keyof WebhooksRepository, jest.Mock>>,
-  kick: jest.Mock,
-  seedAccountOf?: jest.Mock,
+const serviceWith = (
+  bindForWebhook: jest.Mock,
+  repository: Partial<Record<keyof WebhooksRepository, jest.Mock>> = {},
+  kick: jest.Mock = jest.fn(),
 ): WebhooksService =>
   new WebhooksService(
-    accountsServiceWith(seedAccountOf),
-    { find: () => acceptingProvider } as unknown as ProviderRegistry,
+    { bindForWebhook } as unknown as ProviderAccountsService,
     repository as unknown as WebhooksRepository,
     { kick } as unknown as WebhookWorker,
   );
+
+const bindingTo = (provider: BoundProvider | null): jest.Mock =>
+  jest.fn().mockResolvedValue(provider);
 
 describe('WebhooksService worker kick', () => {
   it.each([
@@ -76,12 +62,13 @@ describe('WebhooksService worker kick', () => {
     ['does not kick the worker for a deduped delivery', false, 0],
   ])('%s', async (_case, isInserted, kickCount) => {
     const kick = jest.fn();
-    const service = kickingServiceWith(
+    const service = serviceWith(
+      bindingTo(boundProviderWith(ACCOUNT_ID)),
       { insertReceivedIfAbsent: jest.fn().mockResolvedValue(isInserted) },
       kick,
     );
 
-    await service.receive('fake', Buffer.from('{}'), {});
+    await service.receive('fake', ACCOUNT_ID, Buffer.from('{}'), {});
 
     expect(kick).toHaveBeenCalledTimes(kickCount);
   });
@@ -89,7 +76,7 @@ describe('WebhooksService worker kick', () => {
   it('kicks the worker after a replay row and returns its id', async () => {
     const kick = jest.fn();
     const insertReplay = jest.fn().mockResolvedValue('replay-id');
-    const service = kickingServiceWith({ insertReplay }, kick);
+    const service = serviceWith(jest.fn(), { insertReplay }, kick);
 
     await expect(service.replay(REPLAYED_ID)).resolves.toBe('replay-id');
     expect(insertReplay).toHaveBeenCalledWith(REPLAYED_ID);
@@ -98,7 +85,8 @@ describe('WebhooksService worker kick', () => {
 
   it('returns null without a kick when no replay row is inserted', async () => {
     const kick = jest.fn();
-    const service = kickingServiceWith(
+    const service = serviceWith(
+      jest.fn(),
       { insertReplay: jest.fn().mockResolvedValue(null) },
       kick,
     );
@@ -109,7 +97,7 @@ describe('WebhooksService worker kick', () => {
 
   it('returns null for an id that is not a uuid without a query', async () => {
     const insertReplay = jest.fn();
-    const service = kickingServiceWith({ insertReplay }, jest.fn());
+    const service = serviceWith(jest.fn(), { insertReplay });
 
     await expect(service.replay('not-a-uuid')).resolves.toBeNull();
     expect(insertReplay).not.toHaveBeenCalled();
@@ -118,12 +106,12 @@ describe('WebhooksService worker kick', () => {
 
 const sendInvalid = async (
   service: WebhooksService,
-  providerCode: string,
+  accountId: string,
   count: number,
 ): Promise<void> => {
   for (let index = 0; index < count; index += 1) {
     await expect(
-      service.receive(providerCode, Buffer.from(`body-${index}`), {}),
+      service.receive('fake', accountId, Buffer.from(`body-${index}`), {}),
     ).rejects.toBeInstanceOf(UnauthorizedException);
   }
 };
@@ -133,26 +121,31 @@ describe('WebhooksService account', () => {
     jest.restoreAllMocks();
   });
 
-  it('answers 404 before the signature check and stores no row when the provider has no seed account', async () => {
-    const verifyWebhook = jest.fn();
-    const insertReceivedIfAbsent = jest.fn();
-    const insertInvalidIfAbsent = jest.fn();
-    const service = new WebhooksService(
-      accountsServiceWith(jest.fn().mockResolvedValue(null)),
-      {
-        find: () => ({ ...acceptingProvider, verifyWebhook }),
-      } as unknown as ProviderRegistry,
-      {
-        insertReceivedIfAbsent,
-        insertInvalidIfAbsent,
-      } as unknown as WebhooksRepository,
-      { kick: jest.fn() } as unknown as WebhookWorker,
-    );
+  it('answers 404 for an unknown provider without a lookup', async () => {
+    const bindForWebhook = jest.fn();
 
     await expect(
-      service.receive('fake', Buffer.from('{}'), {}),
+      serviceWith(bindForWebhook).receive(
+        'stripe',
+        ACCOUNT_ID,
+        Buffer.from('{}'),
+        {},
+      ),
     ).rejects.toBeInstanceOf(NotFoundException);
-    expect(verifyWebhook).not.toHaveBeenCalled();
+    expect(bindForWebhook).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 before the signature check and stores no row when the URL names no account of the provider', async () => {
+    const insertReceivedIfAbsent = jest.fn();
+    const insertInvalidIfAbsent = jest.fn();
+    const service = serviceWith(bindingTo(null), {
+      insertReceivedIfAbsent,
+      insertInvalidIfAbsent,
+    });
+
+    await expect(
+      service.receive('fake', ACCOUNT_ID, Buffer.from('{}'), {}),
+    ).rejects.toBeInstanceOf(NotFoundException);
     expect(insertReceivedIfAbsent).not.toHaveBeenCalled();
     expect(insertInvalidIfAbsent).not.toHaveBeenCalled();
   });
@@ -160,32 +153,25 @@ describe('WebhooksService account', () => {
   it('answers 503 and stores no row when the account lookup fails', async () => {
     jest.spyOn(Logger.prototype, 'error').mockImplementation();
     const insertReceivedIfAbsent = jest.fn();
-    const service = kickingServiceWith(
-      { insertReceivedIfAbsent },
-      jest.fn(),
+    const service = serviceWith(
       jest.fn().mockRejectedValue(new Error('connection refused')),
+      { insertReceivedIfAbsent },
     );
 
     await expect(
-      service.receive('fake', Buffer.from('{}'), {}),
+      service.receive('fake', ACCOUNT_ID, Buffer.from('{}'), {}),
     ).rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(insertReceivedIfAbsent).not.toHaveBeenCalled();
   });
 
-  it('stores a valid delivery under the seed account of its provider', async () => {
-    const seedAccountOf = jest.fn((provider: string) =>
-      Promise.resolve(accountOf(provider)),
-    );
+  it('stores a valid delivery under the account of the URL', async () => {
+    const bindForWebhook = bindingTo(boundProviderWith(ACCOUNT_ID));
     const insertReceivedIfAbsent = jest.fn().mockResolvedValue(true);
-    const service = kickingServiceWith(
-      { insertReceivedIfAbsent },
-      jest.fn(),
-      seedAccountOf,
-    );
+    const service = serviceWith(bindForWebhook, { insertReceivedIfAbsent });
 
-    await service.receive('fake', Buffer.from('{}'), {});
+    await service.receive('fake', ACCOUNT_ID, Buffer.from('{}'), {});
 
-    expect(seedAccountOf).toHaveBeenCalledWith('fake');
+    expect(bindForWebhook).toHaveBeenCalledWith('fake', ACCOUNT_ID);
     expect(insertReceivedIfAbsent).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: 'fake',
@@ -194,10 +180,13 @@ describe('WebhooksService account', () => {
     );
   });
 
-  it('stores an invalid delivery under the seed account of its provider', async () => {
+  it('stores an invalid delivery under the account of the URL', async () => {
     const insertInvalidIfAbsent = jest.fn().mockResolvedValue(undefined);
+    const service = serviceWith(bindingTo(rejectingProviderOf(ACCOUNT_ID)), {
+      insertInvalidIfAbsent,
+    });
 
-    await sendInvalid(serviceWith(insertInvalidIfAbsent), 'fake', 1);
+    await sendInvalid(service, ACCOUNT_ID, 1);
 
     expect(insertInvalidIfAbsent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -205,6 +194,43 @@ describe('WebhooksService account', () => {
         providerAccountId: ACCOUNT_ID,
       }),
     );
+  });
+});
+
+describe('WebhooksService Paddle alias', () => {
+  let now: jest.SpyInstance<number, []>;
+  let warn: jest.SpyInstance;
+
+  beforeEach(() => {
+    warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    now = jest.spyOn(Date, 'now').mockReturnValue(START_EPOCH_MS);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('receives on the seed Paddle account and warns at most once an hour', async () => {
+    const bindForWebhook = bindingTo(
+      boundProviderWith(SEED_PADDLE_ACCOUNT_ID, { code: 'paddle' }),
+    );
+    const service = serviceWith(bindForWebhook, {
+      insertReceivedIfAbsent: jest.fn().mockResolvedValue(false),
+    });
+
+    await service.receiveOnPaddleAlias(Buffer.from('{}'), {});
+    now.mockReturnValue(START_EPOCH_MS + HOUR_MS - 1);
+    await service.receiveOnPaddleAlias(Buffer.from('{}'), {});
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    now.mockReturnValue(START_EPOCH_MS + HOUR_MS);
+    await service.receiveOnPaddleAlias(Buffer.from('{}'), {});
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(bindForWebhook.mock.calls).toEqual([
+      ['paddle', SEED_PADDLE_ACCOUNT_ID],
+      ['paddle', SEED_PADDLE_ACCOUNT_ID],
+      ['paddle', SEED_PADDLE_ACCOUNT_ID],
+    ]);
   });
 });
 
@@ -218,7 +244,12 @@ describe('WebhooksService invalid signature cap', () => {
     warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
     now = jest.spyOn(Date, 'now').mockReturnValue(START_EPOCH_MS);
     insertInvalidIfAbsent = jest.fn().mockResolvedValue(undefined);
-    service = serviceWith(insertInvalidIfAbsent);
+    service = serviceWith(
+      jest.fn((_provider: string, accountId: string) =>
+        Promise.resolve(rejectingProviderOf(accountId)),
+      ),
+      { insertInvalidIfAbsent },
+    );
   });
 
   afterEach(() => {
@@ -226,48 +257,51 @@ describe('WebhooksService invalid signature cap', () => {
   });
 
   it('stores no row past the cap within the hour', async () => {
-    await sendInvalid(service, 'fake', CAP + 1);
+    await sendInvalid(service, ACCOUNT_ID, CAP + 1);
 
     expect(insertInvalidIfAbsent).toHaveBeenCalledTimes(CAP);
   });
 
   it('stores rows again once the hour has passed', async () => {
-    await sendInvalid(service, 'fake', CAP + 1);
+    await sendInvalid(service, ACCOUNT_ID, CAP + 1);
 
     now.mockReturnValue(START_EPOCH_MS + HOUR_MS - 1);
-    await sendInvalid(service, 'fake', 1);
+    await sendInvalid(service, ACCOUNT_ID, 1);
     expect(insertInvalidIfAbsent).toHaveBeenCalledTimes(CAP);
 
     now.mockReturnValue(START_EPOCH_MS + HOUR_MS);
-    await sendInvalid(service, 'fake', 1);
+    await sendInvalid(service, ACCOUNT_ID, 1);
     expect(insertInvalidIfAbsent).toHaveBeenCalledTimes(CAP + 1);
   });
 
-  it('counts each provider on its own', async () => {
-    await sendInvalid(service, 'fake', CAP + 1);
-    await sendInvalid(service, 'other', 1);
+  it('counts each account of one provider on its own', async () => {
+    await sendInvalid(service, ACCOUNT_ID, CAP + 1);
+    await sendInvalid(service, OTHER_ACCOUNT_ID, 1);
 
     expect(insertInvalidIfAbsent).toHaveBeenCalledTimes(CAP + 1);
+    expect(insertInvalidIfAbsent).toHaveBeenLastCalledWith(
+      expect.objectContaining({ providerAccountId: OTHER_ACCOUNT_ID }),
+    );
   });
 
   it('does not warn up to the cap', async () => {
-    await sendInvalid(service, 'fake', CAP);
+    await sendInvalid(service, ACCOUNT_ID, CAP);
 
     expect(warn).not.toHaveBeenCalled();
   });
 
   it('warns once per window, however many requests pass the cap', async () => {
-    await sendInvalid(service, 'fake', CAP + 5);
+    await sendInvalid(service, ACCOUNT_ID, CAP + 5);
     expect(warn).toHaveBeenCalledTimes(1);
 
     now.mockReturnValue(START_EPOCH_MS + HOUR_MS);
-    await sendInvalid(service, 'fake', CAP + 5);
+    await sendInvalid(service, ACCOUNT_ID, CAP + 5);
     expect(warn).toHaveBeenCalledTimes(2);
   });
 
-  it('warns once for each provider', async () => {
-    await sendInvalid(service, 'fake', CAP + 2);
-    await sendInvalid(service, 'other', CAP + 2);
+  it('warns once for each account', async () => {
+    await sendInvalid(service, ACCOUNT_ID, CAP + 2);
+    await sendInvalid(service, OTHER_ACCOUNT_ID, CAP + 2);
 
     expect(warn).toHaveBeenCalledTimes(2);
   });

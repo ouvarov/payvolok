@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
 import { envSchema } from '../src/config/env.schema';
+import {
+  RedactedSecret,
+  type PaddleCredentials,
+} from '../src/providers/provider-credentials';
 import { PaddleProvider } from '../src/providers/paddle/paddle.provider';
 import {
   ProviderError,
@@ -10,6 +14,14 @@ import {
 const CHECK_AMOUNT_MINOR = 1000;
 const CHECK_REFUND_MINOR = 400;
 const INVALID_API_KEY = 'pdl_sdbx_apikey_payvolok_invalid_on_purpose';
+
+const sandboxCredentialsOf = (apiKey: string): PaddleCredentials => ({
+  provider: 'paddle',
+  environment: 'sandbox',
+  apiKey: new RedactedSecret(apiKey),
+  webhookSecrets: [],
+  clientToken: null,
+});
 
 const paymentInputWith = (
   overrides: Partial<CreatePaymentInput> = {},
@@ -50,24 +62,22 @@ const runSandboxCheck = async (): Promise<void> => {
     .parse(process.env);
   if (!PADDLE_API_KEY) throw new Error('Set PADDLE_API_KEY in .env');
 
-  const provider = new PaddleProvider({
-    apiKey: PADDLE_API_KEY,
-    webhookSecret: null,
-  });
+  const provider = new PaddleProvider();
+  const credentials = sandboxCredentialsOf(PADDLE_API_KEY);
 
   const created = await step('create payment', () =>
-    provider.createPayment(paymentInputWith()),
+    provider.createPayment(credentials, paymentInputWith()),
   );
   if (created) {
     console.log(`\nOpen to pay: ${created.redirectUrl}`);
     await step('payment status', () =>
-      provider.getStatus({
+      provider.getStatus(credentials, {
         resource: 'payment',
         providerPaymentId: created.providerPaymentId,
       }),
     );
     await step('refund an unpaid payment', () =>
-      provider.refund({
+      provider.refund(credentials, {
         reference: randomUUID(),
         providerPaymentId: created.providerPaymentId,
         amountMinor: CHECK_REFUND_MINOR,
@@ -77,16 +87,16 @@ const runSandboxCheck = async (): Promise<void> => {
   }
 
   await step('unsupported currency', () =>
-    provider.createPayment(paymentInputWith({ currency: 'XXX' })),
+    provider.createPayment(credentials, paymentInputWith({ currency: 'XXX' })),
   );
   await step('empty description', () =>
-    provider.createPayment(paymentInputWith({ description: '' })),
+    provider.createPayment(credentials, paymentInputWith({ description: '' })),
   );
   await step('invalid API key', () =>
-    new PaddleProvider({
-      apiKey: INVALID_API_KEY,
-      webhookSecret: null,
-    }).createPayment(paymentInputWith()),
+    provider.createPayment(
+      sandboxCredentialsOf(INVALID_API_KEY),
+      paymentInputWith(),
+    ),
   );
 };
 

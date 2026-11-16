@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 
-import type { INestApplication, Type } from '@nestjs/common';
+import type { Abstract, INestApplication, Type } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { sql } from 'drizzle-orm';
@@ -15,9 +15,19 @@ import { webhookEvents } from '@/database/schemas/webhook-events.schema';
 import { SEED_PROJECT_ID } from '@/projects/projects.constants';
 import {
   SEED_FAKE_ACCOUNT_ID,
+  SEED_FAKE_CREDENTIALS_REF,
   SEED_PADDLE_ACCOUNT_ID,
 } from '@/provider-accounts/provider-accounts.constants';
+import { ProviderCredentialsResolver } from '@/provider-accounts/provider-credentials.resolver';
+import type { FakeWireBody } from '@/providers/fake/fake-wire-format';
+import { FakeProvider } from '@/providers/fake/fake.provider';
 import { PaddleProvider } from '@/providers/paddle/paddle.provider';
+import { boundProviderOf } from '@/providers/bound-provider';
+import type {
+  BoundProvider,
+  WebhookRequest,
+} from '@/providers/payment-provider.port';
+import type { RedactedSecret } from '@/providers/provider-credentials';
 import type { ProviderCode } from '@/providers/provider.constants';
 
 const PGLITE_POOL_MAX = 1;
@@ -28,6 +38,8 @@ const LOCK_WAIT_DEADLINE_MS = 8000;
 const TEST_API_KEY = 'e2e-test-api-key-with-enough-length-0001';
 
 const FAKE_SIGNATURE_HEADER = 'x-fake-signature';
+const SEED_FAKE_WEBHOOK_PATH = `/webhooks/fake/${SEED_FAKE_ACCOUNT_ID}`;
+const SEED_PADDLE_WEBHOOK_PATH = `/webhooks/paddle/${SEED_PADDLE_ACCOUNT_ID}`;
 
 const SEED_ACCOUNT_ID_BY_PROVIDER: Record<ProviderCode, string> = {
   fake: SEED_FAKE_ACCOUNT_ID,
@@ -57,11 +69,29 @@ type E2eAppOptions = {
   classOverrides?: ClassOverride[];
 };
 
-type ClassOverride = { provide: Type<unknown>; useClass: Type<unknown> };
+type ClassOverride = {
+  provide: Type<unknown> | Abstract<unknown>;
+  useClass: Type<unknown>;
+};
 
 type PaddleEnv = Partial<
   Pick<Env, 'PADDLE_API_KEY' | 'PADDLE_WEBHOOK_SECRET' | 'PADDLE_CLIENT_TOKEN'>
 >;
+
+// A bound fake account that also signs deliveries with that account's secret.
+type FakeSigner = BoundProvider & {
+  secret: RedactedSecret;
+  buildPaymentWebhooks: (
+    providerPaymentId: string,
+    startedAt: Date,
+  ) => WebhookRequest[];
+  buildRefundWebhooks: (
+    providerRefundId: string,
+    startedAt: Date,
+  ) => WebhookRequest[];
+  buildWebhook: (wireBody: FakeWireBody) => WebhookRequest;
+  signRawBody: (rawBody: Buffer) => WebhookRequest;
+};
 
 type DatabaseCause = {
   code?: string;
@@ -127,6 +157,43 @@ const seedColumnsOf = (
   providerAccountId: SEED_ACCOUNT_ID_BY_PROVIDER[provider],
 });
 
+const fakeSignerFor = (
+  secret: RedactedSecret,
+  adapter = new FakeProvider(),
+  account = { id: SEED_FAKE_ACCOUNT_ID, projectId: SEED_PROJECT_ID },
+): FakeSigner => {
+  return {
+    ...boundProviderOf(account, adapter, {
+      provider: 'fake',
+      webhookSecrets: [secret],
+    }),
+    secret,
+    buildPaymentWebhooks: (providerPaymentId, startedAt) =>
+      adapter.buildPaymentWebhooks(secret, providerPaymentId, startedAt),
+    buildRefundWebhooks: (providerRefundId, startedAt) =>
+      adapter.buildRefundWebhooks(secret, providerRefundId, startedAt),
+    buildWebhook: (wireBody) => adapter.buildWebhook(secret, wireBody),
+    signRawBody: (rawBody) => adapter.signRawBody(secret, rawBody),
+  };
+};
+
+// Signs as the app's own fake account would, with the secret its resolver holds.
+const fakeSignerOf = async (
+  app: INestApplication,
+  account: { id: string; projectId: string; credentialsRef: string } = {
+    id: SEED_FAKE_ACCOUNT_ID,
+    projectId: SEED_PROJECT_ID,
+    credentialsRef: SEED_FAKE_CREDENTIALS_REF,
+  },
+): Promise<FakeSigner> => {
+  const credentials = await app
+    .get(ProviderCredentialsResolver)
+    .resolve({ ...account, provider: 'fake' });
+  const [secret] = credentials.webhookSecrets;
+
+  return fakeSignerFor(secret, app.get(FakeProvider), account);
+};
+
 const serverOf = (app: INestApplication): Server =>
   app.getHttpServer() as Server;
 
@@ -138,9 +205,10 @@ const deliverTo = (
   rawBody: Buffer,
   signature: string,
   providerCode = 'fake',
+  providerAccountId = SEED_FAKE_ACCOUNT_ID,
 ) =>
   request(serverOf(target))
-    .post(`/webhooks/${providerCode}`)
+    .post(`/webhooks/${providerCode}/${providerAccountId}`)
     .set(FAKE_SIGNATURE_HEADER, signature)
     .serialize(sendBytesAsTheyAre)
     .send(rawBody);
@@ -214,10 +282,15 @@ export {
   deliverTo,
   describeOnRealPostgres,
   FAKE_SIGNATURE_HEADER,
+  fakeSignerFor,
+  fakeSignerOf,
   insertInboxEvent,
+  SEED_FAKE_WEBHOOK_PATH,
+  SEED_PADDLE_WEBHOOK_PATH,
   seedColumnsOf,
   serverOf,
   TEST_API_KEY,
   trackSettled,
   waitUntilBlockedBy,
 };
+export type { ClassOverride, FakeSigner };

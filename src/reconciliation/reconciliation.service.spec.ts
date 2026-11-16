@@ -8,13 +8,14 @@ import {
   type IngestPaymentResult,
   type PaymentsService,
 } from '@/payments/payments.service';
+import { SEED_PROJECT_ID } from '@/projects/projects.constants';
 import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
+import type { ProviderAccountsService } from '@/provider-accounts/provider-accounts.service';
 import {
   ProviderError,
-  type PaymentProvider,
+  type BoundProvider,
   type ResourceStatus,
 } from '@/providers/payment-provider.port';
-import type { ProviderRegistry } from '@/providers/provider.registry';
 
 import {
   PENDING_RECONCILE_DELAYS_SECONDS,
@@ -91,8 +92,9 @@ describe('ReconciliationService', () => {
   let finish: jest.Mock<Promise<boolean>, [ClaimedPayment, Date | null]>;
   let reconcileRefunds: jest.Mock<
     Promise<RefundCheck>,
-    [PaymentProvider, RefundablePayment]
+    [BoundProvider, RefundablePayment]
   >;
+  let bind: jest.Mock;
   let warn: jest.SpyInstance;
   let error: jest.SpyInstance;
   let service: ReconciliationService;
@@ -112,8 +114,14 @@ describe('ReconciliationService', () => {
       .fn<Promise<boolean>, [ClaimedPayment, Date | null]>()
       .mockResolvedValue(true);
     reconcileRefunds = jest
-      .fn<Promise<RefundCheck>, [PaymentProvider, RefundablePayment]>()
+      .fn<Promise<RefundCheck>, [BoundProvider, RefundablePayment]>()
       .mockResolvedValue(UNCHANGED_REFUNDS);
+    bind = jest.fn().mockResolvedValue({
+      accountId: SEED_FAKE_ACCOUNT_ID,
+      projectId: SEED_PROJECT_ID,
+      code: 'fake',
+      getStatus,
+    });
     warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
     error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
     jest.spyOn(Logger.prototype, 'log').mockImplementation();
@@ -121,9 +129,7 @@ describe('ReconciliationService', () => {
     service = new ReconciliationService(
       { ingestPayment } as unknown as PaymentsService,
       { closeInterrupted } as unknown as PaymentCreationService,
-      {
-        get: () => ({ getStatus }) as unknown as PaymentProvider,
-      } as unknown as ProviderRegistry,
+      { bind } as unknown as ProviderAccountsService,
       { finish } as unknown as ReconciliationRepository,
       {
         reconcile: reconcileRefunds,
@@ -139,9 +145,11 @@ describe('ReconciliationService', () => {
     it('ingests the provider status as a reconciliation without a webhook', async () => {
       const result = await service.reconcile(claimedWith());
 
+      expect(bind).toHaveBeenCalledWith(SEED_FAKE_ACCOUNT_ID);
       expect(ingestPayment).toHaveBeenCalledWith({
         reference: PAYMENT_ID,
         provider: 'fake',
+        projectId: SEED_PROJECT_ID,
         providerAccountId: SEED_FAKE_ACCOUNT_ID,
         providerPaymentId: 'provider-1',
         status: 'succeeded',
@@ -153,7 +161,8 @@ describe('ReconciliationService', () => {
       });
       expect(result).toEqual({
         outcome: 'checked',
-        scopeKey: 'fake',
+        scopeKey: SEED_FAKE_ACCOUNT_ID,
+        provider: 'fake',
         isChanged: true,
       });
       expect(scheduledSeconds()).toBe(REFUNDABLE_RECONCILE_DELAY_SECONDS);
@@ -251,12 +260,44 @@ describe('ReconciliationService', () => {
 
         expect(result).toEqual({
           outcome: 'provider_failed',
-          scopeKey: 'fake',
+          scopeKey: SEED_FAKE_ACCOUNT_ID,
+          provider: 'fake',
           failure: { kind, detail: 'down' },
         });
         expect(scheduledSeconds()).toBe(ONE_HOUR_OLD_DELAY_SECONDS);
       },
     );
+
+    it('reports an account whose credentials do not bind as failed, by its account', async () => {
+      bind.mockRejectedValue(
+        new ProviderError('provider account has no credentials', {
+          providerCode: 'fake',
+          kind: 'misconfigured',
+        }),
+      );
+
+      const result = await service.reconcile(claimedWith());
+
+      expect(result).toEqual({
+        outcome: 'provider_failed',
+        scopeKey: SEED_FAKE_ACCOUNT_ID,
+        provider: 'fake',
+        failure: {
+          kind: 'misconfigured',
+          detail: 'provider account has no credentials',
+        },
+      });
+      expect(getStatus).not.toHaveBeenCalled();
+      expect(reconcileRefunds).not.toHaveBeenCalled();
+      expect(ingestPayment).not.toHaveBeenCalled();
+    });
+
+    it('refuses a payment without an account before any call', async () => {
+      await expect(
+        service.reconcile(claimedWith({ providerAccountId: null })),
+      ).rejects.toThrow(`Payment ${PAYMENT_ID} has no provider account`);
+      expect(bind).not.toHaveBeenCalled();
+    });
 
     it('logs a rejected status query without skipping the provider', async () => {
       getStatus.mockRejectedValue(
@@ -296,7 +337,7 @@ describe('ReconciliationService', () => {
 
       expect(reconcileRefunds).toHaveBeenCalledWith(
         expect.objectContaining({ getStatus }),
-        { id: PAYMENT_ID, provider: 'fake', providerPaymentId: 'provider-1' },
+        { id: PAYMENT_ID, providerPaymentId: 'provider-1' },
       );
     });
 
@@ -313,7 +354,8 @@ describe('ReconciliationService', () => {
 
       expect(result).toEqual({
         outcome: 'checked',
-        scopeKey: 'fake',
+        scopeKey: SEED_FAKE_ACCOUNT_ID,
+        provider: 'fake',
         isChanged: true,
       });
       expect(finish.mock.calls[0][1]).toBeNull();
@@ -343,7 +385,8 @@ describe('ReconciliationService', () => {
 
       expect(result).toEqual({
         outcome: 'provider_failed',
-        scopeKey: 'fake',
+        scopeKey: SEED_FAKE_ACCOUNT_ID,
+        provider: 'fake',
         failure: { kind: 'unavailable', detail: 'more than one page' },
       });
       expect(scheduledSeconds()).toBe(REFUNDABLE_RECONCILE_DELAY_SECONDS);

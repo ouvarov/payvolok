@@ -71,6 +71,13 @@
       "when": 1794692875597,
       "tag": "0009_clever_clea",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794766009612,
+      "tag": "0010_steady_falcon",
+      "breakpoints": true
     }
   ]
 }

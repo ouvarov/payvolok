@@ -8,7 +8,7 @@ Pet project at an early stage. Sandbox only, no real money: it only talks to pro
 
 ## Status
 
-What exists: the payment and refund ingest core, the fake provider, the health routes, the webhook route, the webhook worker, `POST /api/v1/payments`, `GET /api/v1/payments/:id` and `POST /api/v1/payments/:paymentId/refunds`. `POST /webhooks/:provider` verifies the signature and stores the delivery in `webhook_events`; the worker then applies it to payments and refunds. The first real provider is Paddle, sandbox only, for one-off payments and refunds. Payment and refund reconciliation runs in every API process. Multiple projects, more providers and subscriptions are planned.
+What exists: the payment and refund ingest core, the fake provider, the health routes, the webhook route, the webhook worker, `POST /api/v1/payments`, `GET /api/v1/payments/:id` and `POST /api/v1/payments/:paymentId/refunds`. `POST /webhooks/:provider/:providerAccountId` verifies the signature with that account's secret and stores the delivery in `webhook_events`; the worker then applies it to payments and refunds. The first real provider is Paddle, sandbox only, for one-off payments and refunds. Payment and refund reconciliation runs in every API process. Multiple projects, more providers and subscriptions are planned.
 
 ## Stack
 
@@ -24,7 +24,7 @@ The repository root is the API. A web frontend will live in `web/` later.
 
 ## Run locally
 
-Copy `.env.example` to `.env` first. The app refuses to start when `DATABASE_URL` is missing or is not a Postgres URL, when `API_KEY_SHA256` is missing or is not 64 lowercase hex characters, or when `PUBLIC_BASE_URL` is missing or is not an http or https URL. `PUBLIC_BASE_URL` is where providers reach this API: payments ask them to send webhooks to `{PUBLIC_BASE_URL}/webhooks/{provider}`.
+Copy `.env.example` to `.env` first. The app refuses to start when `DATABASE_URL` is missing or is not a Postgres URL, when `API_KEY_SHA256` is missing or is not 64 lowercase hex characters, or when `PUBLIC_BASE_URL` is missing or is not an http or https URL. `PUBLIC_BASE_URL` is where providers reach this API: payments ask them to send webhooks to `{PUBLIC_BASE_URL}/webhooks/{provider}/{providerAccountId}`.
 
 ### With Docker
 
@@ -77,7 +77,7 @@ Git hooks (simple-git-hooks): pre-commit runs lint-staged, pre-push runs `check`
 
 ## API access
 
-Routes under `/api/v1` need `Authorization: Bearer <key>`. Every route declares its access with `@RouteAccess`; a route that declares nothing answers 401, even with a valid key. `/health/*`, `/webhooks/:provider` and `/checkout/paddle` are public: webhooks are checked by their signature.
+Routes under `/api/v1` need `Authorization: Bearer <key>`. Every route declares its access with `@RouteAccess`; a route that declares nothing answers 401, even with a valid key. `/health/*`, `/webhooks/*` and `/checkout/paddle/*` are public: webhooks are checked by their signature.
 
 There is one key. The app only knows its SHA-256, so a stored hash cannot be used to call the API. Create a key and its hash with:
 
@@ -129,6 +129,7 @@ Refused before the provider is called, storing nothing under the key:
 - `409 payment_not_refundable` unless the payment is `succeeded` or `partially_refunded`.
 - `422 refund_amount_exceeds_remaining` when the amount is larger than the payment minus its `pending` and `succeeded` refunds.
 - `409 refund_in_progress` while another key's refund of the same payment waits for the provider.
+- `503 provider_unavailable` with the `paymentId` when the payment's provider account cannot be loaded, for example its credentials do not resolve. No refund row is written, so a retry with the same key is safe.
 
 When the provider refuses the refund the answer is `422 refund_rejected`; when it cannot be reached, is set up wrong or does not return a refund id it is `503 provider_unavailable` with the `paymentId`. A provider that identifies refunds by our id gets a `pending` refund row before the call; a refusal or a setup error marks it `failed`, an outage leaves it `pending`, because the refund may still have happened. A status a provider webhook already reported is kept. A provider that identifies refunds by its own id gets the row only after it answers.
 
@@ -183,6 +184,10 @@ Migration `0008` adds the schedule columns. It must be applied to the production
 
 Every payment, refund and idempotency key belongs to a project, and every payment, refund and webhook row to a provider account of that project. A project has at most one account per provider. For now there is one project, `payvolok-demo` (`5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a01`), with the Paddle account `5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a02` (credentials from the `PADDLE_*` variables); the API and the webhook routes use it. The `fake` account `5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a03` exists only where fake rows already existed when migration `0009` ran, or after `npm run db:seed:fake -- --target-host <host>`, where `<host>` must be the host of `DATABASE_URL`: the script prints the host it would write to and refuses a missing or different one, so a `.env` pointed at another database cannot get the account by mistake; without it `fake` payments answer `422 provider_not_available` and `POST /webhooks/fake` answers 404. Production has no fake account. The e2e setup seeds it after the migrations.
 
+Provider adapters keep no keys. Every provider call binds an account first: the account row names its credentials (`credentials_ref`), and `env:PADDLE` resolves to the `PADDLE_*` variables in the sandbox, `env:FAKE` to `FAKE_WEBHOOK_SECRET`. Credentials print as `[redacted]` in logs, JSON and errors. A webhook is checked against the secrets of the account in its URL, and every payment or refund it touches must belong to that account: an event naming another account's payment ends `ignored` after one attempt, with the reason in `last_error` and a warning that names the event and both accounts. A `disabled` account takes no new payments (`422 provider_not_available`) but keeps its webhooks, refunds, reconciliation and checkout page. Reconciliation skips an account whose provider or credentials fail and goes on with the others.
+
+Until migration `0011` drops the old per-provider unique keys, two accounts of one provider still share them. A renewal whose provider payment id another account already has ends `failed` instead of `ignored`. A webhook whose dedup key another account of the same provider already stored is refused with `503`, so the provider retries until it gives up, and the same body with an invalid signature sent to a second account is not stored (the insert fails with `23505` and is logged as an error). Each provider has one account today and Paddle event ids are unique, so none of these happen yet.
+
 ## Fake provider
 
 `fake` is a provider for development and chaos tests. It keeps no data. The last two digits of `amountMinor` choose the scenario: `01` fails, `02` succeeds after a failed attempt, `03` fails after a failed attempt, `04` expires, `05` stays pending, anything else succeeds. On a refund amount, `01` fails, `05` stays pending, anything else succeeds.
@@ -196,10 +201,10 @@ It signs webhooks with `FAKE_WEBHOOK_SECRET`, at least 32 characters, so several
 `paddle` uses the Paddle Billing sandbox only (`https://sandbox-api.paddle.com`); a live key is refused at boot. All three variables are optional, and an empty value in `.env` counts as unset:
 
 - `PADDLE_API_KEY` (`pdl_sdbx_apikey_…`), with transaction and adjustment read and write. Without it a `paddle` payment or refund answers `503 provider_unavailable`.
-- `PADDLE_WEBHOOK_SECRET` (`pdl_ntfset_…`), the secret of the notification destination. Without it `POST /webhooks/paddle` answers 503, so Paddle retries.
+- `PADDLE_WEBHOOK_SECRET` (`pdl_ntfset_…`), the secret of the notification destination. Without it the Paddle webhook route answers 503, so Paddle retries.
 - `PADDLE_CLIENT_TOKEN` (`test_…`), the client-side token for the checkout page. Without it the page answers 503.
 
-A payment answers with Paddle's own `checkout.url`: the account's default payment link plus `?_ptxn=txn_…`. The default payment link must point to `GET /checkout/paddle`, a small public page that loads Paddle.js in sandbox mode; Paddle.js opens the checkout for `_ptxn` by itself and shows its own success screen. The page is temporary, until the web frontend replaces it. Paddle's hosted checkout is not used. Copy the checkout link exactly: extra characters after `_ptxn=txn_…` make Paddle.js fail with "transaction id must be a valid paddle id". Pay with the test card `4242 4242 4242 4242`.
+A payment answers with Paddle's own `checkout.url`: the account's default payment link plus `?_ptxn=txn_…`. The default payment link must point to `GET /checkout/paddle/<account id>`, a small public page that loads Paddle.js in the account's environment (sandbox for `env:PADDLE`); Paddle.js opens the checkout for `_ptxn` by itself and shows its own success screen. The page is temporary, until the web frontend replaces it. Paddle's hosted checkout is not used. Copy the checkout link exactly: extra characters after `_ptxn=txn_…` make Paddle.js fail with "transaction id must be a valid paddle id". Pay with the test card `4242 4242 4242 4242`.
 
 A refund is a Paddle adjustment: it stays `pending` until Paddle approves it (the sandbox approves in about ten minutes) and the `adjustment.updated` webhook arrives. Before each refund the adapter reads the transaction's refund adjustments from Paddle and refuses (`422 refund_rejected`) an amount above what pending and approved refunds leave, so a retry after a timed-out refund cannot refund the same money twice.
 
@@ -208,8 +213,8 @@ Manual sandbox setup:
 1. Sign up at sandbox-vendors.paddle.com.
 2. Create the API key and the client-side token. In our sandbox dashboard both are under **My account settings**; Paddle's docs call the place **Developer tools > Authentication**. Put them in `.env`.
 3. Expose the local port with a tunnel (ngrok or cloudflared), or deploy, and set `PUBLIC_BASE_URL` to that URL.
-4. **Checkout > Checkout settings** (Paddle's docs: **Checkout configuration**): set the default payment link to `<PUBLIC_BASE_URL>/checkout/paddle`. Paddle creates no transaction without a default payment link.
-5. **Developer tools > Notifications** (in the sandbox dashboard: **Events > Notifications**): add the destination `<PUBLIC_BASE_URL>/webhooks/paddle` with the events `transaction.completed`, `transaction.payment_failed`, `transaction.canceled`, `transaction.paid`, `adjustment.created` and `adjustment.updated`, then put its secret (under **Edit destination**) in `PADDLE_WEBHOOK_SECRET`.
+4. **Checkout > Checkout settings** (Paddle's docs: **Checkout configuration**): set the default payment link to `<PUBLIC_BASE_URL>/checkout/paddle/5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a02`. Paddle creates no transaction without a default payment link.
+5. **Developer tools > Notifications** (in the sandbox dashboard: **Events > Notifications**): add the destination `<PUBLIC_BASE_URL>/webhooks/paddle/5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a02` with the events `transaction.completed`, `transaction.payment_failed`, `transaction.canceled`, `transaction.paid`, `adjustment.created` and `adjustment.updated`, then put its secret (under **Edit destination**) in `PADDLE_WEBHOOK_SECRET`.
 
 `scripts/paddle-sandbox-check.ts` calls the sandbox by hand (never in tests or CI): it creates a payment, prints the checkout URL and the status, tries a refund of the unpaid payment, a bad currency, an empty description and an invalid key, and prints Paddle's answers without the key:
 
@@ -245,7 +250,11 @@ SELECT count(*) FROM refunds WHERE provider_account_id IS NULL;
 SELECT count(*) FROM webhook_events WHERE provider_account_id IS NULL;
 ```
 
-After the first deploy, point Paddle at the final service URL: the default payment link to `<url>/checkout/paddle`, and a new notification destination `<url>/webhooks/paddle` with the same six events. Put its secret in `PADDLE_WEBHOOK_SECRET` and redeploy. Check `/health/ready`.
+Migration `0010` repeats the `0009` account fill for rows written in between, idempotently, and adds a foreign key that keeps a webhook row's provider equal to its account's (`NOT VALID` until `0011`, so existing rows are not checked). Apply it to `dev` and `production` after the `0009` code is live and before the account routes merge, then run the same "after" checks.
+
+`POST /webhooks/paddle` and `GET /checkout/paddle` still serve the seed Paddle account, for destinations and payment links set before accounts existed; the webhook alias logs a warning at most once an hour. Once Paddle points at the account URLs and the warning stops, they can go.
+
+After the first deploy, point Paddle at the final service URL: set the default payment link to `<url>/checkout/paddle/<account id>`, and edit the URL of the existing notification destination to `<url>/webhooks/paddle/<account id>`. Editing keeps the destination's secret, so nothing changes on Render. If you create a new destination instead (with the same six events), it has a new secret: put it in `PADDLE_WEBHOOK_SECRET` on Render and redeploy. After the switch, check that the next event is not answered 401 (Paddle's delivery log for the destination) and that `/health/ready` answers 200.
 
 The free plan stops the service when idle, so the first request after a pause takes about 50 seconds.
 

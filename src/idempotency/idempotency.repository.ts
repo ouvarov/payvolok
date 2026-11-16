@@ -117,6 +117,24 @@ export class IdempotencyRepository {
     return state ?? null;
   }
 
+  // A key past its TTL is left out: the next claim takes it over.
+  async findLiveCompleted(
+    request: IdempotentRequest,
+  ): Promise<IdempotencyKeyState | null> {
+    const [state] = await this.db
+      .select(stateColumns)
+      .from(idempotencyKeys)
+      .where(
+        and(
+          keyOf(request),
+          eq(idempotencyKeys.status, 'completed'),
+          sql`${idempotencyKeys.createdAt} > ${ttlCutoff}`,
+        ),
+      );
+
+    return state ?? null;
+  }
+
   async findStateForUpdate(
     tx: DatabaseTransaction,
     request: IdempotentRequest,

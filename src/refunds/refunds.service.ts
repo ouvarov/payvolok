@@ -36,6 +36,7 @@ const PROVIDER_REF_UNIQUES = [
 type IngestRefundInput = {
   reference: string | null;
   provider: ProviderCode;
+  providerAccountId: string;
   providerPaymentId: string;
   refundReference: string | null;
   providerRefundId: string | null;
@@ -421,7 +422,7 @@ export class RefundsService {
 
     return this.refundsRepository.findByProviderRef(
       tx,
-      input.provider,
+      input.providerAccountId,
       input.providerRefundId,
     );
   }
@@ -469,7 +470,7 @@ export class RefundsService {
 
     return this.refundsRepository.findByProviderRef(
       tx,
-      input.provider,
+      input.providerAccountId,
       input.providerRefundId,
     );
   }

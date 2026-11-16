@@ -41,6 +41,8 @@ const providerAccounts = pgTable(
       table.projectId,
       table.provider,
     ),
+    // The target of the webhook_events foreign key that keeps a row's provider its account's.
+    unique('provider_accounts_id_provider_unique').on(table.id, table.provider),
     check(
       'provider_accounts_provider_check',
       sql`${table.provider} IN (${quotedList(PROVIDER_CODES)})`,

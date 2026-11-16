@@ -24,6 +24,7 @@ const REFUND_ID = '0d7a3f4e-2b1c-4e5f-8a6b-9c0d1e2f3a4b';
 const INPUT: IngestRefundInput = {
   reference: null,
   provider: 'fake',
+  providerAccountId: SEED_FAKE_ACCOUNT_ID,
   providerPaymentId: 'provider-1',
   refundReference: null,
   providerRefundId: 'provider-refund-1',
@@ -251,6 +252,11 @@ describe('RefundsService', () => {
 
       expect(error).toBeInstanceOf(RefundMismatchError);
       expect((error as Error).message).toContain('payment-2');
+      expect(findByProviderRef).toHaveBeenCalledWith(
+        TX,
+        SEED_FAKE_ACCOUNT_ID,
+        'provider-refund-1',
+      );
     });
 
     it('rejects when the conflicting row is gone on the re-read', async () => {

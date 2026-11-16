@@ -1,35 +1,46 @@
 import { Injectable } from '@nestjs/common';
+import { z } from 'zod';
 
-import { SEED_PROJECT_ID } from '@/projects/projects.constants';
+import type { BoundProvider } from '@/providers/payment-provider.port';
+import type { PaddleEnvironment } from '@/providers/provider-credentials';
 import type { ProviderCode } from '@/providers/provider.constants';
+import { ProviderRegistry } from '@/providers/provider.registry';
 
 import {
   ProviderAccountsRepository,
   type StoredAccount,
 } from './provider-accounts.repository';
+import { ProviderCredentialsResolver } from './provider-credentials.resolver';
 
-type AccountRef = { id: string; projectId: string; provider: ProviderCode };
+const providerAccountIdSchema = z.uuid();
 
-const accountRefOf = ({
-  id,
-  projectId,
-  provider,
-}: StoredAccount): AccountRef => ({
-  id,
-  projectId,
-  provider,
-});
+type PaddleCheckoutAccount = {
+  clientToken: string | null;
+  environment: PaddleEnvironment;
+};
 
 @Injectable()
 export class ProviderAccountsService {
   constructor(
     private readonly providerAccountsRepository: ProviderAccountsRepository,
+    private readonly providerCredentialsResolver: ProviderCredentialsResolver,
+    private readonly providerRegistry: ProviderRegistry,
   ) {}
 
-  async activeAccountFor(
+  // Any status: a disabled account keeps its webhooks, reconciliation, refunds and checkout.
+  async bind(accountId: string): Promise<BoundProvider> {
+    const account = await this.providerAccountsRepository.findById(accountId);
+    if (!account) {
+      throw new Error(`Provider account ${accountId} does not exist`);
+    }
+
+    return this.bindAccount(account);
+  }
+
+  async bindForNewPayment(
     projectId: string,
     provider: ProviderCode,
-  ): Promise<AccountRef | null> {
+  ): Promise<BoundProvider | null> {
     const account =
       await this.providerAccountsRepository.findByProjectAndProvider(
         projectId,
@@ -37,19 +48,47 @@ export class ProviderAccountsService {
       );
     if (account?.status !== 'active') return null;
 
-    return accountRefOf(account);
+    return this.bindAccount(account);
   }
 
-  // Any status: a disabled account still takes webhooks for its payments.
-  async seedAccountOf(provider: ProviderCode): Promise<AccountRef | null> {
-    const account =
-      await this.providerAccountsRepository.findByProjectAndProvider(
-        SEED_PROJECT_ID,
-        provider,
-      );
+  async bindForWebhook(
+    provider: ProviderCode,
+    accountId: string,
+  ): Promise<BoundProvider | null> {
+    const account = await this.findAccount(accountId);
+    if (account?.provider !== provider) return null;
 
-    return account ? accountRefOf(account) : null;
+    return this.bindAccount(account);
+  }
+
+  async paddleCheckoutOf(
+    accountId: string,
+  ): Promise<PaddleCheckoutAccount | null> {
+    const account = await this.findAccount(accountId);
+    if (account?.provider !== 'paddle') return null;
+
+    const credentials = await this.providerCredentialsResolver.resolve(account);
+    if (credentials.provider !== 'paddle') return null;
+
+    return {
+      clientToken: credentials.clientToken?.reveal() ?? null,
+      environment: credentials.environment,
+    };
+  }
+
+  private findAccount(accountId: string): Promise<StoredAccount | null> {
+    if (!providerAccountIdSchema.safeParse(accountId).success) {
+      return Promise.resolve(null);
+    }
+
+    return this.providerAccountsRepository.findById(accountId);
+  }
+
+  private async bindAccount(account: StoredAccount): Promise<BoundProvider> {
+    const credentials = await this.providerCredentialsResolver.resolve(account);
+
+    return this.providerRegistry.bind(account, credentials);
   }
 }
 
-export type { AccountRef };
+export type { PaddleCheckoutAccount };

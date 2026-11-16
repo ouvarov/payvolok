@@ -8,6 +8,7 @@ import type { ProviderPaymentStatus } from '@/providers/payment-provider.port';
 
 import type { PaymentsRepository } from './payments.repository';
 import {
+  ForeignAccountError,
   IngestRejectedError,
   PaymentEventInvalidError,
   PaymentMismatchError,
@@ -20,12 +21,14 @@ import {
 
 const TX = {} as DatabaseTransaction;
 const OTHER_ACCOUNT_ID = '9c1e2d3f-4a5b-4c6d-8e7f-000000000002';
+const OTHER_PROJECT_ID = '9c1e2d3f-4a5b-4c6d-8e7f-000000000003';
 
 const REFERENCE = '7f3c1a52-8d4e-4b6a-9c21-0e5d7a9b3f10';
 
 const INPUT: IngestPaymentInput = {
   reference: null,
   provider: 'fake',
+  projectId: SEED_PROJECT_ID,
   providerAccountId: SEED_FAKE_ACCOUNT_ID,
   providerPaymentId: 'provider-1',
   status: 'succeeded',
@@ -71,6 +74,7 @@ const repositoryWith = (
     requestReconciliation: jest.fn().mockResolvedValue(undefined),
     insertIfAbsent: jest.fn().mockResolvedValue(null),
     findByProviderRefForUpdate: jest.fn().mockResolvedValue(null),
+    findProviderRefElsewhere: jest.fn().mockResolvedValue(null),
     findByIdAndProviderForUpdate: jest.fn().mockResolvedValue(null),
     setProviderPaymentId: jest.fn().mockResolvedValue(null),
     updateStatus: jest.fn().mockResolvedValue(null),
@@ -358,6 +362,7 @@ describe('PaymentsService', () => {
     const LOOKUP = {
       reference: REFERENCE,
       provider: 'fake',
+      providerAccountId: SEED_FAKE_ACCOUNT_ID,
       providerPaymentId: 'provider-1',
     } as const;
 
@@ -391,10 +396,95 @@ describe('PaymentsService', () => {
       expect(await paymentsService.lockPaymentForRefund(TX, LOOKUP)).toBeNull();
       expect(findByProviderRefForUpdate).toHaveBeenCalledWith(
         TX,
-        'fake',
+        SEED_FAKE_ACCOUNT_ID,
         'provider-1',
       );
       expect(insertIfAbsent).not.toHaveBeenCalled();
+    });
+
+    it('refuses a referenced payment of another account', async () => {
+      const paymentsService = new PaymentsService(
+        repositoryWith({
+          findByIdAndProviderForUpdate: jest
+            .fn()
+            .mockResolvedValue(
+              paymentWith({ providerAccountId: OTHER_ACCOUNT_ID }),
+            ),
+        }),
+      );
+
+      await expect(
+        paymentsService.lockPaymentForRefund(TX, LOOKUP),
+      ).rejects.toMatchObject({
+        message: `Reference ${REFERENCE} belongs to another account`,
+        ownerAccountId: OTHER_ACCOUNT_ID,
+      });
+    });
+
+    it('refuses a provider ref that only another account has', async () => {
+      const findProviderRefElsewhere = jest
+        .fn()
+        .mockResolvedValue({ providerAccountId: OTHER_ACCOUNT_ID });
+      const paymentsService = new PaymentsService(
+        repositoryWith({ findProviderRefElsewhere }),
+      );
+
+      const error: unknown = await paymentsService
+        .lockPaymentForRefund(TX, LOOKUP)
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(ForeignAccountError);
+      expect(error).toMatchObject({ ownerAccountId: OTHER_ACCOUNT_ID });
+      expect(findProviderRefElsewhere).toHaveBeenCalledWith(TX, LOOKUP);
+    });
+  });
+
+  describe('account scope', () => {
+    it('ignores a referenced payment of another account without touching it', async () => {
+      const updateStatus = jest.fn();
+      const paymentsService = new PaymentsService(
+        repositoryWith({
+          updateStatus,
+          findByIdAndProviderForUpdate: jest
+            .fn()
+            .mockResolvedValue(
+              paymentWith({ providerAccountId: OTHER_ACCOUNT_ID }),
+            ),
+        }),
+      );
+
+      const error: unknown = await paymentsService
+        .ingestPayment({ ...INPUT, reference: REFERENCE })
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(ForeignAccountError);
+      expect(error).not.toBeInstanceOf(IngestRejectedError);
+      expect((error as Error).message).toBe(
+        `Reference ${REFERENCE} belongs to another account`,
+      );
+      expect(updateStatus).not.toHaveBeenCalled();
+    });
+
+    it('ignores a provider ref that another account owns', async () => {
+      const paymentsService = new PaymentsService(
+        repositoryWith({
+          findProviderRefElsewhere: jest
+            .fn()
+            .mockResolvedValue({ providerAccountId: OTHER_ACCOUNT_ID }),
+        }),
+      );
+
+      await expect(paymentsService.ingestPayment(INPUT)).rejects.toThrow(
+        'Provider payment provider-1 belongs to another account',
+      );
+    });
+
+    it('keeps a provider ref that exists nowhere a retryable not-found', async () => {
+      const paymentsService = new PaymentsService(repositoryWith({}));
+
+      await expect(paymentsService.ingestPayment(INPUT)).rejects.toBeInstanceOf(
+        PaymentNotFoundError,
+      );
     });
   });
 
@@ -431,6 +521,7 @@ describe('PaymentsService', () => {
 
       const result = await paymentsService.ingestPayment({
         ...RENEWAL_INPUT,
+        projectId: OTHER_PROJECT_ID,
         providerAccountId: OTHER_ACCOUNT_ID,
       });
 
@@ -440,7 +531,7 @@ describe('PaymentsService', () => {
         expect.objectContaining({
           origin: 'provider',
           purpose: 'subscription_renewal',
-          projectId: SEED_PROJECT_ID,
+          projectId: OTHER_PROJECT_ID,
           providerAccountId: OTHER_ACCOUNT_ID,
         }),
       );

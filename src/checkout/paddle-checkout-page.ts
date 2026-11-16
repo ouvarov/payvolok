@@ -1,4 +1,14 @@
+import type { PaddleEnvironment } from '@/providers/provider-credentials';
+
 type CheckoutPage = { html: string; contentSecurityPolicy: string };
+
+type PaddleCheckout = { clientToken: string; environment: PaddleEnvironment };
+
+// Paddle.js runs live unless it is told to use the sandbox.
+const ENVIRONMENT_SETUP: Readonly<Record<PaddleEnvironment, string | null>> = {
+  sandbox: "Paddle.Environment.set('sandbox');",
+  live: null,
+};
 
 const PADDLE_JS_URL = 'https://cdn.paddle.com/paddle/v2/paddle.js';
 const PADDLE_JS_ORIGIN = 'https://cdn.paddle.com';
@@ -20,8 +30,19 @@ const contentSecurityPolicyOf = (nonce: string): string =>
     "frame-ancestors 'none'",
   ].join('; ');
 
+const setupScriptOf = ({ clientToken, environment }: PaddleCheckout): string =>
+  [
+    ENVIRONMENT_SETUP[environment],
+    `Paddle.Initialize({ token: ${JSON.stringify(clientToken)} });`,
+  ]
+    .filter((line) => line !== null)
+    .join('\n      ');
+
 // Paddle.js opens the checkout for the _ptxn query parameter by itself.
-const checkoutPageOf = (clientToken: string, nonce: string): CheckoutPage => ({
+const checkoutPageOf = (
+  checkout: PaddleCheckout,
+  nonce: string,
+): CheckoutPage => ({
   html: `<!doctype html>
 <html lang="en">
   <head>
@@ -32,8 +53,7 @@ const checkoutPageOf = (clientToken: string, nonce: string): CheckoutPage => ({
   </head>
   <body>
     <script nonce="${nonce}">
-      Paddle.Environment.set('sandbox');
-      Paddle.Initialize({ token: ${JSON.stringify(clientToken)} });
+      ${setupScriptOf(checkout)}
     </script>
   </body>
 </html>

@@ -1,27 +1,55 @@
 import { Injectable } from '@nestjs/common';
 
+import { boundProviderOf } from './bound-provider';
 import { FakeProvider } from './fake/fake.provider';
 import { PaddleProvider } from './paddle/paddle.provider';
-import type { PaymentProvider, RefundIdentity } from './payment-provider.port';
-import { isProviderCode, type ProviderCode } from './provider.constants';
+import {
+  ProviderError,
+  type BoundProvider,
+  type PaymentProvider,
+} from './payment-provider.port';
+import type {
+  CredentialsOf,
+  ProviderCredentials,
+} from './provider-credentials';
+import type { ProviderCode } from './provider.constants';
+
+type ProviderAdapters = {
+  [Code in ProviderCode]: PaymentProvider<CredentialsOf<Code>>;
+};
+
+type BindableAccount = {
+  id: string;
+  projectId: string;
+  provider: ProviderCode;
+};
 
 @Injectable()
 export class ProviderRegistry {
-  private readonly providers: Record<ProviderCode, PaymentProvider>;
+  private readonly adapters: ProviderAdapters;
 
   constructor(fakeProvider: FakeProvider, paddleProvider: PaddleProvider) {
-    this.providers = { fake: fakeProvider, paddle: paddleProvider };
+    this.adapters = { fake: fakeProvider, paddle: paddleProvider };
   }
 
-  get(code: ProviderCode): PaymentProvider {
-    return this.providers[code];
-  }
+  bind(
+    account: BindableAccount,
+    credentials: ProviderCredentials,
+  ): BoundProvider {
+    if (credentials.provider !== account.provider) {
+      throw new ProviderError(
+        `provider account ${account.id} has credentials of another provider`,
+        { providerCode: account.provider, kind: 'misconfigured' },
+      );
+    }
 
-  find(code: string): PaymentProvider | null {
-    return isProviderCode(code) ? this.providers[code] : null;
-  }
-
-  refundIdentityOf(code: ProviderCode): RefundIdentity {
-    return this.get(code).capabilities.refundIdentity;
+    switch (credentials.provider) {
+      case 'fake':
+        return boundProviderOf(account, this.adapters.fake, credentials);
+      case 'paddle':
+        return boundProviderOf(account, this.adapters.paddle, credentials);
+    }
   }
 }
+
+export type { BindableAccount };
