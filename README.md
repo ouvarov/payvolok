@@ -87,10 +87,16 @@ Keys live in `api_keys`, one project per key, as many keys per project as needed
 npm run api-key:create -- --project payvolok-demo --name "render production" [--expires-in-days 90]
 ```
 
-It writes to the database in `DATABASE_URL` (it prints the host first) and prints the key once: keep it in your secret store. `npm run api-key:create:prod` runs the same from the build. An unknown slug is refused. Revoke a key with SQL; it stops working on the next request:
+It writes to the database in `DATABASE_URL` (it prints the host first) and prints the key's id and the key itself, the key only once: keep both in your secret store. `npm run api-key:create:prod` runs the same from the build. An unknown slug is refused.
+
+Revoke a key by its id; it stops working on the next request. `key_prefix` has only 4 random characters and is not unique, so never revoke by it. If the id is lost, find it from the prefix, the project and the name:
 
 ```sql
-UPDATE api_keys SET revoked_at = clock_timestamp() WHERE key_prefix = 'pv_test_XXXX' AND revoked_at IS NULL;
+SELECT k.id, k.name, k.created_at, k.expires_at
+FROM api_keys k JOIN projects p ON p.id = k.project_id
+WHERE p.slug = 'payvolok-demo' AND k.key_prefix = 'pv_test_XXXX' AND k.revoked_at IS NULL;
+
+UPDATE api_keys SET revoked_at = clock_timestamp() WHERE id = '<api key id>' AND revoked_at IS NULL;
 ```
 
 To rotate, create a new key, switch the client to it, then revoke the old one. `API_KEY_SHA256` is no longer read.

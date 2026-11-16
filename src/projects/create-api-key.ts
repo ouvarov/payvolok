@@ -94,7 +94,9 @@ const runCreateApiKey = async (): Promise<void> => {
       `Creating an API key for project ${request.projectSlug} on ${new URL(DATABASE_URL).hostname}`,
     );
     const created = await createApiKey(drizzle(client), request);
-    console.log(`API key ${created.apiKeyId} created. It is shown only once:`);
+    console.log(
+      `API key created, id ${created.apiKeyId} (revoke by this id). The key is shown only once:`,
+    );
     console.log(created.apiKey);
   } finally {
     await client.end();
