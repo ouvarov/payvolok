@@ -1158,12 +1158,18 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
         let isFirstLock = true;
         let isLockWaitSeen = false;
         const paymentsRepository = app.get(PaymentsRepository);
-        const findByIdForUpdate =
-          paymentsRepository.findByIdForUpdate.bind(paymentsRepository);
+        const findByIdInProjectForUpdate =
+          paymentsRepository.findByIdInProjectForUpdate.bind(
+            paymentsRepository,
+          );
         jest
-          .spyOn(paymentsRepository, 'findByIdForUpdate')
-          .mockImplementation(async (tx, paymentId) => {
-            const locked = await findByIdForUpdate(tx, paymentId);
+          .spyOn(paymentsRepository, 'findByIdInProjectForUpdate')
+          .mockImplementation(async (tx, projectId, paymentId) => {
+            const locked = await findByIdInProjectForUpdate(
+              tx,
+              projectId,
+              paymentId,
+            );
             if (isFirstLock) {
               isFirstLock = false;
               const [{ pid }] = await tx.execute<{ pid: number }>(

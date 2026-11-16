@@ -126,11 +126,16 @@ describe('projects in the API', () => {
       .from(idempotencyKeys)
       .where(eq(idempotencyKeys.key, key));
 
-  const paymentsWithAmount = (amountMinor: number) =>
+  const paymentsWithAmount = (projectId: string, amountMinor: number) =>
     db
       .select({ id: payments.id })
       .from(payments)
-      .where(eq(payments.amountMinor, amountMinor));
+      .where(
+        and(
+          eq(payments.projectId, projectId),
+          eq(payments.amountMinor, amountMinor),
+        ),
+      );
 
   const createProject = async (label: string): Promise<string> => {
     const [{ id }] = await db
@@ -563,7 +568,9 @@ describe('projects in the API', () => {
 
       expect(response.body).toMatchObject({ code: 'provider_not_available' });
       expect(await keyRowsNamed(key)).toEqual([]);
-      expect(await paymentsWithAmount(body.amountMinor)).toEqual([]);
+      expect(await paymentsWithAmount(b.projectId, body.amountMinor)).toEqual(
+        [],
+      );
     });
   });
 
@@ -595,7 +602,9 @@ describe('projects in the API', () => {
         expect(response.body).toEqual(RETURN_URL_NOT_ALLOWED_BODY);
         expect(createPayment).not.toHaveBeenCalled();
         expect(await keyRowsNamed(key)).toEqual([]);
-        expect(await paymentsWithAmount(body.amountMinor)).toEqual([]);
+        expect(await paymentsWithAmount(a.projectId, body.amountMinor)).toEqual(
+          [],
+        );
       },
     );
 
