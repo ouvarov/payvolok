@@ -10,6 +10,7 @@ import { validateEnv } from './config/env.schema';
 import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 import { PaymentsModule } from './payments/payments.module';
+import { ProjectsModule } from './projects/projects.module';
 import { ReconciliationModule } from './reconciliation/reconciliation.module';
 import { RefundsModule } from './refunds/refunds.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
@@ -25,6 +26,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     DatabaseModule,
     HealthModule,
     PaymentsModule,
+    ProjectsModule,
     ReconciliationModule,
     RefundsModule,
     WebhooksModule,

@@ -14,7 +14,6 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/, hostname: /.+/ }),
   DATABASE_POOL_MAX: z.coerce.number().int().positive().default(10),
-  API_KEY_SHA256: z.string().regex(/^[0-9a-f]{64}$/),
   PUBLIC_BASE_URL: z
     .url({ protocol: /^https?$/, hostname: /.+/ })
     .transform((url) => url.replace(/\/+$/, '')),

@@ -97,10 +97,12 @@ const isMissingProviderRefundId = (
   outcome.created.providerRefundId === null;
 
 const requestOf = (
+  projectId: string,
   idempotencyKey: string,
   paymentId: string,
   dto: CreateRefundDto,
 ): IdempotentRequest => ({
+  projectId,
   scope: 'api:create_refund',
   key: idempotencyKey,
   requestHash: requestHashOf([paymentId, dto.amountMinor]),
@@ -136,17 +138,26 @@ export class RefundCreationService {
   ) {}
 
   async createRefund(
+    projectId: string,
     idempotencyKey: string,
     paymentId: string,
     dto: CreateRefundDto,
   ): Promise<IdempotentResponse> {
     const normalizedPaymentId = paymentId.toLowerCase();
-    const request = requestOf(idempotencyKey, normalizedPaymentId, dto);
+    const request = requestOf(
+      projectId,
+      idempotencyKey,
+      normalizedPaymentId,
+      dto,
+    );
     // Before the bind: a retry of a finished refund gets its stored answer whatever the account's state.
     const replayed = await this.idempotencyService.findReplay(request);
     if (replayed) return replayed;
 
-    const provider = await this.boundProviderOfPayment(normalizedPaymentId);
+    const provider = await this.boundProviderOfPayment(
+      projectId,
+      normalizedPaymentId,
+    );
     const claim = await this.idempotencyService.claim(request, {
       onClaimed: (tx) =>
         this.reserveRefund(
@@ -189,9 +200,13 @@ export class RefundCreationService {
 
   // A payment's account never changes, so the account bound before the claim is the locked payment's.
   private async boundProviderOfPayment(
+    projectId: string,
     paymentId: string,
   ): Promise<BoundProvider> {
-    const payment = await this.paymentsService.findPayment(paymentId);
+    const payment = await this.paymentsService.findPaymentInProject(
+      projectId,
+      paymentId,
+    );
     if (!payment) throw paymentNotFound();
 
     try {
@@ -216,7 +231,11 @@ export class RefundCreationService {
     provider: BoundProvider,
     amountMinor: number,
   ): Promise<RefundReservation> {
-    const payment = await this.lockRefundablePayment(tx, paymentId);
+    const payment = await this.lockRefundablePayment(
+      tx,
+      request.projectId,
+      paymentId,
+    );
     await this.assertAmountAvailable(tx, payment, amountMinor);
     await this.assertNoRefundInProgress(tx, request, payment.id);
 
@@ -243,9 +262,14 @@ export class RefundCreationService {
 
   private async lockRefundablePayment(
     tx: DatabaseTransaction,
+    projectId: string,
     paymentId: string,
   ): Promise<RefundablePayment> {
-    const payment = await this.paymentsService.lockPayment(tx, paymentId);
+    const payment = await this.paymentsService.lockPaymentInProject(
+      tx,
+      projectId,
+      paymentId,
+    );
     if (!payment) throw paymentNotFound();
     if (!isRefundable(payment)) {
       throw new ApiException({

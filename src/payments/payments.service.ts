@@ -196,8 +196,14 @@ export class PaymentsService {
 
   constructor(private readonly paymentsRepository: PaymentsRepository) {}
 
-  async getPayment(paymentId: string): Promise<PaymentResponseDto> {
-    const payment = await this.paymentsRepository.findById(paymentId);
+  async getPayment(
+    projectId: string,
+    paymentId: string,
+  ): Promise<PaymentResponseDto> {
+    const payment = await this.paymentsRepository.findByIdInProject(
+      projectId,
+      paymentId,
+    );
     if (!payment) {
       throw new ApiException({
         statusCode: HttpStatus.NOT_FOUND,
@@ -329,8 +335,11 @@ export class PaymentsService {
     );
   }
 
-  findPayment(paymentId: string): Promise<Payment | null> {
-    return this.paymentsRepository.findById(paymentId);
+  findPaymentInProject(
+    projectId: string,
+    paymentId: string,
+  ): Promise<Payment | null> {
+    return this.paymentsRepository.findByIdInProject(projectId, paymentId);
   }
 
   lockPayment(
@@ -338,6 +347,18 @@ export class PaymentsService {
     paymentId: string,
   ): Promise<Payment | null> {
     return this.paymentsRepository.findByIdForUpdate(tx, paymentId);
+  }
+
+  lockPaymentInProject(
+    tx: DatabaseTransaction,
+    projectId: string,
+    paymentId: string,
+  ): Promise<Payment | null> {
+    return this.paymentsRepository.findByIdInProjectForUpdate(
+      tx,
+      projectId,
+      paymentId,
+    );
   }
 
   async lockPaymentForRefund(

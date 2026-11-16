@@ -16,6 +16,7 @@ import {
 } from './idempotency.constants';
 
 type IdempotentRequest = {
+  projectId: string;
   scope: IdempotencyScope;
   key: string;
   requestHash: string;
@@ -38,8 +39,12 @@ const storedResponseOf = (
 ): StoredResponse | null =>
   statusCode === null || body === null ? null : { statusCode, body };
 
-const keyOf = ({ scope, key }: IdempotentRequest) =>
-  and(eq(idempotencyKeys.scope, scope), eq(idempotencyKeys.key, key));
+const keyOf = ({ projectId, scope, key }: IdempotentRequest) =>
+  and(
+    eq(idempotencyKeys.projectId, projectId),
+    eq(idempotencyKeys.scope, scope),
+    eq(idempotencyKeys.key, key),
+  );
 
 type InProgressKey = IdempotentRequest & { isLeaseExpired: boolean };
 
@@ -75,13 +80,18 @@ export class IdempotencyRepository {
     const claimedRows = await tx
       .insert(idempotencyKeys)
       .values({
+        projectId: request.projectId,
         scope: request.scope,
         key: request.key,
         requestHash: request.requestHash,
         status: 'in_progress',
       })
       .onConflictDoUpdate({
-        target: [idempotencyKeys.scope, idempotencyKeys.key],
+        target: [
+          idempotencyKeys.projectId,
+          idempotencyKeys.scope,
+          idempotencyKeys.key,
+        ],
         set: {
           requestHash: request.requestHash,
           status: 'in_progress',
@@ -178,6 +188,7 @@ export class IdempotencyRepository {
   ): Promise<InProgressKey | null> {
     const [inProgressKey] = await tx
       .select({
+        projectId: idempotencyKeys.projectId,
         scope: idempotencyKeys.scope,
         key: idempotencyKeys.key,
         requestHash: idempotencyKeys.requestHash,
@@ -197,15 +208,15 @@ export class IdempotencyRepository {
     return inProgressKey ?? null;
   }
 
-  // The outer cutoff is repeated so a key matched only by name is never
-  // deleted while fresh, also once the key gains a project.
+  // The outer cutoff is repeated: a claim may take a selected key over before
+  // the delete reaches it, and the fresh row must stay.
   async purgeExpired(limit: number): Promise<number> {
     const purgedRows = await this.db
       .delete(idempotencyKeys)
       .where(
         and(
-          sql`(${idempotencyKeys.scope}, ${idempotencyKeys.key}) IN (
-            SELECT scope, key FROM idempotency_keys
+          sql`(${idempotencyKeys.projectId}, ${idempotencyKeys.scope}, ${idempotencyKeys.key}) IN (
+            SELECT project_id, scope, key FROM idempotency_keys
             WHERE created_at <= ${ttlCutoff}
             LIMIT ${limit}
           )`,

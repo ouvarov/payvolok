@@ -70,7 +70,7 @@ const repositoryWith = (
     withTransaction: jest.fn((work: (tx: DatabaseTransaction) => unknown) =>
       Promise.resolve(work(TX)),
     ),
-    findById: jest.fn().mockResolvedValue(null),
+    findByIdInProject: jest.fn().mockResolvedValue(null),
     requestReconciliation: jest.fn().mockResolvedValue(undefined),
     insertIfAbsent: jest.fn().mockResolvedValue(null),
     findByProviderRefForUpdate: jest.fn().mockResolvedValue(null),
@@ -87,7 +87,7 @@ describe('PaymentsService', () => {
     it('returns only the public fields of the payment', async () => {
       const service = new PaymentsService(
         repositoryWith({
-          findById: jest.fn().mockResolvedValue(
+          findByIdInProject: jest.fn().mockResolvedValue(
             paymentWith({
               providerPaymentId: 'provider-1',
               status: 'pending',
@@ -96,7 +96,9 @@ describe('PaymentsService', () => {
         }),
       );
 
-      expect({ ...(await service.getPayment(REFERENCE)) }).toEqual({
+      expect({
+        ...(await service.getPayment(SEED_PROJECT_ID, REFERENCE)),
+      }).toEqual({
         paymentId: REFERENCE,
         status: 'pending',
         provider: 'fake',
@@ -110,7 +112,9 @@ describe('PaymentsService', () => {
     it('throws payment_not_found when the id is unknown', async () => {
       const service = new PaymentsService(repositoryWith({}));
 
-      await expect(service.getPayment(REFERENCE)).rejects.toMatchObject({
+      await expect(
+        service.getPayment(SEED_PROJECT_ID, REFERENCE),
+      ).rejects.toMatchObject({
         body: {
           statusCode: 404,
           code: 'payment_not_found',
@@ -119,18 +123,37 @@ describe('PaymentsService', () => {
       });
     });
 
+    it('looks the payment up only within the caller project and nudges nothing outside it', async () => {
+      const findByIdInProject = jest.fn().mockResolvedValue(null);
+      const requestReconciliation = jest.fn().mockResolvedValue(undefined);
+      const service = new PaymentsService(
+        repositoryWith({ findByIdInProject, requestReconciliation }),
+      );
+
+      await expect(
+        service.getPayment(OTHER_PROJECT_ID, REFERENCE),
+      ).rejects.toMatchObject({ body: { code: 'payment_not_found' } });
+      expect(findByIdInProject).toHaveBeenCalledWith(
+        OTHER_PROJECT_ID,
+        REFERENCE,
+      );
+      expect(requestReconciliation).not.toHaveBeenCalled();
+    });
+
     it.each(['created', 'pending'] as const)(
       'asks for a reconciliation of a %s payment',
       async (status) => {
         const requestReconciliation = jest.fn().mockResolvedValue(undefined);
         const service = new PaymentsService(
           repositoryWith({
-            findById: jest.fn().mockResolvedValue(paymentWith({ status })),
+            findByIdInProject: jest
+              .fn()
+              .mockResolvedValue(paymentWith({ status })),
             requestReconciliation,
           }),
         );
 
-        await service.getPayment(REFERENCE);
+        await service.getPayment(SEED_PROJECT_ID, REFERENCE);
 
         expect(requestReconciliation).toHaveBeenCalledWith(REFERENCE);
       },
@@ -140,7 +163,7 @@ describe('PaymentsService', () => {
       const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
       const service = new PaymentsService(
         repositoryWith({
-          findById: jest
+          findByIdInProject: jest
             .fn()
             .mockResolvedValue(paymentWith({ status: 'pending' })),
           requestReconciliation: jest
@@ -151,7 +174,9 @@ describe('PaymentsService', () => {
         }),
       );
 
-      await expect(service.getPayment(REFERENCE)).resolves.toMatchObject({
+      await expect(
+        service.getPayment(SEED_PROJECT_ID, REFERENCE),
+      ).resolves.toMatchObject({
         paymentId: REFERENCE,
         status: 'pending',
       });
@@ -171,12 +196,14 @@ describe('PaymentsService', () => {
         const requestReconciliation = jest.fn().mockResolvedValue(undefined);
         const service = new PaymentsService(
           repositoryWith({
-            findById: jest.fn().mockResolvedValue(paymentWith({ status })),
+            findByIdInProject: jest
+              .fn()
+              .mockResolvedValue(paymentWith({ status })),
             requestReconciliation,
           }),
         );
 
-        await service.getPayment(REFERENCE);
+        await service.getPayment(SEED_PROJECT_ID, REFERENCE);
 
         expect(requestReconciliation).not.toHaveBeenCalled();
       },
