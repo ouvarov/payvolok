@@ -75,6 +75,7 @@ export default tseslint.config(
     files: [
       'src/database/migrate.ts',
       'src/database/seed-fake-account.ts',
+      'src/projects/create-api-key.ts',
       'scripts/**/*.ts',
     ],
     rules: { 'no-console': 'off' },
