@@ -733,12 +733,10 @@ describe('Webhooks route', () => {
         '/api/v1/payments',
         '/api/v1/payments/:id',
         '/api/v1/payments/:paymentId/refunds',
-        '/checkout/paddle',
         '/checkout/paddle/:providerAccountId',
         '/health/live',
         '/health/ready',
         '/webhooks/:provider/:providerAccountId',
-        '/webhooks/paddle',
       ]);
     });
 

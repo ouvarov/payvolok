@@ -6,7 +6,6 @@ import {
 } from '@nestjs/common';
 
 import { SEED_PROJECT_ID } from '@/projects/projects.constants';
-import { SEED_PADDLE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
 import type { ProviderAccountsService } from '@/provider-accounts/provider-accounts.service';
 import type { BoundProvider } from '@/providers/payment-provider.port';
 
@@ -194,43 +193,6 @@ describe('WebhooksService account', () => {
         providerAccountId: ACCOUNT_ID,
       }),
     );
-  });
-});
-
-describe('WebhooksService Paddle alias', () => {
-  let now: jest.SpyInstance<number, []>;
-  let warn: jest.SpyInstance;
-
-  beforeEach(() => {
-    warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
-    now = jest.spyOn(Date, 'now').mockReturnValue(START_EPOCH_MS);
-  });
-
-  afterEach(() => {
-    jest.restoreAllMocks();
-  });
-
-  it('receives on the seed Paddle account and warns at most once an hour', async () => {
-    const bindForWebhook = bindingTo(
-      boundProviderWith(SEED_PADDLE_ACCOUNT_ID, { code: 'paddle' }),
-    );
-    const service = serviceWith(bindForWebhook, {
-      insertReceivedIfAbsent: jest.fn().mockResolvedValue(false),
-    });
-
-    await service.receiveOnPaddleAlias(Buffer.from('{}'), {});
-    now.mockReturnValue(START_EPOCH_MS + HOUR_MS - 1);
-    await service.receiveOnPaddleAlias(Buffer.from('{}'), {});
-    expect(warn).toHaveBeenCalledTimes(1);
-
-    now.mockReturnValue(START_EPOCH_MS + HOUR_MS);
-    await service.receiveOnPaddleAlias(Buffer.from('{}'), {});
-    expect(warn).toHaveBeenCalledTimes(2);
-    expect(bindForWebhook.mock.calls).toEqual([
-      ['paddle', SEED_PADDLE_ACCOUNT_ID],
-      ['paddle', SEED_PADDLE_ACCOUNT_ID],
-      ['paddle', SEED_PADDLE_ACCOUNT_ID],
-    ]);
   });
 });
 

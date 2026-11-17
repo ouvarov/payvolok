@@ -509,8 +509,8 @@ describe('Paddle provider', () => {
     });
   });
 
-  describe('the webhook alias', () => {
-    it('stores a delivery to /webhooks/paddle under the seed Paddle account', async () => {
+  describe('the retired routes without an account', () => {
+    it('answers 404 on /webhooks/paddle and stores nothing', async () => {
       const event = transactionEventFixture('event-transaction-paid');
       event.event_id = syntheticPaddleId('evt');
       const webhook = signedPaddleWebhook(
@@ -524,14 +524,19 @@ describe('Paddle provider', () => {
         webhook.rawBody,
         webhook.headers[PADDLE_SIGNATURE_HEADER] as string,
         '/webhooks/paddle',
-      ).expect(200);
+      ).expect(404);
 
-      expect(await inboxRowsWithKey(event.event_id)).toEqual([
-        expect.objectContaining({
-          providerAccountId: SEED_PADDLE_ACCOUNT_ID,
-          signatureValid: true,
-        }),
-      ]);
+      expect(
+        await inboxRowsWithKey(event.event_id, invalidKeyOf(webhook.rawBody)),
+      ).toEqual([]);
+    });
+
+    it('answers 404 on /checkout/paddle without the client token', async () => {
+      const response = await request(serverOf(app))
+        .get('/checkout/paddle')
+        .expect(404);
+
+      expect(response.text).not.toContain(CLIENT_TOKEN);
     });
   });
 
@@ -539,7 +544,7 @@ describe('Paddle provider', () => {
     const nonceOf = (contentSecurityPolicy: string): string | undefined =>
       /script-src 'nonce-([^']+)'/.exec(contentSecurityPolicy)?.[1];
 
-    it('serves Paddle.js with the account client token, environment and a fresh nonce, the alias as the seed account', async () => {
+    it('serves Paddle.js with the account client token, environment and a fresh nonce', async () => {
       const credentials = await app.get(ProviderCredentialsResolver).resolve({
         id: SEED_PADDLE_ACCOUNT_ID,
         provider: 'paddle',
@@ -550,7 +555,7 @@ describe('Paddle provider', () => {
         .query({ _ptxn: syntheticPaddleId('txn') })
         .expect(200);
       const second = await request(serverOf(app))
-        .get('/checkout/paddle')
+        .get(`/checkout/paddle/${SEED_PADDLE_ACCOUNT_ID}`)
         .expect(200);
 
       const nonce = nonceOf(first.headers['content-security-policy']);
@@ -586,7 +591,7 @@ describe('Paddle provider', () => {
       const injected = '<script>alert(1)</script>';
 
       const response = await request(serverOf(app))
-        .get('/checkout/paddle')
+        .get(`/checkout/paddle/${SEED_PADDLE_ACCOUNT_ID}`)
         .query({ _ptxn: injected, token: 'test_attacker' })
         .expect(200);
 
@@ -672,7 +677,7 @@ describe('Paddle provider without configuration', () => {
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
 
     const response = await request(serverOf(app))
-      .get('/checkout/paddle')
+      .get(`/checkout/paddle/${SEED_PADDLE_ACCOUNT_ID}`)
       .expect(503);
 
     expect(response.body).toEqual({
