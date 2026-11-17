@@ -12,8 +12,6 @@ services:
         value: production
       - key: DATABASE_URL
         sync: false
-      - key: API_KEY_SHA256
-        sync: false
       - key: PUBLIC_BASE_URL
         sync: false
       - key: PADDLE_API_KEY
