@@ -204,7 +204,7 @@ Every payment, refund and idempotency key belongs to a project, and every paymen
 
 Provider adapters keep no keys. Every provider call binds an account first: the account row names its credentials (`credentials_ref`), and `env:PADDLE` resolves to the `PADDLE_*` variables in the sandbox, `env:FAKE` to `FAKE_WEBHOOK_SECRET`. Credentials print as `[redacted]` in logs, JSON and errors. A webhook is checked against the secrets of the account in its URL, and every payment or refund it touches must belong to that account: an event naming another account's payment ends `ignored` after one attempt, with the reason in `last_error` and a warning that names the event and both accounts. A `disabled` account takes no new payments (`422 provider_not_available`) but keeps its webhooks, refunds, reconciliation and checkout page. Reconciliation skips an account whose provider or credentials fail and goes on with the others.
 
-Provider payment ids, provider refund ids and webhook dedup keys are unique per account, not per provider: two accounts of one provider can hold the same ids, and each webhook moves only its own account's rows.
+Provider payment ids, provider refund ids and webhook dedup keys are unique per account, not per provider, and a webhook moves only its own account's rows. An event naming an id that only another account holds is ignored, as above; it creates nothing on the webhook's account.
 
 ## Fake provider
 
