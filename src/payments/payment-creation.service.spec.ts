@@ -4,8 +4,7 @@ import { ApiException } from '@/common/errors/api-exception';
 import type { Env } from '@/config/env.schema';
 import type { DatabaseTransaction } from '@/database/drizzle';
 import type { IdempotencyService } from '@/idempotency/idempotency.service';
-import { SEED_PROJECT_ID } from '@/projects/projects.constants';
-import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
+import type { ProjectsService } from '@/projects/projects.service';
 import type { ProviderAccountsService } from '@/provider-accounts/provider-accounts.service';
 import type { BoundProvider } from '@/providers/payment-provider.port';
 
@@ -14,6 +13,8 @@ import { PaymentCreationService } from './payment-creation.service';
 import type { PaymentsService } from './payments.service';
 
 const TX = {} as DatabaseTransaction;
+const PROJECT_ID = '3a7c9e1b-2d4f-4a6b-8c0d-111111111111';
+const ACCOUNT_ID = '3a7c9e1b-2d4f-4a6b-8c0d-222222222222';
 const PAYMENT_ID = '0b9d6f0e-5a4b-4c1e-9f3a-222222222222';
 const STORED_RESPONSE = { statusCode: 201, body: {}, isReplayed: true };
 
@@ -25,24 +26,31 @@ const DTO: CreatePaymentDto = {
   returnUrl: 'https://shop.example/return',
 };
 
-const SEED_FAKE_PROVIDER = {
-  accountId: SEED_FAKE_ACCOUNT_ID,
-  projectId: SEED_PROJECT_ID,
+const PROJECT_FAKE_PROVIDER = {
+  accountId: ACCOUNT_ID,
+  projectId: PROJECT_ID,
   code: 'fake',
 } as BoundProvider;
 
 type Collaborators = {
   findReplay: jest.Mock;
+  isReturnUrlAllowed: jest.Mock;
   bindForNewPayment: jest.Mock;
   claim: jest.Mock;
   recordRequested: jest.Mock;
 };
 
-const collaboratorsWith = (
-  provider: BoundProvider | null,
-  replay: unknown = null,
-): Collaborators => ({
+const collaboratorsWith = ({
+  provider = PROJECT_FAKE_PROVIDER,
+  replay = null,
+  isReturnUrlAllowed = true,
+}: {
+  provider?: BoundProvider | null;
+  replay?: unknown;
+  isReturnUrlAllowed?: boolean;
+} = {}): Collaborators => ({
   findReplay: jest.fn().mockResolvedValue(replay),
+  isReturnUrlAllowed: jest.fn().mockResolvedValue(isReturnUrlAllowed),
   bindForNewPayment: jest.fn().mockResolvedValue(provider),
   claim: jest.fn(
     async (
@@ -74,17 +82,23 @@ const serviceWith = (collaborators: Collaborators): PaymentCreationService =>
       bindForNewPayment: collaborators.bindForNewPayment,
     } as unknown as ProviderAccountsService,
     {
+      isReturnUrlAllowed: collaborators.isReturnUrlAllowed,
+    } as unknown as ProjectsService,
+    {
       get: () => 'https://payvolok.test',
     } as unknown as ConfigService<Env, true>,
   );
 
-describe('PaymentCreationService', () => {
-  it('answers 422 provider_not_available and claims no key when the provider has no active account', async () => {
-    const collaborators = collaboratorsWith(null);
+const errorOf = (work: Promise<unknown>): Promise<unknown> =>
+  work.catch((caught: unknown) => caught);
 
-    const error = await serviceWith(collaborators)
-      .createPayment('key-1', DTO)
-      .catch((caught: unknown) => caught);
+describe('PaymentCreationService', () => {
+  it('answers 422 provider_not_available and claims no key when the project has no active account', async () => {
+    const collaborators = collaboratorsWith({ provider: null });
+
+    const error = await errorOf(
+      serviceWith(collaborators).createPayment(PROJECT_ID, 'key-1', DTO),
+    );
 
     expect(error).toBeInstanceOf(ApiException);
     expect((error as ApiException).body).toEqual({
@@ -93,39 +107,76 @@ describe('PaymentCreationService', () => {
       message: 'The provider is not available for this project',
     });
     expect(collaborators.bindForNewPayment).toHaveBeenCalledWith(
-      SEED_PROJECT_ID,
+      PROJECT_ID,
       'fake',
     );
     expect(collaborators.claim).not.toHaveBeenCalled();
     expect(collaborators.recordRequested).not.toHaveBeenCalled();
   });
 
-  it('records the payment under the bound account of the seed project', async () => {
-    const collaborators = collaboratorsWith(SEED_FAKE_PROVIDER);
+  it('answers 400 return_url_not_allowed before binding an account or claiming the key', async () => {
+    const collaborators = collaboratorsWith({ isReturnUrlAllowed: false });
+
+    const error = await errorOf(
+      serviceWith(collaborators).createPayment(PROJECT_ID, 'key-1', DTO),
+    );
+
+    expect((error as ApiException).body).toEqual({
+      statusCode: 400,
+      code: 'return_url_not_allowed',
+      message: 'The returnUrl origin is not allowed for this project',
+    });
+    expect(collaborators.isReturnUrlAllowed).toHaveBeenCalledWith(
+      PROJECT_ID,
+      DTO.returnUrl,
+    );
+    expect(collaborators.bindForNewPayment).not.toHaveBeenCalled();
+    expect(collaborators.claim).not.toHaveBeenCalled();
+  });
+
+  it('claims the key in the caller project and records the payment under its bound account', async () => {
+    const collaborators = collaboratorsWith();
 
     await expect(
-      serviceWith(collaborators).createPayment('key-1', DTO),
+      serviceWith(collaborators).createPayment(PROJECT_ID, 'key-1', DTO),
     ).resolves.toBe(STORED_RESPONSE);
 
+    expect(collaborators.claim).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: PROJECT_ID,
+        scope: 'api:create_payment',
+        key: 'key-1',
+      }),
+      expect.anything(),
+    );
     expect(collaborators.recordRequested).toHaveBeenCalledWith(TX, {
-      projectId: SEED_PROJECT_ID,
-      providerAccountId: SEED_FAKE_ACCOUNT_ID,
+      projectId: PROJECT_ID,
+      providerAccountId: ACCOUNT_ID,
       provider: 'fake',
       amountMinor: 1000,
       currency: 'USD',
     });
   });
 
-  it('replays a completed key before it checks the account', async () => {
-    const collaborators = collaboratorsWith(null, STORED_RESPONSE);
+  it('replays a completed key of the caller project before it checks the origin or the account', async () => {
+    const collaborators = collaboratorsWith({
+      provider: null,
+      replay: STORED_RESPONSE,
+      isReturnUrlAllowed: false,
+    });
 
     await expect(
-      serviceWith(collaborators).createPayment('key-1', DTO),
+      serviceWith(collaborators).createPayment(PROJECT_ID, 'key-1', DTO),
     ).resolves.toBe(STORED_RESPONSE);
 
     expect(collaborators.findReplay).toHaveBeenCalledWith(
-      expect.objectContaining({ scope: 'api:create_payment', key: 'key-1' }),
+      expect.objectContaining({
+        projectId: PROJECT_ID,
+        scope: 'api:create_payment',
+        key: 'key-1',
+      }),
     );
+    expect(collaborators.isReturnUrlAllowed).not.toHaveBeenCalled();
     expect(collaborators.bindForNewPayment).not.toHaveBeenCalled();
     expect(collaborators.claim).not.toHaveBeenCalled();
   });

@@ -1,11 +1,9 @@
 import { validateEnv } from './env.schema';
 
 const VALID_DATABASE_URL = 'postgres://user:pass@localhost:5432/db';
-const VALID_API_KEY_SHA256 = 'a1'.repeat(32);
 const VALID_PUBLIC_BASE_URL = 'https://payvolok.example.test';
 const VALID_ENV = {
   DATABASE_URL: VALID_DATABASE_URL,
-  API_KEY_SHA256: VALID_API_KEY_SHA256,
   PUBLIC_BASE_URL: VALID_PUBLIC_BASE_URL,
 };
 
@@ -15,7 +13,6 @@ describe('validateEnv', () => {
       NODE_ENV: 'development',
       PORT: 3000,
       DATABASE_URL: VALID_DATABASE_URL,
-      API_KEY_SHA256: VALID_API_KEY_SHA256,
       PUBLIC_BASE_URL: VALID_PUBLIC_BASE_URL,
       DATABASE_POOL_MAX: 10,
       WEBHOOK_WORKER_ENABLED: true,
@@ -68,35 +65,10 @@ describe('validateEnv', () => {
     ).toBe(databaseUrl);
   });
 
-  describe('API_KEY_SHA256', () => {
-    const errorMessageFor = (config: Record<string, unknown>): string => {
-      try {
-        validateEnv(config);
-      } catch (caught) {
-        return (caught as Error).message;
-      }
-
-      return '';
-    };
-
-    it('is required, naming the key', () => {
-      expect(errorMessageFor({ DATABASE_URL: VALID_DATABASE_URL })).toContain(
-        'API_KEY_SHA256',
-      );
-    });
-
-    it.each([
-      ['uppercase', 'A1'.repeat(32)],
-      ['63 characters', 'a'.repeat(63)],
-      ['65 characters', 'a'.repeat(65)],
-      ['not hex', 'g'.repeat(64)],
-      ['empty', ''],
-    ])('rejects %s, naming the key without echoing it', (_case, value) => {
-      const message = errorMessageFor({ ...VALID_ENV, API_KEY_SHA256: value });
-
-      expect(message).toContain('API_KEY_SHA256');
-      if (value !== '') expect(message).not.toContain(value);
-    });
+  it('neither needs nor keeps the retired API_KEY_SHA256', () => {
+    expect(
+      validateEnv({ ...VALID_ENV, API_KEY_SHA256: 'a1'.repeat(32) }),
+    ).not.toHaveProperty('API_KEY_SHA256');
   });
 
   describe('PUBLIC_BASE_URL', () => {

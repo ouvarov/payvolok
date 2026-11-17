@@ -3,8 +3,14 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
 
 import { DRIZZLE, type Database } from '@/database/drizzle';
+import { apiKeys } from '@/database/schemas/api-keys.schema';
 import { projects } from '@/database/schemas/projects.schema';
 import { providerAccounts } from '@/database/schemas/provider-accounts.schema';
+import {
+  apiKeyHashOf,
+  apiKeyPrefixOf,
+  generateApiKey,
+} from '@/projects/api-key';
 import { EnvCredentialsResolver } from '@/provider-accounts/env-credentials.resolver';
 import { ProviderCredentialsResolver } from '@/provider-accounts/provider-credentials.resolver';
 import { FakeProvider } from '@/providers/fake/fake.provider';
@@ -24,7 +30,28 @@ type TestAccount = {
   projectId: string;
   accountId: string;
   credentialsRef: string;
+  apiKey: string;
   signer: FakeSigner;
+};
+
+type InsertedApiKey = { apiKeyId: string; apiKey: string };
+
+const insertApiKey = async (
+  db: Database,
+  projectId: string,
+): Promise<InsertedApiKey> => {
+  const apiKey = generateApiKey();
+  const [{ id }] = await db
+    .insert(apiKeys)
+    .values({
+      projectId,
+      name: 'e2e',
+      keyHash: apiKeyHashOf(apiKey),
+      keyPrefix: apiKeyPrefixOf(apiKey),
+    })
+    .returning({ id: apiKeys.id });
+
+  return { apiKeyId: id, apiKey };
 };
 
 type TwoProjectsFixture = { a: TestAccount; b: TestAccount };
@@ -61,11 +88,13 @@ const createAccount = async (
     provider: 'fake',
     credentialsRef,
   });
+  const { apiKey } = await insertApiKey(db, projectId);
 
   return {
     projectId,
     accountId,
     credentialsRef,
+    apiKey,
     signer: fakeSignerFor(secret, app.get(FakeProvider), {
       id: accountId,
       projectId,
@@ -73,7 +102,6 @@ const createAccount = async (
   };
 };
 
-// The API still writes to the seed project in 3.5b, so project B's rows are inserted directly.
 const twoProjects = (): TwoProjects => {
   const secretsByRef = new Map<string, RedactedSecret>([
     [FAKE_A_CREDENTIALS_REF, newSecret()],
@@ -124,5 +152,10 @@ const twoProjects = (): TwoProjects => {
   };
 };
 
-export { FAKE_A_CREDENTIALS_REF, FAKE_B_CREDENTIALS_REF, twoProjects };
-export type { TestAccount, TwoProjectsFixture };
+export {
+  FAKE_A_CREDENTIALS_REF,
+  FAKE_B_CREDENTIALS_REF,
+  insertApiKey,
+  twoProjects,
+};
+export type { InsertedApiKey, TestAccount, TwoProjectsFixture };

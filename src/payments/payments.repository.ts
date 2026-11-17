@@ -40,11 +40,16 @@ export class PaymentsRepository {
     return this.db.transaction(work);
   }
 
-  async findById(paymentId: string): Promise<Payment | null> {
+  async findByIdInProject(
+    projectId: string,
+    paymentId: string,
+  ): Promise<Payment | null> {
     const [payment] = await this.db
       .select()
       .from(payments)
-      .where(eq(payments.id, paymentId));
+      .where(
+        and(eq(payments.id, paymentId), eq(payments.projectId, projectId)),
+      );
 
     return payment ?? null;
   }
@@ -147,6 +152,20 @@ export class PaymentsRepository {
       .select()
       .from(payments)
       .where(eq(payments.id, paymentId))
+      .for('update');
+
+    return payment ?? null;
+  }
+
+  async findByIdInProjectForUpdate(
+    tx: DatabaseTransaction,
+    projectId: string,
+    paymentId: string,
+  ): Promise<Payment | null> {
+    const [payment] = await tx
+      .select()
+      .from(payments)
+      .where(and(eq(payments.id, paymentId), eq(payments.projectId, projectId)))
       .for('update');
 
     return payment ?? null;

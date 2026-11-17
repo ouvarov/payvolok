@@ -487,7 +487,6 @@ describe('provider accounts', () => {
         );
     };
 
-    // Project B cannot take the API refund until 3.5c: its idempotency key gets the seed project.
     it('refunds a payment of the seed account through the API while refusing it new payments', async () => {
       const payment = await insertPayment(
         { projectId: SEED_PROJECT_ID, accountId: SEED_FAKE_ACCOUNT_ID },

@@ -3,6 +3,7 @@ import './setup-env';
 import { seedFakeAccount } from '../src/database/seed-fake-account';
 
 import { applyMigrations } from './apply-migrations';
+import { seedTestApiKey } from './test-api-key';
 
 export default async (): Promise<void> => {
   const databaseUrl = process.env.E2E_DATABASE_URL as string;
@@ -13,4 +14,5 @@ export default async (): Promise<void> => {
     nodeEnv: 'test',
     targetHost: new URL(databaseUrl).hostname,
   });
+  await seedTestApiKey(databaseUrl);
 };

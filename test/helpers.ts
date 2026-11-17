@@ -30,12 +30,12 @@ import type {
 import type { RedactedSecret } from '@/providers/provider-credentials';
 import type { ProviderCode } from '@/providers/provider.constants';
 
+import { TEST_API_KEY } from './test-api-key';
+
 const PGLITE_POOL_MAX = 1;
 const REAL_POSTGRES_POOL_MAX = 5;
 const LOCK_WAIT_POLL_MS = 100;
 const LOCK_WAIT_DEADLINE_MS = 8000;
-// setup-env.ts configures the SHA-256 of this key.
-const TEST_API_KEY = 'e2e-test-api-key-with-enough-length-0001';
 
 const FAKE_SIGNATURE_HEADER = 'x-fake-signature';
 const SEED_FAKE_WEBHOOK_PATH = `/webhooks/fake/${SEED_FAKE_ACCOUNT_ID}`;

@@ -8,7 +8,6 @@ import {
   type INestApplication,
   type LogLevel,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { sql } from 'drizzle-orm';
 import request from 'supertest';
 
@@ -16,6 +15,7 @@ import { API_V1_PREFIX } from '@/common/api-prefix';
 import { DRIZZLE, type Database } from '@/database/drizzle';
 import { payments, type Payment } from '@/database/schemas/payments.schema';
 import { PaymentsRepository } from '@/payments/payments.repository';
+import { generateApiKey } from '@/projects/api-key';
 import { FakeProvider } from '@/providers/fake/fake.provider';
 
 import {
@@ -49,6 +49,7 @@ const BAD_REQUEST_BODY = {
 const OVER_JSON_BODY_LIMIT_BYTES = 101 * 1024;
 const LOG_LEVELS: LogLevel[] = ['log', 'warn', 'error', 'debug', 'verbose'];
 const TABLES_WITH_REQUEST_DATA = [
+  'api_keys',
   'payments',
   'payment_events',
   'refunds',
@@ -237,6 +238,7 @@ describe('Public API', () => {
         `Bearer ${'x'.repeat(TEST_API_KEY.length)}`,
       ],
       ['a wrong key of another length', 'Bearer short'],
+      ['a well-formed key nobody holds', `Bearer ${generateApiKey()}`],
       ['an empty token', 'Bearer '],
       ['the key with no scheme', TEST_API_KEY],
     ])('answers the uniform 401 for %s', async (_case, authorization) => {
@@ -418,11 +420,13 @@ describe('Public API', () => {
     it('answers 500 internal_error and logs only the class and the pg code', async () => {
       const logs = captureLogs();
       const secret = 'postgres://user:SECRETVALUE@internal-host/db';
-      jest.spyOn(PaymentsRepository.prototype, 'findById').mockRejectedValue(
-        Object.assign(new Error(`query failed: ${secret}`), {
-          cause: { code: '42P01', message: secret },
-        }),
-      );
+      jest
+        .spyOn(PaymentsRepository.prototype, 'findByIdInProject')
+        .mockRejectedValue(
+          Object.assign(new Error(`query failed: ${secret}`), {
+            cause: { code: '42P01', message: secret },
+          }),
+        );
 
       const response = await get(
         paymentPath(randomUUID()),
@@ -453,14 +457,16 @@ describe('Public API', () => {
       return matchingRows;
     };
 
-    it('is not in the environment and only its hash is configured', () => {
-      const configuredDigest = app
-        .get(ConfigService)
-        .get<string>('API_KEY_SHA256');
+    it('is not in the environment and only its hash is stored', async () => {
+      const [{ stored_count: storedCount }] = await db.execute<{
+        stored_count: number;
+      }>(sql`
+        select count(*)::int as stored_count from api_keys
+        where key_hash = ${createHash('sha256').update(TEST_API_KEY).digest('hex')}
+      `);
 
-      expect(configuredDigest).toBe(
-        createHash('sha256').update(TEST_API_KEY).digest('hex'),
-      );
+      expect(storedCount).toBe(1);
+      expect(await rowsHoldingTheKey('api_keys')).toBe(0);
       expect(Object.values(process.env).join('\n')).not.toContain(TEST_API_KEY);
     });
 

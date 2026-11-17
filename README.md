@@ -8,7 +8,7 @@ Pet project at an early stage. Sandbox only, no real money: it only talks to pro
 
 ## Status
 
-What exists: the payment and refund ingest core, the fake provider, the health routes, the webhook route, the webhook worker, `POST /api/v1/payments`, `GET /api/v1/payments/:id` and `POST /api/v1/payments/:paymentId/refunds`. `POST /webhooks/:provider/:providerAccountId` verifies the signature with that account's secret and stores the delivery in `webhook_events`; the worker then applies it to payments and refunds. The first real provider is Paddle, sandbox only, for one-off payments and refunds. Payment and refund reconciliation runs in every API process. Multiple projects, more providers and subscriptions are planned.
+What exists: the payment and refund ingest core, the fake provider, the health routes, the webhook route, the webhook worker, `POST /api/v1/payments`, `GET /api/v1/payments/:id` and `POST /api/v1/payments/:paymentId/refunds`. `POST /webhooks/:provider/:providerAccountId` verifies the signature with that account's secret and stores the delivery in `webhook_events`; the worker then applies it to payments and refunds. The first real provider is Paddle, sandbox only, for one-off payments and refunds. Payment and refund reconciliation runs in every API process. API keys belong to projects, and each project sees only its own payments. More providers and subscriptions are planned.
 
 ## Stack
 
@@ -24,7 +24,7 @@ The repository root is the API. A web frontend will live in `web/` later.
 
 ## Run locally
 
-Copy `.env.example` to `.env` first. The app refuses to start when `DATABASE_URL` is missing or is not a Postgres URL, when `API_KEY_SHA256` is missing or is not 64 lowercase hex characters, or when `PUBLIC_BASE_URL` is missing or is not an http or https URL. `PUBLIC_BASE_URL` is where providers reach this API: payments ask them to send webhooks to `{PUBLIC_BASE_URL}/webhooks/{provider}/{providerAccountId}`.
+Copy `.env.example` to `.env` first. The app refuses to start when `DATABASE_URL` is missing or is not a Postgres URL, or when `PUBLIC_BASE_URL` is missing or is not an http or https URL. `PUBLIC_BASE_URL` is where providers reach this API: payments ask them to send webhooks to `{PUBLIC_BASE_URL}/webhooks/{provider}/{providerAccountId}`.
 
 ### With Docker
 
@@ -32,7 +32,7 @@ Copy `.env.example` to `.env` first. The app refuses to start when `DATABASE_URL
 docker compose up --build
 ```
 
-This starts Postgres, applies migrations and then starts the API on <http://localhost:3000>. The credentials in `docker-compose.yml` are local development values only. To use the `fake` provider, seed its account once: `docker compose run --rm migrate node dist/database/seed-fake-account.js --target-host db` (see Projects and provider accounts).
+This starts Postgres, applies migrations and then starts the API on <http://localhost:3000>. The credentials in `docker-compose.yml` are local development values only. To use the `fake` provider, seed its account once: `docker compose run --rm migrate node dist/database/seed-fake-account.js --target-host db` (see Projects and provider accounts). Create an API key with `docker compose run --rm migrate node dist/projects/create-api-key.js --project payvolok-demo --name local` (see API access).
 
 ### Without Docker
 
@@ -46,6 +46,7 @@ In another terminal, set `DATABASE_URL=postgres://postgres@127.0.0.1:55432/postg
 ```bash
 npm run db:migrate
 npm run db:seed:fake -- --target-host 127.0.0.1   # only to use the fake provider
+npm run api-key:create -- --project payvolok-demo --name local
 npm run start:dev
 ```
 
@@ -57,19 +58,20 @@ The e2e tests apply migrations to `E2E_DATABASE_URL` once, before the Jest worke
 
 ## Scripts
 
-| Script                                         | What it does                                                                                                                               |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `npm run build`                                | Compile to `dist/`                                                                                                                         |
-| `npm run start:dev`                            | Run with file watching                                                                                                                     |
-| `npm run start:prod`                           | Run the compiled build                                                                                                                     |
-| `npm run lint` / `format:check` / `typecheck`  | ESLint, Prettier check, `tsc --noEmit`                                                                                                     |
-| `npm run check`                                | typecheck, lint and format check                                                                                                           |
-| `npm test`                                     | Unit tests                                                                                                                                 |
-| `npm run test:e2e`                             | End-to-end tests; read `E2E_DATABASE_URL` from `.env`, which must name an existing throwaway database other than the one in `DATABASE_URL` |
-| `npm run db:generate`                          | Generate a Drizzle migration from the schema                                                                                               |
-| `npm run db:migrate` / `db:migrate:prod`       | Apply migrations from sources / from the build                                                                                             |
-| `npm run db:seed:fake -- --target-host <host>` | Add the seed project's `fake` provider account to `DATABASE_URL`, whose host must equal `<host>`; refuses `NODE_ENV=production`            |
-| `npm run db:local`                             | In-memory Postgres for development and e2e                                                                                                 |
+| Script                                           | What it does                                                                                                                               |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `npm run build`                                  | Compile to `dist/`                                                                                                                         |
+| `npm run start:dev`                              | Run with file watching                                                                                                                     |
+| `npm run start:prod`                             | Run the compiled build                                                                                                                     |
+| `npm run lint` / `format:check` / `typecheck`    | ESLint, Prettier check, `tsc --noEmit`                                                                                                     |
+| `npm run check`                                  | typecheck, lint and format check                                                                                                           |
+| `npm test`                                       | Unit tests                                                                                                                                 |
+| `npm run test:e2e`                               | End-to-end tests; read `E2E_DATABASE_URL` from `.env`, which must name an existing throwaway database other than the one in `DATABASE_URL` |
+| `npm run db:generate`                            | Generate a Drizzle migration from the schema                                                                                               |
+| `npm run db:migrate` / `db:migrate:prod`         | Apply migrations from sources / from the build                                                                                             |
+| `npm run db:seed:fake -- --target-host <host>`   | Add the seed project's `fake` provider account to `DATABASE_URL`, whose host must equal `<host>`; refuses `NODE_ENV=production`            |
+| `npm run db:local`                               | In-memory Postgres for development and e2e                                                                                                 |
+| `npm run api-key:create` / `api-key:create:prod` | Create an API key for a project in `DATABASE_URL`, from sources / from the build; see API access                                           |
 
 The role's 10 s `statement_timeout` also applies to migrations: a long statement in a migration needs `SET LOCAL statement_timeout = 0` before it.
 
@@ -77,17 +79,27 @@ Git hooks (simple-git-hooks): pre-commit runs lint-staged, pre-push runs `check`
 
 ## API access
 
-Routes under `/api/v1` need `Authorization: Bearer <key>`. Every route declares its access with `@RouteAccess`; a route that declares nothing answers 401, even with a valid key. `/health/*`, `/webhooks/*` and `/checkout/paddle/*` are public: webhooks are checked by their signature.
+Routes under `/api/v1` need `Authorization: Bearer <key>`, where the key belongs to a project: every payment, refund and idempotency key the request touches is that project's. Every route declares its access with `@RouteAccess` (`public` or `project_key`); a route that declares nothing answers 401, even with a valid key. `/health/*`, `/webhooks/*` and `/checkout/paddle/*` are public: webhooks are checked by their signature.
 
-There is one key. The app only knows its SHA-256, so a stored hash cannot be used to call the API. Create a key and its hash with:
+Keys live in `api_keys`, one project per key, as many keys per project as needed. A key looks like `pv_test_` plus 43 random characters; the table holds only its SHA-256 and its first 12 characters (`key_prefix`), so a stored row cannot be used to call the API. A missing, malformed, unknown, revoked or expired key, or a key of an `archived` project, all get the same 401. Create a key with:
 
 ```bash
-API_KEY=$(openssl rand -hex 32)
-echo "$API_KEY"
-printf %s "$API_KEY" | openssl dgst -sha256 -r | cut -d' ' -f1
+npm run api-key:create -- --project payvolok-demo --name "render production" [--expires-in-days 90]
 ```
 
-Keep the key in your secret store and set the last line's output as `API_KEY_SHA256`. To rotate the key, change the hash and restart. `.env.example` and `docker-compose.yml` hold the hash of `local-dev-api-key`, for local development only.
+It writes to the database in `DATABASE_URL` (it prints the host first) and prints the key's id and the key itself, the key only once: keep both in your secret store. `npm run api-key:create:prod` runs the same from the build. An unknown slug is refused.
+
+Revoke a key by its id; it stops working on the next request. `key_prefix` has only 4 random characters and is not unique, so never revoke by it. If the id is lost, find it from the prefix, the project and the name:
+
+```sql
+SELECT k.id, k.name, k.created_at, k.expires_at
+FROM api_keys k JOIN projects p ON p.id = k.project_id
+WHERE p.slug = 'payvolok-demo' AND k.key_prefix = 'pv_test_XXXX' AND k.revoked_at IS NULL;
+
+UPDATE api_keys SET revoked_at = clock_timestamp() WHERE id = '<api key id>' AND revoked_at IS NULL;
+```
+
+To rotate, create a new key, switch the client to it, then revoke the old one. `API_KEY_SHA256` is no longer read.
 
 Errors under `/api/` are JSON of one shape, with a stable `code`:
 
@@ -115,7 +127,13 @@ A 400 for an invalid body has `code: "validation_failed"` and `issues: [{ "field
 }
 ```
 
-`amountMinor` is a positive integer in minor units, `currency` three uppercase letters, `description` 1 to 255 characters and `returnUrl` an http or https URL. On success it answers `201 {"paymentId": "...", "checkout": {"type": "redirect", "url": "..."}}`: send the customer to `checkout.url`. The payment is `pending` until the provider's webhooks move it on.
+`amountMinor` is a positive integer in minor units, `currency` three uppercase letters, `description` 1 to 255 characters and `returnUrl` an http or https URL whose origin (scheme, host and port) is exactly one of the project's `allowed_return_origins`; otherwise the answer is `400 return_url_not_allowed`, before the key is taken. A project with an empty list takes no payments. Whoever sets PayVolok up for a project sets the list, for now with SQL:
+
+```sql
+UPDATE projects SET allowed_return_origins = '{https://shop.example}' WHERE slug = 'payvolok-demo';
+```
+
+`https://shop.example.evil.test`, `http://shop.example` and `https://shop.example:8443` do not match `https://shop.example`. On success it answers `201 {"paymentId": "...", "checkout": {"type": "redirect", "url": "..."}}`: send the customer to `checkout.url`. The payment is `pending` until the provider's webhooks move it on.
 
 A provider the project has no active account for is `422 provider_not_available`, before the key is taken: nothing is stored and no provider is called. When the provider refuses the order the answer is `422 order_rejected`; when it cannot be reached, fails in an unexpected way or is set up wrong it is `503 provider_unavailable` with the `paymentId`. In both cases the payment is `failed` and the reason is in its events, unless a provider webhook already moved it on: then it keeps the provider's status and the failure is recorded as a `stale` event. Check `GET /api/v1/payments/:id` before retrying. Nothing retries on its own: retry with a new key.
 
@@ -125,7 +143,7 @@ A provider the project has no active account for is `422 provider_not_available`
 
 Refused before the provider is called, storing nothing under the key:
 
-- `404 payment_not_found` for an unknown payment.
+- `404 payment_not_found` for an unknown payment or another project's payment.
 - `409 payment_not_refundable` unless the payment is `succeeded` or `partially_refunded`.
 - `422 refund_amount_exceeds_remaining` when the amount is larger than the payment minus its `pending` and `succeeded` refunds.
 - `409 refund_in_progress` while another key's refund of the same payment waits for the provider.
@@ -144,11 +162,11 @@ A refund request interrupted after its key was taken stores `503 provider_unavai
 - While the first request still runs, the same key gets `409 idempotency_key_in_progress`.
 - A payment request that stopped after the payment row was written, for example a crash, holds its key for 60 s. The next request with that key then marks the payment `failed` (`request_interrupted`), or records that as `stale` if a webhook already moved it on, without calling the provider, and stores `503 provider_unavailable` for the key.
 - Keys live 24 h. After that the same key starts a new payment or refund, and reconciliation deletes the key within an hour.
-- Payment and refund keys are separate: one key string can be used once for each.
+- Payment and refund keys are separate: one key string can be used once for each. Keys belong to the project of the API key; until migration `0011` one key string is still unique across all projects.
 
 Only requests that reached the provider are stored: a 400 or 401 leaves no trace, so a fixed request can reuse its key.
 
-`GET /api/v1/payments/:id` returns `paymentId`, `status`, `provider`, `amountMinor`, `currency`, `createdAt` and `updatedAt` from our database, or 404 `payment_not_found`. It does not call the provider. Reading a `created` or `pending` payment that is at least 30 s old and was not checked in the last 15 s makes its next reconciliation due at once.
+`GET /api/v1/payments/:id` returns `paymentId`, `status`, `provider`, `amountMinor`, `currency`, `createdAt` and `updatedAt` from our database, or 404 `payment_not_found` for an unknown payment or another project's payment. It does not call the provider. Reading a `created` or `pending` payment that is at least 30 s old and was not checked in the last 15 s makes its next reconciliation due at once.
 
 ## Health routes
 
@@ -182,7 +200,7 @@ Migration `0008` adds the schedule columns. It must be applied to the production
 
 ## Projects and provider accounts
 
-Every payment, refund and idempotency key belongs to a project, and every payment, refund and webhook row to a provider account of that project. A project has at most one account per provider. For now there is one project, `payvolok-demo` (`5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a01`), with the Paddle account `5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a02` (credentials from the `PADDLE_*` variables); the API and the webhook routes use it. The `fake` account `5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a03` exists only where fake rows already existed when migration `0009` ran, or after `npm run db:seed:fake -- --target-host <host>`, where `<host>` must be the host of `DATABASE_URL`: the script prints the host it would write to and refuses a missing or different one, so a `.env` pointed at another database cannot get the account by mistake; without it `fake` payments answer `422 provider_not_available` and `POST /webhooks/fake` answers 404. Production has no fake account. The e2e setup seeds it after the migrations.
+Every payment, refund and idempotency key belongs to a project, and every payment, refund and webhook row to a provider account of that project. A project has at most one account per provider. For now there is one project, `payvolok-demo` (`5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a01`), with the Paddle account `5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a02` (credentials from the `PADDLE_*` variables). The API works in the project of the request's key and creates payments on that project's account for the provider; the webhook routes use the account in their URL. The `fake` account `5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a03` exists only where fake rows already existed when migration `0009` ran, or after `npm run db:seed:fake -- --target-host <host>`, where `<host>` must be the host of `DATABASE_URL`: the script prints the host it would write to and refuses a missing or different one, so a `.env` pointed at another database cannot get the account by mistake; without it `fake` payments answer `422 provider_not_available` and `POST /webhooks/fake` answers 404. Production has no fake account. The e2e setup seeds it after the migrations, together with a test API key and the return origins the tests use for the seed project.
 
 Provider adapters keep no keys. Every provider call binds an account first: the account row names its credentials (`credentials_ref`), and `env:PADDLE` resolves to the `PADDLE_*` variables in the sandbox, `env:FAKE` to `FAKE_WEBHOOK_SECRET`. Credentials print as `[redacted]` in logs, JSON and errors. A webhook is checked against the secrets of the account in its URL, and every payment or refund it touches must belong to that account: an event naming another account's payment ends `ignored` after one attempt, with the reason in `last_error` and a warning that names the event and both accounts. A `disabled` account takes no new payments (`422 provider_not_available`) but keeps its webhooks, refunds, reconciliation and checkout page. Reconciliation skips an account whose provider or credentials fail and goes on with the others.
 
@@ -227,7 +245,7 @@ node --env-file=.env -r ts-node/register/transpile-only -r tsconfig-paths/regist
 `render.yaml` is a Render Blueprint for the API only: one Docker web service, `payvolok-api`, on the free plan in Frankfurt. Render: **New > Blueprint**, pick this repository, then fill the variables marked `sync: false`:
 
 - `DATABASE_URL`: the pooled Postgres address (the client does not use prepared statements, so a pooler works).
-- `API_KEY_SHA256`: the hash of a new key, made as in API access. Do not reuse the local development key.
+- `API_KEY_SHA256`: no longer read since API keys moved to the database. It stays on Render until migration `0011` only so a rollback to the code before project keys still has its key; then delete it.
 - `PUBLIC_BASE_URL`: required to boot, so enter the expected service URL up front: `https://payvolok-api.onrender.com`. If the name is taken Render adds a suffix; then correct the value and redeploy.
 - `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET`, `PADDLE_CLIENT_TOKEN`: as in Paddle above. `PADDLE_WEBHOOK_SECRET` may stay blank on the first deploy (blank counts as unset): Paddle webhooks answer 503 until it is set.
 
@@ -251,6 +269,8 @@ SELECT count(*) FROM webhook_events WHERE provider_account_id IS NULL;
 ```
 
 Migration `0010` repeats the `0009` account fill for rows written in between, idempotently, and adds a foreign key that keeps a webhook row's provider equal to its account's (`NOT VALID` until `0011`, so existing rows are not checked). Apply it to `dev` and `production` after the `0009` code is live and before the account routes merge, then run the same "after" checks.
+
+Before the project keys release is merged, from that branch: run `npm run api-key:create -- --project payvolok-demo --name "render production"` with `DATABASE_URL` pointing at production and keep the printed key, and set the seed project's `allowed_return_origins` with the SQL in Create a payment (the origin of `PUBLIC_BASE_URL` for now). An empty list refuses every payment. After the deploy the old key answers 401 and the new one works.
 
 `POST /webhooks/paddle` and `GET /checkout/paddle` still serve the seed Paddle account, for destinations and payment links set before accounts existed; the webhook alias logs a warning at most once an hour. Once Paddle points at the account URLs and the warning stops, they can go.
 

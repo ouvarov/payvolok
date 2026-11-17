@@ -14,7 +14,7 @@ import {
   type CloseInterruptedResult,
   type IdempotentResponse,
 } from '@/idempotency/idempotency.service';
-import { SEED_PROJECT_ID } from '@/projects/projects.constants';
+import { ProjectsService } from '@/projects/projects.service';
 import { ProviderAccountsService } from '@/provider-accounts/provider-accounts.service';
 import type {
   BoundProvider,
@@ -67,9 +67,11 @@ const failureResponseOf = (
     : providerUnavailableResponseOf(paymentId);
 
 const requestOf = (
+  projectId: string,
   idempotencyKey: string,
   dto: CreatePaymentDto,
 ): IdempotentRequest => ({
+  projectId,
   scope: 'api:create_payment',
   key: idempotencyKey,
   requestHash: requestHashOf([
@@ -90,21 +92,24 @@ export class PaymentCreationService {
     private readonly idempotencyService: IdempotencyService,
     private readonly paymentsService: PaymentsService,
     private readonly providerAccountsService: ProviderAccountsService,
+    private readonly projectsService: ProjectsService,
     configService: ConfigService<Env, true>,
   ) {
     this.publicBaseUrl = configService.get('PUBLIC_BASE_URL', { infer: true });
   }
 
   async createPayment(
+    projectId: string,
     idempotencyKey: string,
     dto: CreatePaymentDto,
   ): Promise<IdempotentResponse> {
-    const request = requestOf(idempotencyKey, dto);
-    // Before the account check: a retry after the account was disabled still gets its stored answer.
+    const request = requestOf(projectId, idempotencyKey, dto);
+    // Before the project checks: a retry after the origins or the account changed still gets its stored answer.
     const replayed = await this.idempotencyService.findReplay(request);
     if (replayed) return replayed;
 
-    const provider = await this.availableProviderFor(dto.provider);
+    await this.assertReturnUrlAllowed(projectId, dto.returnUrl);
+    const provider = await this.availableProviderFor(projectId, dto.provider);
     const claim = await this.idempotencyService.claim(request, {
       onClaimed: async (tx) => ({
         paymentId: (
@@ -164,11 +169,27 @@ export class PaymentCreationService {
     );
   }
 
+  private async assertReturnUrlAllowed(
+    projectId: string,
+    returnUrl: string,
+  ): Promise<void> {
+    if (await this.projectsService.isReturnUrlAllowed(projectId, returnUrl)) {
+      return;
+    }
+
+    throw new ApiException({
+      statusCode: HttpStatus.BAD_REQUEST,
+      code: 'return_url_not_allowed',
+      message: 'The returnUrl origin is not allowed for this project',
+    });
+  }
+
   private async availableProviderFor(
+    projectId: string,
     providerCode: ProviderCode,
   ): Promise<BoundProvider> {
     const provider = await this.providerAccountsService.bindForNewPayment(
-      SEED_PROJECT_ID,
+      projectId,
       providerCode,
     );
     if (provider) return provider;

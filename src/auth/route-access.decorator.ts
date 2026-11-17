@@ -2,7 +2,7 @@ import { SetMetadata, type CustomDecorator } from '@nestjs/common';
 
 const ROUTE_ACCESS_KEY = 'routeAccess';
 
-type RouteAccess = 'public' | 'api_key';
+type RouteAccess = 'public' | 'project_key';
 
 const RouteAccess = (access: RouteAccess): CustomDecorator<string> =>
   SetMetadata(ROUTE_ACCESS_KEY, access);

@@ -1,5 +1,3 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
-
 import {
   HttpStatus,
   Injectable,
@@ -7,13 +5,12 @@ import {
   type CanActivate,
   type ExecutionContext,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
-import type { Request } from 'express';
 
 import { ApiException, type ApiErrorBody } from '@/common/errors/api-exception';
-import type { Env } from '@/config/env.schema';
+import { ProjectsService } from '@/projects/projects.service';
 
+import type { ProjectAccessRequest } from './project-access-request';
 import { RouteAccess, ROUTE_ACCESS_KEY } from './route-access.decorator';
 
 const BEARER_TOKEN_PATTERN = /^Bearer (\S+)$/i;
@@ -24,31 +21,22 @@ const UNAUTHORIZED_BODY: ApiErrorBody = {
   message: 'Invalid or missing API key',
 };
 
-const sha256 = (value: string): Buffer =>
-  createHash('sha256').update(value).digest();
-
 @Injectable()
 export class AccessGuard implements CanActivate {
   private readonly logger = new Logger(AccessGuard.name);
-  private readonly expectedKeyDigest: Buffer;
 
   constructor(
     private readonly reflector: Reflector,
-    configService: ConfigService<Env, true>,
-  ) {
-    this.expectedKeyDigest = Buffer.from(
-      configService.get('API_KEY_SHA256', { infer: true }),
-      'hex',
-    );
-  }
+    private readonly projectsService: ProjectsService,
+  ) {}
 
-  canActivate(context: ExecutionContext): boolean {
-    if (this.isAllowed(context)) return true;
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    if (await this.isAllowed(context)) return true;
 
     throw new ApiException(UNAUTHORIZED_BODY);
   }
 
-  private isAllowed(context: ExecutionContext): boolean {
+  private async isAllowed(context: ExecutionContext): Promise<boolean> {
     const access = this.reflector.getAllAndOverride<RouteAccess | undefined>(
       ROUTE_ACCESS_KEY,
       [context.getHandler(), context.getClass()],
@@ -65,8 +53,10 @@ export class AccessGuard implements CanActivate {
     switch (access) {
       case 'public':
         return true;
-      case 'api_key':
-        return this.hasValidApiKey(context.switchToHttp().getRequest());
+      case 'project_key':
+        return this.hasProjectKey(
+          context.switchToHttp().getRequest<ProjectAccessRequest>(),
+        );
       default:
         throw new Error(
           `Unhandled route access ${String(access satisfies never)}`,
@@ -74,13 +64,17 @@ export class AccessGuard implements CanActivate {
     }
   }
 
-  // Both sides are SHA-256 digests, so the compare never branches on key length.
-  private hasValidApiKey(request: Request): boolean {
+  private async hasProjectKey(request: ProjectAccessRequest): Promise<boolean> {
     const token = BEARER_TOKEN_PATTERN.exec(
       request.headers.authorization ?? '',
     )?.[1];
     if (token === undefined) return false;
 
-    return timingSafeEqual(sha256(token), this.expectedKeyDigest);
+    const projectAccess = await this.projectsService.findProjectAccess(token);
+    if (!projectAccess) return false;
+
+    request.projectAccess = projectAccess;
+
+    return true;
   }
 }
