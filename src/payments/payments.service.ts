@@ -161,7 +161,7 @@ export class PaymentNotFoundError extends Error {
 export class ForeignAccountError extends Error {
   constructor(
     subject: string,
-    readonly ownerAccountId: string | null,
+    readonly ownerAccountId: string,
   ) {
     super(`${subject} belongs to another account`);
     this.name = 'ForeignAccountError';

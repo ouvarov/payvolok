@@ -167,7 +167,7 @@ export class WebhookEventProcessor {
     error: ForeignAccountError,
   ): void {
     this.logger.warn(
-      `Webhook event ${claimed.id} on ${accountLabelOf(provider)} ignored: ${error.message}, account ${error.ownerAccountId ?? 'none'}`,
+      `Webhook event ${claimed.id} on ${accountLabelOf(provider)} ignored: ${error.message}, account ${error.ownerAccountId}`,
     );
   }
 
