@@ -8,7 +8,6 @@ import {
   RECONCILABLE_PAYMENT_STATUSES,
   RECONCILE_LEASE_SECONDS,
 } from '@/payments/payment.constants';
-import { accountIdOf } from '@/payments/payment-account';
 
 // The provider account id: an outage or a credentials failure skips only that account.
 type ReconciliationScopeKey = string;
@@ -26,8 +25,8 @@ type ClaimedPayment = Pick<
 > & { reconciledAt: Date };
 
 const reconciliationScopeKeyOf = (
-  payment: Pick<ClaimedPayment, 'id' | 'providerAccountId'>,
-): ReconciliationScopeKey => accountIdOf(payment);
+  payment: Pick<ClaimedPayment, 'providerAccountId'>,
+): ReconciliationScopeKey => payment.providerAccountId;
 
 const outsideScopes = (scopeKeys: readonly ReconciliationScopeKey[]): SQL =>
   scopeKeys.length === 0

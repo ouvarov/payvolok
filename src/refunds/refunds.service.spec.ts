@@ -332,8 +332,10 @@ describe('RefundsService', () => {
         .ingestRefund(INPUT)
         .catch((caught: unknown) => caught);
 
-    it('maps the provider refund ref constraint to a mismatch', async () => {
-      const failure = violationOf('refunds_provider_provider_refund_id_unique');
+    it('maps the account provider refund ref constraint to a mismatch', async () => {
+      const failure = violationOf(
+        'refunds_provider_account_id_provider_refund_id_unique',
+      );
 
       const error = await ingestFailingWith(failure);
 
@@ -341,11 +343,14 @@ describe('RefundsService', () => {
       expect(error).toMatchObject({ cause: failure });
     });
 
-    it('leaves another constraint as it is', async () => {
-      const failure = violationOf('refunds_pkey');
+    it.each(['refunds_pkey', 'refunds_provider_provider_refund_id_unique'])(
+      'leaves %s as it is',
+      async (constraintName) => {
+        const failure = violationOf(constraintName);
 
-      expect(await ingestFailingWith(failure)).toBe(failure);
-    });
+        expect(await ingestFailingWith(failure)).toBe(failure);
+      },
+    );
   });
 
   describe('payment status', () => {

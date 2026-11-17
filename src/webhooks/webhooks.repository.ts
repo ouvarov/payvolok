@@ -31,7 +31,7 @@ type InvalidDelivery = Pick<
 type ClaimedWebhookEvent = {
   id: string;
   provider: string;
-  providerAccountId: string | null;
+  providerAccountId: string;
   replayOf: string | null;
   attempts: number;
 };
@@ -57,7 +57,7 @@ type WebhookEventFinish =
 type ClaimedRow = {
   id: string;
   provider: string;
-  provider_account_id: string | null;
+  provider_account_id: string;
   replay_of: string | null;
   attempts: number;
 };

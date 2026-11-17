@@ -32,7 +32,6 @@ import {
 import { PAYMENT_STATUS_BY_EVENT_TYPE } from '@/payments/provider-event-status';
 import { SEED_PROJECT_ID } from '@/projects/projects.constants';
 import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
-import type { ProviderCode } from '@/providers/provider.constants';
 import type {
   ProviderEvent,
   ProviderPaymentEvent,
@@ -69,8 +68,6 @@ const CLIENT_END_TIMEOUT_SECONDS = 5;
 const OVERLONG_SLEEP_SECONDS = 11;
 const SLEEP_GUARD_MS = 20000;
 const SLOW_TEST_TIMEOUT_MS = 60000;
-
-const OTHER_PROVIDER = 'other' as string as ProviderCode;
 
 const ingestInputWith = (
   overrides: Partial<IngestPaymentInput> = {},
@@ -204,8 +201,10 @@ describe('Payments ingest', () => {
   ) =>
     db.execute(sql`
       insert into payments
-        (provider, provider_payment_id, purpose, origin, status, amount_minor, currency)
+        (project_id, provider_account_id, provider, provider_payment_id, purpose, origin, status, amount_minor, currency)
       values (
+        ${SEED_PROJECT_ID},
+        ${SEED_FAKE_ACCOUNT_ID},
         'fake',
         ${randomUUID()},
         ${overrides.purpose ?? 'one_off'},
@@ -265,7 +264,7 @@ describe('Payments ingest', () => {
             `select tablename as name from pg_tables where schemaname = 'public' order by tablename`,
           );
 
-          expect(firstRunRows.rows).toHaveLength(11);
+          expect(firstRunRows.rows).toHaveLength(12);
           expect(secondRunRows.rows).toEqual(firstRunRows.rows);
           expect(tables.rows.map(({ name }) => name)).toEqual([
             'api_keys',
@@ -292,7 +291,7 @@ describe('Payments ingest', () => {
 
         await applyMigrations(databaseUrl);
 
-        expect(rowsBefore).toHaveLength(11);
+        expect(rowsBefore).toHaveLength(12);
         expect(await db.execute(migrationRowsSql)).toEqual(rowsBefore);
       },
       SLOW_TEST_TIMEOUT_MS,
@@ -332,23 +331,24 @@ describe('Payments ingest', () => {
       });
     });
 
-    it('lets two rows with a null provider_payment_id coexist under one provider', async () => {
-      const provider = `null-ref-${randomUUID()}` as ProviderCode;
+    it('lets two rows with a null provider_payment_id coexist under one account', async () => {
       const nullRefRow = {
-        provider,
+        provider: 'fake',
         providerPaymentId: null,
         purpose: 'one_off',
         origin: 'api',
         status: 'created',
         amountMinor: 1000,
         currency: 'USD',
+        ...seedColumnsOf('fake'),
       } as const;
 
-      await db.insert(payments).values([nullRefRow, nullRefRow]);
+      const inserted = await db
+        .insert(payments)
+        .values([nullRefRow, nullRefRow])
+        .returning({ id: payments.id });
 
-      expect(
-        await db.select().from(payments).where(eq(payments.provider, provider)),
-      ).toHaveLength(2);
+      expect(inserted).toHaveLength(2);
     });
 
     it('returns duplicate for the same status and writes nothing', async () => {
@@ -814,9 +814,7 @@ describe('Payments ingest', () => {
     );
 
     it('throws not-found on a one-off, births on a renewal and leaves the row alone for another provider', async () => {
-      const otherRow = await insertNullRefPayment({
-        provider: OTHER_PROVIDER,
-      });
+      const otherRow = await insertNullRefPayment({ provider: 'paddle' });
       const input = ingestInputWith({ reference: otherRow.id });
 
       await expect(paymentsService.ingestPayment(input)).rejects.toBeInstanceOf(

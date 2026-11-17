@@ -292,13 +292,6 @@ describe('ReconciliationService', () => {
       expect(ingestPayment).not.toHaveBeenCalled();
     });
 
-    it('refuses a payment without an account before any call', async () => {
-      await expect(
-        service.reconcile(claimedWith({ providerAccountId: null })),
-      ).rejects.toThrow(`Payment ${PAYMENT_ID} has no provider account`);
-      expect(bind).not.toHaveBeenCalled();
-    });
-
     it('logs a rejected status query without skipping the provider', async () => {
       getStatus.mockRejectedValue(
         new ProviderError('bad id', { providerCode: 'fake', kind: 'rejected' }),

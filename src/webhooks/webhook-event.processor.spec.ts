@@ -407,16 +407,6 @@ describe('WebhookEventProcessor', () => {
       expect(ingestPayment).not.toHaveBeenCalled();
     });
 
-    it('retries a row without an account without binding', async () => {
-      await expect(
-        processEvents(
-          [paymentEventWith()],
-          claimedWith({ providerAccountId: null }),
-        ),
-      ).resolves.toMatchObject({ status: 'received', retryDelaySeconds: 30 });
-      expect(bind).not.toHaveBeenCalled();
-    });
-
     it('fails a row with no stored body', async () => {
       await expect(processor.process(claimedWith(), null)).resolves.toEqual({
         status: 'failed',

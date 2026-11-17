@@ -9,7 +9,6 @@ import {
   primaryKey,
   text,
   timestamp,
-  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 
@@ -17,7 +16,6 @@ import {
   IDEMPOTENCY_KEY_STATUSES,
   IDEMPOTENCY_SCOPES,
 } from '../../idempotency/idempotency.constants';
-import { SEED_PROJECT_ID } from '../../projects/projects.constants';
 
 import { payments } from './payments.schema';
 import { projects } from './projects.schema';
@@ -37,15 +35,10 @@ const idempotencyKeys = pgTable(
       .notNull()
       .default(sql`clock_timestamp()`),
     completedAt: timestamp('completed_at', { withTimezone: true }),
-    projectId: uuid('project_id').notNull().default(SEED_PROJECT_ID),
+    projectId: uuid('project_id').notNull(),
   },
   (table) => [
-    primaryKey({ columns: [table.scope, table.key] }),
-    uniqueIndex('idempotency_keys_project_id_scope_key_unique').on(
-      table.projectId,
-      table.scope,
-      table.key,
-    ),
+    primaryKey({ columns: [table.projectId, table.scope, table.key] }),
     foreignKey({
       name: 'idempotency_keys_project_id_projects_id_fk',
       columns: [table.projectId],

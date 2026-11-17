@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, eq, isNull, ne, sql } from 'drizzle-orm';
 
 import {
   DRIZZLE,
@@ -133,10 +133,7 @@ export class PaymentsRepository {
         and(
           eq(payments.provider, ref.provider),
           eq(payments.providerPaymentId, ref.providerPaymentId),
-          or(
-            isNull(payments.providerAccountId),
-            ne(payments.providerAccountId, ref.providerAccountId),
-          ),
+          ne(payments.providerAccountId, ref.providerAccountId),
         ),
       )
       .limit(1);

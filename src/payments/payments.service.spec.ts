@@ -325,10 +325,10 @@ describe('PaymentsService', () => {
         .ingestPayment({ ...INPUT, reference: REFERENCE })
         .catch((caught: unknown) => caught);
 
-    it('maps the provider ref constraint to the owned error', async () => {
+    it('maps the account provider ref constraint to the owned error', async () => {
       const failure = violationOf(
         '23505',
-        'payments_provider_provider_payment_id_unique',
+        'payments_provider_account_id_provider_payment_id_unique',
       );
 
       const error = await ingestFailingWith(failure);
@@ -344,9 +344,14 @@ describe('PaymentsService', () => {
     it.each([
       ['another unique constraint', '23505', 'payment_events_unique'],
       [
+        'the dropped per-provider constraint',
+        '23505',
+        'payments_provider_provider_payment_id_unique',
+      ],
+      [
         'another code on that constraint',
         '23503',
-        'payments_provider_provider_payment_id_unique',
+        'payments_provider_account_id_provider_payment_id_unique',
       ],
     ])('leaves %s as it is', async (_case, code, constraintName) => {
       const failure = violationOf(code, constraintName);

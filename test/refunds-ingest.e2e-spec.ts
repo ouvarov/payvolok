@@ -125,9 +125,11 @@ describe('Refunds ingest', () => {
   ) =>
     db.execute(sql`
       insert into refunds
-        (payment_id, provider, provider_refund_id, origin, status, amount_minor, currency)
+        (payment_id, project_id, provider_account_id, provider, provider_refund_id, origin, status, amount_minor, currency)
       values (
         ${paymentId},
+        ${SEED_PROJECT_ID},
+        ${SEED_FAKE_ACCOUNT_ID},
         'fake',
         ${randomUUID()},
         ${overrides.origin ?? 'provider'},

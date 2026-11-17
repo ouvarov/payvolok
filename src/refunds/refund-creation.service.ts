@@ -15,7 +15,6 @@ import {
   requestHashOf,
   type IdempotentResponse,
 } from '@/idempotency/idempotency.service';
-import { accountIdOf } from '@/payments/payment-account';
 import { PaymentsService } from '@/payments/payments.service';
 import { ProviderAccountsService } from '@/provider-accounts/provider-accounts.service';
 import type {
@@ -210,10 +209,10 @@ export class RefundCreationService {
     if (!payment) throw paymentNotFound();
 
     try {
-      return await this.providerAccountsService.bind(accountIdOf(payment));
+      return await this.providerAccountsService.bind(payment.providerAccountId);
     } catch (error) {
       this.logger.error(
-        `Refund of payment ${payment.id}: its provider account ${String(payment.providerAccountId)} did not bind: ${describeError(error)}`,
+        `Refund of payment ${payment.id}: its provider account ${payment.providerAccountId} did not bind: ${describeError(error)}`,
       );
       throw new ApiException({
         statusCode: HttpStatus.SERVICE_UNAVAILABLE,

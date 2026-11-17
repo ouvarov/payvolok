@@ -25,6 +25,7 @@ import {
 import { IdempotencyRepository } from '@/idempotency/idempotency.repository';
 import { PaymentsRepository } from '@/payments/payments.repository';
 import { PaymentsService } from '@/payments/payments.service';
+import { SEED_PROJECT_ID } from '@/projects/projects.constants';
 import { SEED_FAKE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
 import type { FakeCredentials } from '@/providers/provider-credentials';
 import { FakeProvider } from '@/providers/fake/fake.provider';
@@ -217,6 +218,7 @@ describe('POST /api/v1/payments', () => {
       .insert(webhookEvents)
       .values({
         provider: 'fake',
+        providerAccountId: SEED_FAKE_ACCOUNT_ID,
         dedupKey: fakeProvider.parseWebhook(webhook)[0].dedupKey,
         status: 'processed',
         signatureValid: true,
@@ -516,6 +518,7 @@ describe('POST /api/v1/payments', () => {
     it('does not collide with the same key in the refund scope', async () => {
       const key = newKey();
       const refundKeyRow = {
+        projectId: SEED_PROJECT_ID,
         scope: 'api:create_refund',
         key,
         requestHash: 'a'.repeat(64),
