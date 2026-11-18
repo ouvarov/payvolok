@@ -14,7 +14,6 @@ import {
   storableText,
 } from '@/common/storable-text';
 import { describeError } from '@/database/postgres-errors';
-import { SEED_PADDLE_ACCOUNT_ID } from '@/provider-accounts/provider-accounts.constants';
 import { ProviderAccountsService } from '@/provider-accounts/provider-accounts.service';
 import { accountLabelOf } from '@/providers/bound-provider';
 import type {
@@ -41,7 +40,6 @@ import { WebhooksRepository } from './webhooks.repository';
 const MAX_INVALID_ROWS_PER_WINDOW = 20;
 const webhookEventIdSchema = z.uuid();
 const INVALID_ROWS_WINDOW_MS = 60 * 60 * 1000;
-const ALIAS_WARN_INTERVAL_MS = 60 * 60 * 1000;
 
 type InvalidAttemptWindow = { startedAtEpochMs: number; attempts: number };
 
@@ -63,7 +61,6 @@ export class WebhooksService {
     string,
     InvalidAttemptWindow
   >();
-  private lastAliasWarnAtEpochMs: number | null = null;
 
   constructor(
     private readonly providerAccountsService: ProviderAccountsService,
@@ -78,16 +75,6 @@ export class WebhooksService {
     if (replayId) this.webhookWorker.kick();
 
     return replayId;
-  }
-
-  // The URL Paddle was given before accounts existed, kept until Paddle is switched.
-  receiveOnPaddleAlias(
-    body: unknown,
-    headers: WebhookRequest['headers'],
-  ): Promise<void> {
-    this.warnAboutAliasHourly();
-
-    return this.receive('paddle', SEED_PADDLE_ACCOUNT_ID, body, headers);
   }
 
   async receive(
@@ -114,21 +101,6 @@ export class WebhooksService {
     }
 
     await this.storeDelivery(provider, request);
-  }
-
-  private warnAboutAliasHourly(): void {
-    const nowEpochMs = Date.now();
-    if (
-      this.lastAliasWarnAtEpochMs !== null &&
-      nowEpochMs - this.lastAliasWarnAtEpochMs < ALIAS_WARN_INTERVAL_MS
-    ) {
-      return;
-    }
-
-    this.lastAliasWarnAtEpochMs = nowEpochMs;
-    this.logger.warn(
-      `Webhook received on /webhooks/paddle; point Paddle at /webhooks/paddle/${SEED_PADDLE_ACCOUNT_ID}`,
-    );
   }
 
   private async boundProviderFor(

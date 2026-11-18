@@ -319,10 +319,10 @@ describe('migration 0009', () => {
   );
 
   it(
-    'still takes the inserts and conflict targets of the code before it',
+    'still takes the inserts and conflict targets of the code before it until 0011',
     () =>
       withDatabase(async (database) => {
-        await migrateToLatest(database);
+        await migrateUpTo(database, '0010');
         const insertPayment = `
           insert into payments (provider, provider_payment_id, purpose, origin, status, amount_minor, currency)
           values ('paddle', 'txn_old_code', 'one_off', 'api', 'succeeded', 1000, 'USD')

@@ -12,7 +12,6 @@ import type { ProviderCode } from '@/providers/provider.constants';
 import { PaymentResponseDto } from './dto/payment-response.dto';
 import {
   PAYMENTS_ACCOUNT_PROVIDER_REF_UNIQUE,
-  PAYMENTS_PROVIDER_REF_UNIQUE,
   type PaymentPurpose,
   type PaymentStatus,
 } from './payment.constants';
@@ -25,10 +24,6 @@ const paymentReferenceSchema = z.uuid();
 const API_REQUEST_REASON = 'api_request';
 const PROVIDER_CREATED_REASON = 'provider_created';
 const REQUEST_INTERRUPTED_REASON = 'request_interrupted';
-const PROVIDER_REF_UNIQUES = [
-  PAYMENTS_PROVIDER_REF_UNIQUE,
-  PAYMENTS_ACCOUNT_PROVIDER_REF_UNIQUE,
-];
 
 type RequestedPaymentInput = {
   projectId: string;
@@ -166,7 +161,7 @@ export class PaymentNotFoundError extends Error {
 export class ForeignAccountError extends Error {
   constructor(
     subject: string,
-    readonly ownerAccountId: string | null,
+    readonly ownerAccountId: string,
   ) {
     super(`${subject} belongs to another account`);
     this.name = 'ForeignAccountError';
@@ -313,9 +308,7 @@ export class PaymentsService {
     try {
       return await this.paymentsRepository.withTransaction(work);
     } catch (error) {
-      if (
-        PROVIDER_REF_UNIQUES.some((name) => isUniqueViolationOf(error, name))
-      ) {
+      if (isUniqueViolationOf(error, PAYMENTS_ACCOUNT_PROVIDER_REF_UNIQUE)) {
         throw new PaymentProviderRefOwnedError(received, { cause: error });
       }
 

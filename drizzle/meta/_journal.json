@@ -78,6 +78,13 @@
       "when": 1794766009612,
       "tag": "0010_steady_falcon",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794947068673,
+      "tag": "0011_lush_king_bedlam",
+      "breakpoints": true
     }
   ]
 }

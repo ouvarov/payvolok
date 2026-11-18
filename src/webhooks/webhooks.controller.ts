@@ -20,17 +20,6 @@ import { WebhooksService } from './webhooks.service';
 export class WebhooksController {
   constructor(private readonly webhooksService: WebhooksService) {}
 
-  @Post('paddle')
-  @HttpCode(HttpStatus.OK)
-  async receiveOnPaddleAlias(
-    @Body() body: unknown,
-    @Headers() headers: IncomingHttpHeaders,
-  ): Promise<{ received: true }> {
-    await this.webhooksService.receiveOnPaddleAlias(body, headers);
-
-    return { received: true };
-  }
-
   @Post(':provider/:providerAccountId')
   @HttpCode(HttpStatus.OK)
   async receive(

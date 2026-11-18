@@ -125,9 +125,11 @@ describe('Refunds ingest', () => {
   ) =>
     db.execute(sql`
       insert into refunds
-        (payment_id, provider, provider_refund_id, origin, status, amount_minor, currency)
+        (payment_id, project_id, provider_account_id, provider, provider_refund_id, origin, status, amount_minor, currency)
       values (
         ${paymentId},
+        ${SEED_PROJECT_ID},
+        ${SEED_FAKE_ACCOUNT_ID},
         'fake',
         ${randomUUID()},
         ${overrides.origin ?? 'provider'},
@@ -1007,12 +1009,10 @@ describe('Refunds ingest', () => {
         '/api/v1/payments',
         '/api/v1/payments/:id',
         '/api/v1/payments/:paymentId/refunds',
-        '/checkout/paddle',
         '/checkout/paddle/:providerAccountId',
         '/health/live',
         '/health/ready',
         '/webhooks/:provider/:providerAccountId',
-        '/webhooks/paddle',
       ]);
     });
   });

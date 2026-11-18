@@ -119,7 +119,9 @@ export class WebhookEventProcessor {
 
     let provider: BoundProvider;
     try {
-      provider = await this.bind(claimed);
+      provider = await this.providerAccountsService.bind(
+        claimed.providerAccountId,
+      );
     } catch (error) {
       return this.finishOf(claimed, [
         { kind: 'retryable', error: lastErrorOf(error) },
@@ -141,16 +143,6 @@ export class WebhookEventProcessor {
     }
 
     return this.finishOf(claimed, results);
-  }
-
-  private bind(claimed: ClaimedWebhookEvent): Promise<BoundProvider> {
-    if (claimed.providerAccountId === null) {
-      return Promise.reject(
-        new Error(`Webhook event ${claimed.id} has no provider account`),
-      );
-    }
-
-    return this.providerAccountsService.bind(claimed.providerAccountId);
   }
 
   private async handle(
@@ -175,7 +167,7 @@ export class WebhookEventProcessor {
     error: ForeignAccountError,
   ): void {
     this.logger.warn(
-      `Webhook event ${claimed.id} on ${accountLabelOf(provider)} ignored: ${error.message}, account ${error.ownerAccountId ?? 'none'}`,
+      `Webhook event ${claimed.id} on ${accountLabelOf(provider)} ignored: ${error.message}, account ${error.ownerAccountId}`,
     );
   }
 

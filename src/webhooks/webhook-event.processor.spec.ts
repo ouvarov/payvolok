@@ -309,18 +309,6 @@ describe('WebhookEventProcessor', () => {
       },
     );
 
-    it('warns about a foreign event whose payment has no account', async () => {
-      ingestPayment.mockRejectedValue(
-        new ForeignAccountError('Provider payment provider-payment-1', null),
-      );
-
-      await processEvents([paymentEventWith()]);
-
-      expect(warn).toHaveBeenCalledWith(
-        expect.stringMatching(/belongs to another account, account none$/),
-      );
-    });
-
     it('ignores a delivery of only unknown and subscription events', async () => {
       await expect(
         processEvents([subscriptionEvent, { type: 'some.new.type' }]),
@@ -405,16 +393,6 @@ describe('WebhookEventProcessor', () => {
         paymentIds: [],
       });
       expect(ingestPayment).not.toHaveBeenCalled();
-    });
-
-    it('retries a row without an account without binding', async () => {
-      await expect(
-        processEvents(
-          [paymentEventWith()],
-          claimedWith({ providerAccountId: null }),
-        ),
-      ).resolves.toMatchObject({ status: 'received', retryDelaySeconds: 30 });
-      expect(bind).not.toHaveBeenCalled();
     });
 
     it('fails a row with no stored body', async () => {

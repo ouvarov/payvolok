@@ -221,6 +221,7 @@ describe('POST /api/v1/payments/:paymentId/refunds', () => {
       .insert(webhookEvents)
       .values({
         provider: 'fake',
+        providerAccountId: SEED_FAKE_ACCOUNT_ID,
         dedupKey: fakeProvider.parseWebhook(webhook)[0].dedupKey,
         status: 'processed',
         signatureValid: true,

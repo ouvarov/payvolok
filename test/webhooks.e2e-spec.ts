@@ -733,12 +733,10 @@ describe('Webhooks route', () => {
         '/api/v1/payments',
         '/api/v1/payments/:id',
         '/api/v1/payments/:paymentId/refunds',
-        '/checkout/paddle',
         '/checkout/paddle/:providerAccountId',
         '/health/live',
         '/health/ready',
         '/webhooks/:provider/:providerAccountId',
-        '/webhooks/paddle',
       ]);
     });
 
@@ -761,6 +759,7 @@ describe('Webhooks route', () => {
           status: 'pending',
           amountMinor: 1000,
           currency: 'USD',
+          ...seedColumnsOf('fake'),
         })
         .returning({ id: payments.id });
 
@@ -801,6 +800,7 @@ describe('Webhooks route', () => {
       const cause = await databaseCauseOf(() =>
         db.insert(webhookEvents).values({
           provider: 'fake',
+          providerAccountId: SEED_FAKE_ACCOUNT_ID,
           dedupKey: randomUUID(),
           status: 'ignored',
           signatureValid: true,
@@ -874,6 +874,7 @@ describe('Webhooks route', () => {
     const ONE_BODY = Buffer.from('{}');
     const receivedRow = (): NewWebhookEvent => ({
       provider: 'fake',
+      providerAccountId: SEED_FAKE_ACCOUNT_ID,
       dedupKey: randomUUID(),
       status: 'received',
       signatureValid: true,
@@ -997,7 +998,7 @@ describe('Webhooks route', () => {
       expect(await rowsWithKey(original.dedupKey)).toHaveLength(2);
     });
 
-    it('rejects a second original with one provider and key', async () => {
+    it('rejects a second original with one account and key', async () => {
       const original = receivedRow();
       await db.insert(webhookEvents).values(original);
 

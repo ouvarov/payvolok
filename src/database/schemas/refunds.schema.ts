@@ -12,12 +12,10 @@ import {
 } from 'drizzle-orm/pg-core';
 
 import { PAYMENT_ORIGINS } from '../../payments/payment.constants';
-import { SEED_PROJECT_ID } from '../../projects/projects.constants';
 import { PROVIDER_CODES } from '../../providers/provider.constants';
 import {
   REFUND_STATUSES,
   REFUNDS_ACCOUNT_PROVIDER_REF_UNIQUE,
-  REFUNDS_PROVIDER_REF_UNIQUE,
 } from '../../refunds/refund.constants';
 
 import { payments } from './payments.schema';
@@ -42,14 +40,10 @@ const refunds = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
       .default(sql`clock_timestamp()`),
-    projectId: uuid('project_id').notNull().default(SEED_PROJECT_ID),
-    providerAccountId: uuid('provider_account_id'),
+    projectId: uuid('project_id').notNull(),
+    providerAccountId: uuid('provider_account_id').notNull(),
   },
   (table) => [
-    unique(REFUNDS_PROVIDER_REF_UNIQUE).on(
-      table.provider,
-      table.providerRefundId,
-    ),
     unique(REFUNDS_ACCOUNT_PROVIDER_REF_UNIQUE).on(
       table.providerAccountId,
       table.providerRefundId,

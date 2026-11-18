@@ -56,12 +56,9 @@ const webhookEvents = pgTable(
       .notNull()
       .default(sql`clock_timestamp()`),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
-    providerAccountId: uuid('provider_account_id'),
+    providerAccountId: uuid('provider_account_id').notNull(),
   },
   (table) => [
-    uniqueIndex('webhook_events_provider_dedup_key_unique')
-      .on(table.provider, table.dedupKey)
-      .where(sql`${table.replayOf} IS NULL`),
     uniqueIndex('webhook_events_provider_account_id_dedup_key_unique')
       .on(table.providerAccountId, table.dedupKey)
       .where(sql`${table.replayOf} IS NULL`),

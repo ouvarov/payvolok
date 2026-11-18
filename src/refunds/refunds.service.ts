@@ -18,7 +18,6 @@ import type { ProviderCode } from '@/providers/provider.constants';
 
 import {
   REFUNDS_ACCOUNT_PROVIDER_REF_UNIQUE,
-  REFUNDS_PROVIDER_REF_UNIQUE,
   type RefundStatus,
 } from './refund.constants';
 import {
@@ -28,10 +27,6 @@ import {
 import { RefundsRepository } from './refunds.repository';
 
 const refundReferenceSchema = z.uuid();
-const PROVIDER_REF_UNIQUES = [
-  REFUNDS_PROVIDER_REF_UNIQUE,
-  REFUNDS_ACCOUNT_PROVIDER_REF_UNIQUE,
-];
 
 type IngestRefundInput = {
   reference: string | null;
@@ -265,9 +260,7 @@ export class RefundsService {
         this.ingestInTransaction(tx, input, 'provider'),
       );
     } catch (error) {
-      if (
-        PROVIDER_REF_UNIQUES.some((name) => isUniqueViolationOf(error, name))
-      ) {
+      if (isUniqueViolationOf(error, REFUNDS_ACCOUNT_PROVIDER_REF_UNIQUE)) {
         throw new RefundMismatchError(
           null,
           `provider ref ${input.providerRefundId} is owned by another refund`,

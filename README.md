@@ -99,7 +99,7 @@ WHERE p.slug = 'payvolok-demo' AND k.key_prefix = 'pv_test_XXXX' AND k.revoked_a
 UPDATE api_keys SET revoked_at = clock_timestamp() WHERE id = '<api key id>' AND revoked_at IS NULL;
 ```
 
-To rotate, create a new key, switch the client to it, then revoke the old one. `API_KEY_SHA256` is no longer read.
+To rotate, create a new key, switch the client to it, then revoke the old one.
 
 Errors under `/api/` are JSON of one shape, with a stable `code`:
 
@@ -162,7 +162,7 @@ A refund request interrupted after its key was taken stores `503 provider_unavai
 - While the first request still runs, the same key gets `409 idempotency_key_in_progress`.
 - A payment request that stopped after the payment row was written, for example a crash, holds its key for 60 s. The next request with that key then marks the payment `failed` (`request_interrupted`), or records that as `stale` if a webhook already moved it on, without calling the provider, and stores `503 provider_unavailable` for the key.
 - Keys live 24 h. After that the same key starts a new payment or refund, and reconciliation deletes the key within an hour.
-- Payment and refund keys are separate: one key string can be used once for each. Keys belong to the project of the API key; until migration `0011` one key string is still unique across all projects.
+- Payment and refund keys are separate: one key string can be used once for each. Keys belong to the project of the API key, so two projects can use the same key string for different payments.
 
 Only requests that reached the provider are stored: a 400 or 401 leaves no trace, so a fixed request can reuse its key.
 
@@ -204,7 +204,7 @@ Every payment, refund and idempotency key belongs to a project, and every paymen
 
 Provider adapters keep no keys. Every provider call binds an account first: the account row names its credentials (`credentials_ref`), and `env:PADDLE` resolves to the `PADDLE_*` variables in the sandbox, `env:FAKE` to `FAKE_WEBHOOK_SECRET`. Credentials print as `[redacted]` in logs, JSON and errors. A webhook is checked against the secrets of the account in its URL, and every payment or refund it touches must belong to that account: an event naming another account's payment ends `ignored` after one attempt, with the reason in `last_error` and a warning that names the event and both accounts. A `disabled` account takes no new payments (`422 provider_not_available`) but keeps its webhooks, refunds, reconciliation and checkout page. Reconciliation skips an account whose provider or credentials fail and goes on with the others.
 
-Until migration `0011` drops the old per-provider unique keys, two accounts of one provider still share them. A renewal whose provider payment id another account already has ends `failed` instead of `ignored`. A webhook whose dedup key another account of the same provider already stored is refused with `503`, so the provider retries until it gives up, and the same body with an invalid signature sent to a second account is not stored (the insert fails with `23505` and is logged as an error). Each provider has one account today and Paddle event ids are unique, so none of these happen yet.
+Provider payment ids, provider refund ids and webhook dedup keys are unique per account, not per provider, and a webhook moves only its own account's rows. An event naming an id that only another account holds is ignored, as above; it creates nothing on the webhook's account.
 
 ## Fake provider
 
@@ -245,7 +245,6 @@ node --env-file=.env -r ts-node/register/transpile-only -r tsconfig-paths/regist
 `render.yaml` is a Render Blueprint for the API only: one Docker web service, `payvolok-api`, on the free plan in Frankfurt. Render: **New > Blueprint**, pick this repository, then fill the variables marked `sync: false`:
 
 - `DATABASE_URL`: the pooled Postgres address (the client does not use prepared statements, so a pooler works).
-- `API_KEY_SHA256`: no longer read since API keys moved to the database. It stays on Render until migration `0011` only so a rollback to the code before project keys still has its key; then delete it.
 - `PUBLIC_BASE_URL`: required to boot, so enter the expected service URL up front: `https://payvolok-api.onrender.com`. If the name is taken Render adds a suffix; then correct the value and redeploy.
 - `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET`, `PADDLE_CLIENT_TOKEN`: as in Paddle above. `PADDLE_WEBHOOK_SECRET` may stay blank on the first deploy (blank counts as unset): Paddle webhooks answer 503 until it is set.
 
@@ -272,7 +271,9 @@ Migration `0010` repeats the `0009` account fill for rows written in between, id
 
 Before the project keys release is merged, from that branch: run `npm run api-key:create -- --project payvolok-demo --name "render production"` with `DATABASE_URL` pointing at production and keep the printed key, and set the seed project's `allowed_return_origins` with the SQL in Create a payment (the origin of `PUBLIC_BASE_URL` for now). An empty list refuses every payment. After the deploy the old key answers 401 and the new one works.
 
-`POST /webhooks/paddle` and `GET /checkout/paddle` still serve the seed Paddle account, for destinations and payment links set before accounts existed; the webhook alias logs a warning at most once an hour. Once Paddle points at the account URLs and the warning stops, they can go.
+Migration `0011` finishes the move to projects. Apply it to `dev` and `production` once the project keys release is live, before its own pull request is merged; first run the "after" checks above, every count must be 0. It repeats the `0010` account fill, makes the account columns `NOT NULL`, drops the seed-project default from `project_id` (a row without a project is then an error), replaces the per-provider unique keys with the per-account ones that already exist, keys idempotency by `(project_id, scope, key)` and validates every foreign key added `NOT VALID` in `0009` and `0010`. A row the fill cannot give an account (no account of its provider in its project) makes it fail and roll back as a whole; fix that row and run it again. After it only the project keys release or newer runs: older code needs the dropped keys.
+
+Paddle must point at the account URLs, `POST /webhooks/paddle/<account id>` and `GET /checkout/paddle/<account id>`: the routes without an account answer 404.
 
 After the first deploy, point Paddle at the final service URL: set the default payment link to `<url>/checkout/paddle/<account id>`, and edit the URL of the existing notification destination to `<url>/webhooks/paddle/<account id>`. Editing keeps the destination's secret, so nothing changes on Render. If you create a new destination instead (with the same six events), it has a new secret: put it in `PADDLE_WEBHOOK_SECRET` on Render and redeploy. After the switch, check that the next event is not answered 401 (Paddle's delivery log for the destination) and that `/health/ready` answers 200.
 

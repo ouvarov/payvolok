@@ -18,11 +18,9 @@ import {
   PAYMENT_PURPOSES,
   PAYMENT_STATUSES,
   PAYMENTS_ACCOUNT_PROVIDER_REF_UNIQUE,
-  PAYMENTS_PROVIDER_REF_UNIQUE,
   RECONCILABLE_PAYMENT_STATUSES,
   RECONCILE_GRACE_SECONDS,
 } from '../../payments/payment.constants';
-import { SEED_PROJECT_ID } from '../../projects/projects.constants';
 import { PROVIDER_CODES } from '../../providers/provider.constants';
 
 import { projects } from './projects.schema';
@@ -57,14 +55,10 @@ const payments = pgTable(
     ),
     reconciledAt: timestamp('reconciled_at', { withTimezone: true }),
     reconcileAttempts: integer('reconcile_attempts').notNull().default(0),
-    projectId: uuid('project_id').notNull().default(SEED_PROJECT_ID),
-    providerAccountId: uuid('provider_account_id'),
+    projectId: uuid('project_id').notNull(),
+    providerAccountId: uuid('provider_account_id').notNull(),
   },
   (table) => [
-    unique(PAYMENTS_PROVIDER_REF_UNIQUE).on(
-      table.provider,
-      table.providerPaymentId,
-    ),
     unique(PAYMENTS_ACCOUNT_PROVIDER_REF_UNIQUE).on(
       table.providerAccountId,
       table.providerPaymentId,
@@ -112,6 +106,9 @@ const payments = pgTable(
       .where(
         sql`${table.status} IN (${quotedList(RECONCILABLE_PAYMENT_STATUSES)})`,
       ),
+    index('payments_provider_provider_payment_id_idx')
+      .on(table.provider, table.providerPaymentId)
+      .where(sql`${table.providerPaymentId} IS NOT NULL`),
   ],
 );
 
