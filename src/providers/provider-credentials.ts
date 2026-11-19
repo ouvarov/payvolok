@@ -39,12 +39,21 @@ type PaddleCredentials = {
   clientToken: RedactedSecret | null;
 };
 
+type StripeCredentials = {
+  provider: 'stripe';
+  secretKey: RedactedSecret | null;
+  webhookSecrets: readonly RedactedSecret[];
+};
+
 type FakeCredentials = {
   provider: 'fake';
   webhookSecrets: readonly RedactedSecret[];
 };
 
-type ProviderCredentials = PaddleCredentials | FakeCredentials;
+type ProviderCredentials =
+  | PaddleCredentials
+  | StripeCredentials
+  | FakeCredentials;
 
 type CredentialsOf<Code extends ProviderCode> = Extract<
   ProviderCredentials,
@@ -58,4 +67,5 @@ export type {
   PaddleCredentials,
   PaddleEnvironment,
   ProviderCredentials,
+  StripeCredentials,
 };

@@ -213,11 +213,11 @@ describe('PaymentsService', () => {
   it('accepts only registered provider codes at compile time', () => {
     const inputWithUnregisteredProvider: IngestPaymentInput = {
       ...INPUT,
-      // @ts-expect-error 'stripe' is not a ProviderCode
-      provider: 'stripe',
+      // @ts-expect-error 'liqpay' is not a ProviderCode
+      provider: 'liqpay',
     };
 
-    expect(inputWithUnregisteredProvider.provider).toBe('stripe');
+    expect(inputWithUnregisteredProvider.provider).toBe('liqpay');
   });
 
   it('takes only the statuses a payment event can report at compile time', () => {

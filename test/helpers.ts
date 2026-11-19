@@ -17,6 +17,7 @@ import {
   SEED_FAKE_ACCOUNT_ID,
   SEED_FAKE_CREDENTIALS_REF,
   SEED_PADDLE_ACCOUNT_ID,
+  SEED_STRIPE_ACCOUNT_ID,
 } from '@/provider-accounts/provider-accounts.constants';
 import { ProviderCredentialsResolver } from '@/provider-accounts/provider-credentials.resolver';
 import type { FakeWireBody } from '@/providers/fake/fake-wire-format';
@@ -44,6 +45,7 @@ const SEED_PADDLE_WEBHOOK_PATH = `/webhooks/paddle/${SEED_PADDLE_ACCOUNT_ID}`;
 const SEED_ACCOUNT_ID_BY_PROVIDER: Record<ProviderCode, string> = {
   fake: SEED_FAKE_ACCOUNT_ID,
   paddle: SEED_PADDLE_ACCOUNT_ID,
+  stripe: SEED_STRIPE_ACCOUNT_ID,
 };
 
 const databaseUrl = process.env.E2E_DATABASE_URL as string;

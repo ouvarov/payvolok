@@ -210,6 +210,76 @@ describe('validateEnv', () => {
     );
   });
 
+  describe('Stripe variables', () => {
+    const VALID_STRIPE_ENV = {
+      STRIPE_SECRET_KEY: `sk_test_${'Ab1'.repeat(30)}`,
+      STRIPE_WEBHOOK_SECRET: `whsec_${'Wh1'.repeat(10)}`,
+    };
+
+    const errorMessageFor = (config: Record<string, unknown>): string => {
+      try {
+        validateEnv(config);
+      } catch (caught) {
+        return (caught as Error).message;
+      }
+
+      return '';
+    };
+
+    it('boots with none of them set', () => {
+      const env = validateEnv(VALID_ENV);
+
+      expect(env.STRIPE_SECRET_KEY).toBeUndefined();
+      expect(env.STRIPE_WEBHOOK_SECRET).toBeUndefined();
+    });
+
+    it.each([
+      ['a secret key', `sk_test_${'Ab1'.repeat(30)}`],
+      ['a restricted key', `rk_test_${'Ab1'.repeat(30)}`],
+    ])('reads %s in test mode', (_case, secretKey) => {
+      expect(
+        validateEnv({ ...VALID_ENV, ...VALID_STRIPE_ENV, STRIPE_SECRET_KEY: secretKey }),
+      ).toMatchObject({ ...VALID_STRIPE_ENV, STRIPE_SECRET_KEY: secretKey });
+    });
+
+    it.each(Object.keys(VALID_STRIPE_ENV))(
+      'treats an empty %s as unset',
+      (key) => {
+        expect(
+          validateEnv({ ...VALID_ENV, ...VALID_STRIPE_ENV, [key]: '' })[
+            key as keyof typeof VALID_STRIPE_ENV
+          ],
+        ).toBeUndefined();
+      },
+    );
+
+    it('drops the publishable key, which the server never uses', () => {
+      expect(
+        validateEnv({
+          ...VALID_ENV,
+          STRIPE_PUBLISHABLE_KEY: `pk_test_${'Pk1'.repeat(30)}`,
+        }),
+      ).not.toHaveProperty('STRIPE_PUBLISHABLE_KEY');
+    });
+
+    it.each([
+      ['STRIPE_SECRET_KEY', `sk_live_${'Ab1'.repeat(30)}`],
+      ['STRIPE_SECRET_KEY', `rk_live_${'Ab1'.repeat(30)}`],
+      ['STRIPE_SECRET_KEY', `pk_test_${'Ab1'.repeat(30)}`],
+      ['STRIPE_SECRET_KEY', 'sk_test_with space'],
+      ['STRIPE_WEBHOOK_SECRET', 'abc'],
+      ['STRIPE_WEBHOOK_SECRET', 'whsec_with space'],
+    ])(
+      'rejects %s %j, naming the key without echoing the value',
+      (key, value) => {
+        const message = errorMessageFor({ ...VALID_ENV, [key]: value });
+
+        expect(message).toContain(key);
+        expect(message).not.toContain(value);
+      },
+    );
+  });
+
   describe('WEBHOOK_POLL_INTERVAL_MS', () => {
     it('accepts 100 and 3600000', () => {
       for (const interval of ['100', '3600000']) {
