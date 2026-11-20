@@ -125,7 +125,7 @@ describe('WebhooksService account', () => {
 
     await expect(
       serviceWith(bindForWebhook).receive(
-        'stripe',
+        'liqpay',
         ACCOUNT_ID,
         Buffer.from('{}'),
         {},

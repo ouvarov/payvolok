@@ -3,11 +3,13 @@ import { Module } from '@nestjs/common';
 import { FakeProvider } from './fake/fake.provider';
 import { PaddleProvider } from './paddle/paddle.provider';
 import { ProviderRegistry } from './provider.registry';
+import { StripeProvider } from './stripe/stripe.provider';
 
 @Module({
   providers: [
     { provide: FakeProvider, useFactory: () => new FakeProvider() },
     { provide: PaddleProvider, useFactory: () => new PaddleProvider() },
+    { provide: StripeProvider, useFactory: () => new StripeProvider() },
     ProviderRegistry,
   ],
   exports: [ProviderRegistry],

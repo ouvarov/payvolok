@@ -21,6 +21,8 @@ const envSchema = z.object({
   PADDLE_API_KEY: optionalUnlessBlank(/^pdl_sdbx_apikey_\S+$/),
   PADDLE_WEBHOOK_SECRET: optionalUnlessBlank(/^pdl_ntfset_\S+$/),
   PADDLE_CLIENT_TOKEN: optionalUnlessBlank(/^test_[A-Za-z0-9]+$/),
+  STRIPE_SECRET_KEY: optionalUnlessBlank(/^(sk|rk)_test_[A-Za-z0-9]+$/),
+  STRIPE_WEBHOOK_SECRET: optionalUnlessBlank(/^whsec_[A-Za-z0-9]+$/),
   WEBHOOK_WORKER_ENABLED: z.stringbool().default(true),
   WEBHOOK_POLL_INTERVAL_MS: z.coerce
     .number()

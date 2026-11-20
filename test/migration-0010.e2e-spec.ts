@@ -8,6 +8,7 @@ import {
   SEED_FAKE_ACCOUNT_ID,
   SEED_FAKE_CREDENTIALS_REF,
   SEED_PADDLE_ACCOUNT_ID,
+  SEED_STRIPE_ACCOUNT_ID,
 } from '@/provider-accounts/provider-accounts.constants';
 
 import { MIGRATIONS_FOLDER } from './apply-migrations';
@@ -186,7 +187,7 @@ describe('migration 0010', () => {
         expect(
           await rowsOf(
             database,
-            'select provider from provider_accounts order by provider',
+            `select provider from provider_accounts where id <> '${SEED_STRIPE_ACCOUNT_ID}' order by provider`,
           ),
         ).toEqual([{ provider: 'paddle' }]);
         expect(

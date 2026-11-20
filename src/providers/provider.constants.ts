@@ -1,4 +1,4 @@
-const PROVIDER_CODES = ['fake', 'paddle'] as const;
+const PROVIDER_CODES = ['fake', 'paddle', 'stripe'] as const;
 
 type ProviderCode = (typeof PROVIDER_CODES)[number];
 
