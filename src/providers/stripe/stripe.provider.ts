@@ -378,7 +378,10 @@ export class StripeProvider implements PaymentProvider<StripeCredentials> {
     credentials: StripeCredentials,
     providerRefundId: string | null,
   ): Promise<ResourceStatus | null> {
-    if (providerRefundId === null || !REFUND_ID_PATTERN.test(providerRefundId)) {
+    if (
+      providerRefundId === null ||
+      !REFUND_ID_PATTERN.test(providerRefundId)
+    ) {
       return null;
     }
 

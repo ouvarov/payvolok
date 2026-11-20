@@ -130,8 +130,12 @@ const runUnpaidChecks = async (
     provider.createPayment(credentials, paymentInputWith()),
   );
   if (created) {
-    console.log(`\nOpen to pay with 4242 4242 4242 4242: ${created.redirectUrl}`);
-    console.log(`Then run: ... scripts/stripe-sandbox-check.ts paid ${created.providerPaymentId}`);
+    console.log(
+      `\nOpen to pay with 4242 4242 4242 4242: ${created.redirectUrl}`,
+    );
+    console.log(
+      `Then run: ... scripts/stripe-sandbox-check.ts paid ${created.providerPaymentId}`,
+    );
     await step('payment status', () =>
       provider.getStatus(credentials, {
         resource: 'payment',
@@ -184,7 +188,9 @@ const runPaidChecks = async (
       currency: 'USD',
     }),
   );
-  await step('list refunds', () => provider.listRefunds(credentials, sessionId));
+  await step('list refunds', () =>
+    provider.listRefunds(credentials, sessionId),
+  );
   if (status) {
     await step('refund the remaining amount plus one', () =>
       provider.refund(credentials, {

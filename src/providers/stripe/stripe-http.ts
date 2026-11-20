@@ -48,9 +48,7 @@ const HTTP_SERVER_ERROR_MIN = 500;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
 // 409: the idempotency key is in use by a request still running; 424: Stripe's own dependency failed.
-const RETRYABLE_CLIENT_STATUSES: ReadonlySet<number> = new Set([
-  409, 424, 429,
-]);
+const RETRYABLE_CLIENT_STATUSES: ReadonlySet<number> = new Set([409, 424, 429]);
 
 const stripeError = (
   message: string,
@@ -102,7 +100,9 @@ const headersOf = (
   ...(form === undefined
     ? {}
     : { 'Content-Type': 'application/x-www-form-urlencoded' }),
-  ...(idempotencyKey === undefined ? {} : { 'Idempotency-Key': idempotencyKey }),
+  ...(idempotencyKey === undefined
+    ? {}
+    : { 'Idempotency-Key': idempotencyKey }),
 });
 
 // A timeout rejects with a DOMException, which is not an Error in every realm.

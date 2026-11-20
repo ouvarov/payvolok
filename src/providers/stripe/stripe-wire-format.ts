@@ -44,7 +44,11 @@ const SESSION_EVENT_TYPES: ReadonlySet<string> = new Set([
   'checkout.session.expired',
 ]);
 
-const amountMinorSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const amountMinorSchema = z
+  .number()
+  .int()
+  .nonnegative()
+  .max(Number.MAX_SAFE_INTEGER);
 const paymentIntentIdSchema = z.string().regex(PAYMENT_INTENT_ID_PATTERN);
 
 const stripeCreatedSessionSchema = z.object({
@@ -256,9 +260,4 @@ export {
   toProviderEvent,
   toStripeCurrency,
 };
-export type {
-  StripeErrorBody,
-  StripeEvent,
-  StripeRefund,
-  StripeSession,
-};
+export type { StripeErrorBody, StripeEvent, StripeRefund, StripeSession };

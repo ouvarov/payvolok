@@ -238,7 +238,11 @@ describe('validateEnv', () => {
       ['a restricted key', `rk_test_${'Ab1'.repeat(30)}`],
     ])('reads %s in test mode', (_case, secretKey) => {
       expect(
-        validateEnv({ ...VALID_ENV, ...VALID_STRIPE_ENV, STRIPE_SECRET_KEY: secretKey }),
+        validateEnv({
+          ...VALID_ENV,
+          ...VALID_STRIPE_ENV,
+          STRIPE_SECRET_KEY: secretKey,
+        }),
       ).toMatchObject({ ...VALID_STRIPE_ENV, STRIPE_SECRET_KEY: secretKey });
     });
 

@@ -51,9 +51,7 @@ type FakeCredentials = {
 };
 
 type ProviderCredentials =
-  | PaddleCredentials
-  | StripeCredentials
-  | FakeCredentials;
+  PaddleCredentials | StripeCredentials | FakeCredentials;
 
 type CredentialsOf<Code extends ProviderCode> = Extract<
   ProviderCredentials,

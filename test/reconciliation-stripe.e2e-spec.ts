@@ -65,7 +65,9 @@ describe('Reconciliation of Stripe payments and refunds', () => {
   const fetchHandlers = new Map<string, FetchHandler>();
   const stubFetch = jest.fn<Promise<Response>, Parameters<typeof fetch>>(
     (input, init) => {
-      const url = new URL(input instanceof Request ? input.url : input.toString());
+      const url = new URL(
+        input instanceof Request ? input.url : input.toString(),
+      );
       const key = `${init?.method ?? 'GET'} ${url.origin}${url.pathname}`;
       const handler = fetchHandlers.get(key);
       if (!handler) throw new Error(`Unexpected Stripe request ${key}`);

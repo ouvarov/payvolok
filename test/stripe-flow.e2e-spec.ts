@@ -120,7 +120,9 @@ describe('Stripe provider', () => {
   const fetchHandlers = new Map<string, FetchHandler>();
   const stubFetch = jest.fn<Promise<Response>, Parameters<typeof fetch>>(
     (input, init) => {
-      const url = new URL(input instanceof Request ? input.url : input.toString());
+      const url = new URL(
+        input instanceof Request ? input.url : input.toString(),
+      );
       const key = `${init?.method ?? 'GET'} ${url.origin}${url.pathname}`;
       const handler = fetchHandlers.get(key);
       if (!handler) throw new Error(`Unexpected Stripe request ${key}`);
@@ -231,24 +233,31 @@ describe('Stripe provider', () => {
 
   const stubCreatedSession = (
     overrides: Partial<StripeSessionFixture> = {},
-    beforeAnswer: (reference: string, sessionId: string) => Promise<void> = () =>
-      Promise.resolve(),
+    beforeAnswer: (
+      reference: string,
+      sessionId: string,
+    ) => Promise<void> = () => Promise.resolve(),
   ): string => {
     const sessionId = overrides.id ?? syntheticStripeId('cs_test');
-    fetchHandlers.set(`POST ${STRIPE_API}/v1/checkout/sessions`, async (init) => {
-      const form = formOf(init);
-      await beforeAnswer(form.client_reference_id, sessionId);
+    fetchHandlers.set(
+      `POST ${STRIPE_API}/v1/checkout/sessions`,
+      async (init) => {
+        const form = formOf(init);
+        await beforeAnswer(form.client_reference_id, sessionId);
 
-      return jsonResponse(
-        sessionFixture({
-          id: sessionId,
-          client_reference_id: form.client_reference_id,
-          amount_total: Number(form['line_items[0][price_data][unit_amount]']),
-          currency: form['line_items[0][price_data][currency]'],
-          ...overrides,
-        }),
-      );
-    });
+        return jsonResponse(
+          sessionFixture({
+            id: sessionId,
+            client_reference_id: form.client_reference_id,
+            amount_total: Number(
+              form['line_items[0][price_data][unit_amount]'],
+            ),
+            currency: form['line_items[0][price_data][currency]'],
+            ...overrides,
+          }),
+        );
+      },
+    );
 
     return sessionId;
   };
@@ -375,7 +384,11 @@ describe('Stripe provider', () => {
 
     it('is 404 on the paddle route and stores nothing', async () => {
       const event = eventFixture('charge.refunded', { id: 'ch_1' });
-      const webhook = signedStripeWebhook(event, WEBHOOK_SECRET, FIXED_NOW_EPOCH_MS);
+      const webhook = signedStripeWebhook(
+        event,
+        WEBHOOK_SECRET,
+        FIXED_NOW_EPOCH_MS,
+      );
 
       await deliver(
         webhook.rawBody,
@@ -472,16 +485,18 @@ describe('Stripe provider', () => {
     it(
       'links a completed event processed before create stored the session id, and keeps one row',
       async () => {
-        const payment = await createStripePayment(async (reference, sessionId) => {
-          await deliverAndProcess(
-            sessionEventFor('checkout.session.completed', {
-              id: sessionId,
-              client_reference_id: reference,
-              status: 'complete',
-              payment_status: 'paid',
-            }),
-          );
-        });
+        const payment = await createStripePayment(
+          async (reference, sessionId) => {
+            await deliverAndProcess(
+              sessionEventFor('checkout.session.completed', {
+                id: sessionId,
+                client_reference_id: reference,
+                status: 'complete',
+                payment_status: 'paid',
+              }),
+            );
+          },
+        );
 
         const rows = await db
           .select()
@@ -690,17 +705,23 @@ describe('Stripe provider', () => {
           };
         },
       ],
-    ])('answers %s 401 with an invalid row on the account', async (_case, build) => {
-      const { rawBody, signature } = build();
+    ])(
+      'answers %s 401 with an invalid row on the account',
+      async (_case, build) => {
+        const { rawBody, signature } = build();
 
-      await deliver(rawBody, signature).expect(401);
+        await deliver(rawBody, signature).expect(401);
 
-      expect(
-        await inboxRowsOf(active.accountId, invalidKeyOf(rawBody)),
-      ).toEqual([
-        expect.objectContaining({ provider: 'stripe', signatureValid: false }),
-      ]);
-    });
+        expect(
+          await inboxRowsOf(active.accountId, invalidKeyOf(rawBody)),
+        ).toEqual([
+          expect.objectContaining({
+            provider: 'stripe',
+            signatureValid: false,
+          }),
+        ]);
+      },
+    );
 
     it('answers a missing header 401', async () => {
       await deliver(Buffer.from('{}'), undefined).expect(401);
@@ -804,7 +825,10 @@ describe('Stripe provider', () => {
       stubRefundAnswer(() =>
         Promise.resolve(
           jsonResponse(
-            errorBodyFixture('invalid_request_error', 'charge_already_refunded'),
+            errorBodyFixture(
+              'invalid_request_error',
+              'charge_already_refunded',
+            ),
             400,
           ),
         ),
@@ -931,7 +955,9 @@ describe('Stripe provider without configuration', () => {
     const [payment] = await db
       .select()
       .from(payments)
-      .where(eq(payments.id, (response.body as { paymentId: string }).paymentId));
+      .where(
+        eq(payments.id, (response.body as { paymentId: string }).paymentId),
+      );
     expect(payment.status).toBe('failed');
     expect(error).toHaveBeenCalledWith(
       expect.stringContaining('stripe secret key is not configured'),

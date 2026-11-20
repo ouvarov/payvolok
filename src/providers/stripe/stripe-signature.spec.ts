@@ -84,7 +84,9 @@ describe('isSignatureValid', () => {
     ['the Paddle separator', `t=${NOW_SECONDS};v1=${validV1}`],
     [
       'a colon in the signed payload',
-      `t=${NOW_SECONDS},v1=${createHmac('sha256', SECRET).update(`${NOW_SECONDS}:${RAW_BODY.toString('utf8')}`).digest('hex')}`,
+      `t=${NOW_SECONDS},v1=${createHmac('sha256', SECRET)
+        .update(`${NOW_SECONDS}:${RAW_BODY.toString('utf8')}`)
+        .digest('hex')}`,
     ],
     ['a truncated v1', `t=${NOW_SECONDS},v1=${validV1.slice(0, -1)}`],
     ['an uppercase v1', `t=${NOW_SECONDS},v1=${validV1.toUpperCase()}`],

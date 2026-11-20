@@ -337,7 +337,10 @@ describe('StripeProvider', () => {
 
     it.each([
       ['an unpaid session', createdSession()],
-      ['a session without a payment intent', paidSession({ payment_intent: null })],
+      [
+        'a session without a payment intent',
+        paidSession({ payment_intent: null }),
+      ],
       ['a session in another currency', paidSession({ currency: 'eur' })],
       ['an unknown session', missing()],
     ])('rejects %s without a POST', async (_case, response) => {
@@ -462,8 +465,9 @@ describe('StripeProvider', () => {
 
     it('does not read a 404 without resource_missing as unknown', async () => {
       const rejection = await rejectionOf(
-        providerWith(fetchAnswering(new Response('nope', { status: 404 })))
-          .getStatus(paymentQuery),
+        providerWith(
+          fetchAnswering(new Response('nope', { status: 404 })),
+        ).getStatus(paymentQuery),
       );
 
       expect(rejection.kind).toBe('unavailable');
@@ -591,19 +595,26 @@ describe('StripeProvider', () => {
     it.each([
       [
         'a list with more pages',
-        refundListFixture([refundFixture({ payment_intent: PAYMENT_INTENT_ID })], true),
+        refundListFixture(
+          [refundFixture({ payment_intent: PAYMENT_INTENT_ID })],
+          true,
+        ),
       ],
       [
         'a refund status it does not map',
         refundListFixture([
-          refundFixture({ payment_intent: PAYMENT_INTENT_ID, status: 'reversed' }),
+          refundFixture({
+            payment_intent: PAYMENT_INTENT_ID,
+            status: 'reversed',
+          }),
         ]),
       ],
       ['a list that fails the schema', { data: 'none' }],
     ])('treats %s as unavailable', async (_case, body) => {
       const rejection = await rejectionOf(
-        providerWith(fetchAnswering(paidSession(), jsonResponse(body)))
-          .listRefunds(SESSION_ID),
+        providerWith(
+          fetchAnswering(paidSession(), jsonResponse(body)),
+        ).listRefunds(SESSION_ID),
       );
 
       expect(rejection.kind).toBe('unavailable');
@@ -862,9 +873,9 @@ describe('StripeProvider', () => {
         ['an id that is not an event', { ...sessionEvent('x'), id: 'cs_1' }],
         ['a fractional created', { ...sessionEvent('x'), created: 1.5 }],
       ])('answers %s with one unknown event without a type', (_case, body) => {
-        expect(
-          unknownFrom(Buffer.from(JSON.stringify(body))),
-        ).toEqual([expect.objectContaining({ type: 'unknown', rawType: null })]);
+        expect(unknownFrom(Buffer.from(JSON.stringify(body)))).toEqual([
+          expect.objectContaining({ type: 'unknown', rawType: null }),
+        ]);
       });
 
       it.each(['constructor', '__proto__', 'toString'])(

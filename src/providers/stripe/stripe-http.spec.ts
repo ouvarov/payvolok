@@ -236,7 +236,11 @@ describe('stripe http', () => {
       ],
       [409, errorBodyFixture('idempotency_error', null), 'unavailable'],
       [424, errorBodyFixture('api_error', null), 'unavailable'],
-      [429, errorBodyFixture('invalid_request_error', 'rate_limit'), 'unavailable'],
+      [
+        429,
+        errorBodyFixture('invalid_request_error', 'rate_limit'),
+        'unavailable',
+      ],
       [500, errorBodyFixture('api_error', null), 'unavailable'],
       [502, null, 'unavailable'],
       [400, null, 'unavailable'],
