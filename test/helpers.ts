@@ -23,6 +23,7 @@ import { ProviderCredentialsResolver } from '@/provider-accounts/provider-creden
 import type { FakeWireBody } from '@/providers/fake/fake-wire-format';
 import { FakeProvider } from '@/providers/fake/fake.provider';
 import { PaddleProvider } from '@/providers/paddle/paddle.provider';
+import { StripeProvider } from '@/providers/stripe/stripe.provider';
 import { boundProviderOf } from '@/providers/bound-provider';
 import type {
   BoundProvider,
@@ -41,6 +42,7 @@ const LOCK_WAIT_DEADLINE_MS = 8000;
 const FAKE_SIGNATURE_HEADER = 'x-fake-signature';
 const SEED_FAKE_WEBHOOK_PATH = `/webhooks/fake/${SEED_FAKE_ACCOUNT_ID}`;
 const SEED_PADDLE_WEBHOOK_PATH = `/webhooks/paddle/${SEED_PADDLE_ACCOUNT_ID}`;
+const SEED_STRIPE_WEBHOOK_PATH = `/webhooks/stripe/${SEED_STRIPE_ACCOUNT_ID}`;
 
 const SEED_ACCOUNT_ID_BY_PROVIDER: Record<ProviderCode, string> = {
   fake: SEED_FAKE_ACCOUNT_ID,
@@ -68,6 +70,8 @@ type E2eAppOptions = {
   extraControllers?: Type<unknown>[];
   paddleEnv?: PaddleEnv;
   paddleProvider?: PaddleProvider;
+  stripeEnv?: StripeEnv;
+  stripeProvider?: StripeProvider;
   classOverrides?: ClassOverride[];
 };
 
@@ -78,6 +82,10 @@ type ClassOverride = {
 
 type PaddleEnv = Partial<
   Pick<Env, 'PADDLE_API_KEY' | 'PADDLE_WEBHOOK_SECRET' | 'PADDLE_CLIENT_TOKEN'>
+>;
+
+type StripeEnv = Partial<
+  Pick<Env, 'STRIPE_SECRET_KEY' | 'STRIPE_WEBHOOK_SECRET'>
 >;
 
 // A bound fake account that also signs deliveries with that account's secret.
@@ -112,6 +120,8 @@ const createE2eApp = async ({
   extraControllers = [],
   paddleEnv = {},
   paddleProvider,
+  stripeEnv = {},
+  stripeProvider,
   classOverrides = [],
 }: E2eAppOptions = {}): Promise<INestApplication> => {
   const env = validateEnv({
@@ -130,6 +140,7 @@ const createE2eApp = async ({
       ? {}
       : { FAKE_WEBHOOK_SECRET: fakeWebhookSecret }),
     ...paddleEnv,
+    ...stripeEnv,
   });
   const moduleBuilder = Test.createTestingModule({
     imports: [AppModule],
@@ -142,6 +153,9 @@ const createE2eApp = async ({
   }
   if (paddleProvider) {
     moduleBuilder.overrideProvider(PaddleProvider).useValue(paddleProvider);
+  }
+  if (stripeProvider) {
+    moduleBuilder.overrideProvider(StripeProvider).useValue(stripeProvider);
   }
   const moduleRef = await moduleBuilder.compile();
   const app = moduleRef.createNestApplication();
@@ -289,6 +303,7 @@ export {
   insertInboxEvent,
   SEED_FAKE_WEBHOOK_PATH,
   SEED_PADDLE_WEBHOOK_PATH,
+  SEED_STRIPE_WEBHOOK_PATH,
   seedColumnsOf,
   serverOf,
   TEST_API_KEY,
