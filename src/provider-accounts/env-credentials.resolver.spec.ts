@@ -8,23 +8,29 @@ import type {
   FakeCredentials,
   PaddleCredentials,
   ProviderCredentials,
+  StripeCredentials,
 } from '@/providers/provider-credentials';
 
 import { EnvCredentialsResolver } from './env-credentials.resolver';
 import {
   SEED_FAKE_ACCOUNT_ID,
   SEED_PADDLE_ACCOUNT_ID,
+  SEED_STRIPE_ACCOUNT_ID,
 } from './provider-accounts.constants';
 
 const PADDLE_API_KEY = `pdl_sdbx_apikey_${'k'.repeat(53)}`;
 const PADDLE_WEBHOOK_SECRET = 'pdl_ntfset_01jcsyntheticsecret00000001_Wiring';
 const PADDLE_CLIENT_TOKEN = `test_${'T0k'.repeat(9)}`;
 const FAKE_WEBHOOK_SECRET = 'f'.repeat(32);
+const STRIPE_SECRET_KEY = `sk_test_${'Wir1'.repeat(24)}`;
+const STRIPE_WEBHOOK_SECRET = 'whsec_SyntheticWiringSecret000001';
 const ALL_SECRETS = [
   PADDLE_API_KEY,
   PADDLE_WEBHOOK_SECRET,
   PADDLE_CLIENT_TOKEN,
   FAKE_WEBHOOK_SECRET,
+  STRIPE_SECRET_KEY,
+  STRIPE_WEBHOOK_SECRET,
 ];
 
 const PADDLE_ACCOUNT = {
@@ -37,12 +43,19 @@ const FAKE_ACCOUNT = {
   provider: 'fake' as const,
   credentialsRef: 'env:FAKE',
 };
+const STRIPE_ACCOUNT = {
+  id: SEED_STRIPE_ACCOUNT_ID,
+  provider: 'stripe' as const,
+  credentialsRef: 'env:STRIPE',
+};
 
 const FULL_ENV = {
   PADDLE_API_KEY,
   PADDLE_WEBHOOK_SECRET,
   PADDLE_CLIENT_TOKEN,
   FAKE_WEBHOOK_SECRET,
+  STRIPE_SECRET_KEY,
+  STRIPE_WEBHOOK_SECRET,
 };
 
 const resolverWith = (
@@ -101,6 +114,41 @@ describe('EnvCredentialsResolver', () => {
     });
   });
 
+  it('maps env:STRIPE to the STRIPE_* values', async () => {
+    const credentials = (await resolverWith(FULL_ENV).resolve(
+      STRIPE_ACCOUNT,
+    )) as StripeCredentials;
+
+    expect(credentials.provider).toBe('stripe');
+    expect(credentials.secretKey?.reveal()).toBe(STRIPE_SECRET_KEY);
+    expect(credentials.webhookSecrets.map((secret) => secret.reveal())).toEqual(
+      [STRIPE_WEBHOOK_SECRET],
+    );
+  });
+
+  it('maps unset STRIPE_* values to null and no webhook secrets', async () => {
+    await expect(resolverWith({}).resolve(STRIPE_ACCOUNT)).resolves.toEqual({
+      provider: 'stripe',
+      secretKey: null,
+      webhookSecrets: [],
+    });
+  });
+
+  it('prints the Stripe secret key as [redacted]', async () => {
+    const { secretKey } = (await resolverWith(FULL_ENV).resolve(
+      STRIPE_ACCOUNT,
+    )) as StripeCredentials;
+
+    for (const text of [
+      JSON.stringify({ secretKey }),
+      inspect(secretKey, { depth: null }),
+      `${String(secretKey)}`,
+    ]) {
+      expect(text).toContain('[redacted]');
+      expect(text).not.toContain(STRIPE_SECRET_KEY);
+    }
+  });
+
   it('maps env:FAKE to FAKE_WEBHOOK_SECRET', async () => {
     await expect(fakeSecretOf(resolverWith(FULL_ENV))).resolves.toEqual([
       FAKE_WEBHOOK_SECRET,
@@ -142,6 +190,7 @@ describe('EnvCredentialsResolver', () => {
 
   it.each([
     ['env:PADDLE', PADDLE_ACCOUNT],
+    ['env:STRIPE', STRIPE_ACCOUNT],
     ['env:FAKE', FAKE_ACCOUNT],
   ])(
     'prints %s credentials as [redacted] in JSON, inspect and text',

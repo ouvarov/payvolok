@@ -13,6 +13,7 @@ import type {
   ProviderCredentials,
 } from './provider-credentials';
 import type { ProviderCode } from './provider.constants';
+import { StripeProvider } from './stripe/stripe.provider';
 
 type ProviderAdapters = {
   [Code in ProviderCode]: PaymentProvider<CredentialsOf<Code>>;
@@ -28,8 +29,16 @@ type BindableAccount = {
 export class ProviderRegistry {
   private readonly adapters: ProviderAdapters;
 
-  constructor(fakeProvider: FakeProvider, paddleProvider: PaddleProvider) {
-    this.adapters = { fake: fakeProvider, paddle: paddleProvider };
+  constructor(
+    fakeProvider: FakeProvider,
+    paddleProvider: PaddleProvider,
+    stripeProvider: StripeProvider,
+  ) {
+    this.adapters = {
+      fake: fakeProvider,
+      paddle: paddleProvider,
+      stripe: stripeProvider,
+    };
   }
 
   bind(
@@ -48,6 +57,8 @@ export class ProviderRegistry {
         return boundProviderOf(account, this.adapters.fake, credentials);
       case 'paddle':
         return boundProviderOf(account, this.adapters.paddle, credentials);
+      case 'stripe':
+        return boundProviderOf(account, this.adapters.stripe, credentials);
     }
   }
 }
