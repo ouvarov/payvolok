@@ -21,7 +21,10 @@ import {
   signedStripeWebhook,
   type StripeSessionFixture,
 } from './fixtures/stripe-fixtures';
-import { STRIPE_API_VERSION } from './stripe-http';
+import {
+  STRIPE_API_VERSION,
+  STRIPE_MAX_REQUESTS_PER_CALL,
+} from './stripe-http';
 import { StripeProvider } from './stripe.provider';
 
 type FetchMock = jest.Mock<Promise<Response>, Parameters<typeof fetch>>;
@@ -108,6 +111,12 @@ const requestOf = (fetchFn: FetchMock, index: number) => {
   };
 };
 
+const expectWithinRequestBudget = (fetchFn: FetchMock): void => {
+  expect(fetchFn.mock.calls.length).toBeLessThanOrEqual(
+    STRIPE_MAX_REQUESTS_PER_CALL,
+  );
+};
+
 const rejectionOf = async (work: Promise<unknown>): Promise<ProviderError> => {
   const caught: unknown = await work.then(
     () => null,
@@ -165,6 +174,7 @@ describe('StripeProvider', () => {
         status: 'pending',
       });
       expect(fetchFn).toHaveBeenCalledTimes(1);
+      expectWithinRequestBudget(fetchFn);
       const request = requestOf(fetchFn, 0);
       expect(request).toMatchObject({
         method: 'POST',
@@ -286,6 +296,7 @@ describe('StripeProvider', () => {
         providerRefundId: REFUND_ID,
         status: 'succeeded',
       });
+      expectWithinRequestBudget(fetchFn);
       expect(requestOf(fetchFn, 0)).toMatchObject({
         method: 'GET',
         path: `/v1/checkout/sessions/${SESSION_ID}`,
@@ -440,6 +451,7 @@ describe('StripeProvider', () => {
           path: `/v1/checkout/sessions/${SESSION_ID}`,
           query: { 'expand[]': 'payment_intent' },
         });
+        expectWithinRequestBudget(fetchFn);
       },
     );
 
@@ -569,6 +581,7 @@ describe('StripeProvider', () => {
         path: '/v1/refunds',
         query: { payment_intent: PAYMENT_INTENT_ID, limit: '100' },
       });
+      expectWithinRequestBudget(fetchFn);
     });
 
     it('skips a refund of another payment intent', async () => {
