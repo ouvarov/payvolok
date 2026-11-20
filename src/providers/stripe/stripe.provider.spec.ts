@@ -247,7 +247,8 @@ describe('StripeProvider', () => {
     });
 
     it.each([
-      [400, 'invalid_request_error', 'parameter_invalid_integer', 'rejected'],
+      [400, 'invalid_request_error', 'amount_too_small', 'rejected'],
+      [400, 'invalid_request_error', 'parameter_unknown', 'misconfigured'],
       [401, 'invalid_request_error', null, 'misconfigured'],
       [409, 'idempotency_error', null, 'unavailable'],
       [500, 'api_error', null, 'unavailable'],

@@ -218,6 +218,21 @@ describe('stripe http', () => {
         errorBodyFixture('invalid_request_error', 'livemode_mismatch'),
         'misconfigured',
       ],
+      [
+        400,
+        errorBodyFixture('invalid_request_error', 'parameter_unknown'),
+        'misconfigured',
+      ],
+      [
+        400,
+        errorBodyFixture('invalid_request_error', 'parameter_missing'),
+        'misconfigured',
+      ],
+      [
+        400,
+        errorBodyFixture('invalid_request_error', 'parameter_invalid_empty'),
+        'misconfigured',
+      ],
       [402, errorBodyFixture('card_error', 'card_declined'), 'rejected'],
       [
         400,

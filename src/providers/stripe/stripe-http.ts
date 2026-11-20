@@ -38,6 +38,10 @@ const MISCONFIGURED_ERROR_CODES: ReadonlySet<string> = new Set([
   'testmode_charges_only',
   'account_invalid',
   'secret_key_required',
+  // Our own request is malformed: a retry with the same body fails the same way.
+  'parameter_unknown',
+  'parameter_missing',
+  'parameter_invalid_empty',
 ]);
 
 const HTTP_OK_MIN = 200;
