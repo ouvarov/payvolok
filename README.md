@@ -8,7 +8,7 @@ Pet project at an early stage. Sandbox only, no real money: it only talks to pro
 
 ## Status
 
-What exists: the payment and refund ingest core, the fake provider, the health routes, the webhook route, the webhook worker, `POST /api/v1/payments`, `GET /api/v1/payments/:id` and `POST /api/v1/payments/:paymentId/refunds`. `POST /webhooks/:provider/:providerAccountId` verifies the signature with that account's secret and stores the delivery in `webhook_events`; the worker then applies it to payments and refunds. The first real provider is Paddle, sandbox only, for one-off payments and refunds. Payment and refund reconciliation runs in every API process. API keys belong to projects, and each project sees only its own payments. More providers and subscriptions are planned.
+What exists: the payment and refund ingest core, the fake provider, the health routes, the webhook route, the webhook worker, `POST /api/v1/payments`, `GET /api/v1/payments/:id` and `POST /api/v1/payments/:paymentId/refunds`. `POST /webhooks/:provider/:providerAccountId` verifies the signature with that account's secret and stores the delivery in `webhook_events`; the worker then applies it to payments and refunds. The first real provider is Paddle, sandbox only, for one-off payments and refunds; Stripe follows in test mode only. Payment and refund reconciliation runs in every API process. API keys belong to projects, and each project sees only its own payments. More providers and subscriptions are planned.
 
 ## Stack
 
@@ -200,9 +200,9 @@ Migration `0008` adds the schedule columns. It must be applied to the production
 
 ## Projects and provider accounts
 
-Every payment, refund and idempotency key belongs to a project, and every payment, refund and webhook row to a provider account of that project. A project has at most one account per provider. For now there is one project, `payvolok-demo` (`5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a01`), with the Paddle account `5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a02` (credentials from the `PADDLE_*` variables). The API works in the project of the request's key and creates payments on that project's account for the provider; the webhook routes use the account in their URL. The `fake` account `5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a03` exists only where fake rows already existed when migration `0009` ran, or after `npm run db:seed:fake -- --target-host <host>`, where `<host>` must be the host of `DATABASE_URL`: the script prints the host it would write to and refuses a missing or different one, so a `.env` pointed at another database cannot get the account by mistake; without it `fake` payments answer `422 provider_not_available` and `POST /webhooks/fake` answers 404. Production has no fake account. The e2e setup seeds it after the migrations, together with a test API key and the return origins the tests use for the seed project.
+Every payment, refund and idempotency key belongs to a project, and every payment, refund and webhook row to a provider account of that project. A project has at most one account per provider. For now there is one project, `payvolok-demo` (`5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a01`), with the Paddle account `5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a02` (credentials from the `PADDLE_*` variables) and, from migration `0012`, the Stripe account `5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a05` (`STRIPE_*`, created `disabled`). The API works in the project of the request's key and creates payments on that project's account for the provider; the webhook routes use the account in their URL. The `fake` account `5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a03` exists only where fake rows already existed when migration `0009` ran, or after `npm run db:seed:fake -- --target-host <host>`, where `<host>` must be the host of `DATABASE_URL`: the script prints the host it would write to and refuses a missing or different one, so a `.env` pointed at another database cannot get the account by mistake; without it `fake` payments answer `422 provider_not_available` and `POST /webhooks/fake` answers 404. Production has no fake account. The e2e setup seeds it after the migrations, together with a test API key and the return origins the tests use for the seed project.
 
-Provider adapters keep no keys. Every provider call binds an account first: the account row names its credentials (`credentials_ref`), and `env:PADDLE` resolves to the `PADDLE_*` variables in the sandbox, `env:FAKE` to `FAKE_WEBHOOK_SECRET`. Credentials print as `[redacted]` in logs, JSON and errors. A webhook is checked against the secrets of the account in its URL, and every payment or refund it touches must belong to that account: an event naming another account's payment ends `ignored` after one attempt, with the reason in `last_error` and a warning that names the event and both accounts. A `disabled` account takes no new payments (`422 provider_not_available`) but keeps its webhooks, refunds, reconciliation and checkout page. Reconciliation skips an account whose provider or credentials fail and goes on with the others.
+Provider adapters keep no keys. Every provider call binds an account first: the account row names its credentials (`credentials_ref`), and `env:PADDLE` resolves to the `PADDLE_*` variables in the sandbox, `env:STRIPE` to the `STRIPE_*` variables in test mode, `env:FAKE` to `FAKE_WEBHOOK_SECRET`. Credentials print as `[redacted]` in logs, JSON and errors. A webhook is checked against the secrets of the account in its URL, and every payment or refund it touches must belong to that account: an event naming another account's payment ends `ignored` after one attempt, with the reason in `last_error` and a warning that names the event and both accounts. A `disabled` account takes no new payments (`422 provider_not_available`) but keeps its webhooks, refunds, reconciliation and checkout page. Reconciliation skips an account whose provider or credentials fail and goes on with the others.
 
 Provider payment ids, provider refund ids and webhook dedup keys are unique per account, not per provider, and a webhook moves only its own account's rows. An event naming an id that only another account holds is ignored, as above; it creates nothing on the webhook's account.
 
@@ -240,6 +240,38 @@ Manual sandbox setup:
 node --env-file=.env -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/paddle-sandbox-check.ts
 ```
 
+## Stripe
+
+`stripe` uses Stripe in test mode only, with Stripe-hosted Checkout for one-off payments and refunds. The account `5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a05` of the seed project (credentials `env:STRIPE`) is created `disabled` by migration `0012`, so it takes no payments until it is activated (see Deploy). Both variables are optional, and an empty value in `.env` counts as unset:
+
+- `STRIPE_SECRET_KEY`: a test secret key, `sk_test_…` (or a restricted `rk_test_…`). A live key or a publishable key fails boot, without the value in the error. Without it a `stripe` payment or refund answers `503 provider_unavailable`.
+- `STRIPE_WEBHOOK_SECRET` (`whsec_…`): the signing secret of the webhook destination. Without it the Stripe webhook route answers 503, so Stripe retries.
+
+The publishable key (`pk_test_…`) is not used: the server never renders Stripe.js, and the app ignores `STRIPE_PUBLISHABLE_KEY`.
+
+Every request sends the pinned API version `2026-10-28.endive` (`STRIPE_API_VERSION` in `src/providers/stripe/stripe-http.ts`). A payment creates a Checkout Session (`mode=payment`) in USD, EUR or UAH; any other currency is `422 order_rejected` without calling Stripe. The answer's `checkout.url` is Stripe's hosted page, and both its success and cancel links go back to `returnUrl`. The session id `cs_test_…` is the payment's provider id. A session lives 24 hours. A declined card produces no event: the page stays open and the buyer can try again.
+
+A refund refunds the session's payment intent and answers with Stripe's `re_…` id and status. Stripe refuses an amount above what is left (`422 refund_rejected`). Refund webhooks are not used: they name the payment intent, not the session. Refunds made in the Dashboard, and refunds whose status changes later, are recorded by reconciliation, which lists the payment intent's refunds daily, or 2 minutes after a refund request that did not get an answer.
+
+Test cards: `4242 4242 4242 4242` succeeds, `4000 0000 0000 0002` is declined; any future expiry and any CVC.
+
+Webhook destination (in Stripe Workbench, not through the API, which would print the secret):
+
+1. **Webhooks > Create an event destination > Your account**.
+2. Payload style **Snapshot**, API version `2026-10-28.endive`.
+3. Events: `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed` and `checkout.session.expired`, nothing else. Destination type: webhook endpoint.
+4. URL: `https://payvolok-api.onrender.com/webhooks/stripe/5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a05`.
+5. Reveal the signing secret and put it in `STRIPE_WEBHOOK_SECRET` on Render and in `.env`.
+
+Other events are stored and `ignored`, and so are live-mode events and sessions that are not `mode=payment` test sessions.
+
+`scripts/stripe-sandbox-check.ts` calls Stripe test mode by hand (never in tests or CI). Without arguments it creates a USD payment and prints its Checkout URL and status, tries to refund it unpaid, creates a UAH payment, refuses GBP, creates one with a 255-character description, tries an invalid key, and compares the webhook destinations with the pinned version and the four events. After paying that URL with `4242 4242 4242 4242`, `paid <cs_test_… id>` checks the paid status, a partial refund, the refund list, a refund above what is left, the refund status, and expires a new session. It never prints the key or a signing secret:
+
+```bash
+node --env-file=.env -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/stripe-sandbox-check.ts
+node --env-file=.env -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/stripe-sandbox-check.ts paid cs_test_...
+```
+
 ## Deploy
 
 `render.yaml` is a Render Blueprint for the API only: one Docker web service, `payvolok-api`, on the free plan in Frankfurt. Render: **New > Blueprint**, pick this repository, then fill the variables marked `sync: false`:
@@ -247,6 +279,7 @@ node --env-file=.env -r ts-node/register/transpile-only -r tsconfig-paths/regist
 - `DATABASE_URL`: the pooled Postgres address (the client does not use prepared statements, so a pooler works).
 - `PUBLIC_BASE_URL`: required to boot, so enter the expected service URL up front: `https://payvolok-api.onrender.com`. If the name is taken Render adds a suffix; then correct the value and redeploy.
 - `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET`, `PADDLE_CLIENT_TOKEN`: as in Paddle above. `PADDLE_WEBHOOK_SECRET` may stay blank on the first deploy (blank counts as unset): Paddle webhooks answer 503 until it is set.
+- `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`: as in Stripe above. Both may stay blank until the Stripe release is live.
 
 `PORT` is set by Render and read by the app; the other variables keep their defaults. `FAKE_WEBHOOK_SECRET` is left unset: each process then makes its own random secret.
 
@@ -272,6 +305,12 @@ Migration `0010` repeats the `0009` account fill for rows written in between, id
 Before the project keys release is merged, from that branch: run `npm run api-key:create -- --project payvolok-demo --name "render production"` with `DATABASE_URL` pointing at production and keep the printed key, and set the seed project's `allowed_return_origins` with the SQL in Create a payment (the origin of `PUBLIC_BASE_URL` for now). An empty list refuses every payment. After the deploy the old key answers 401 and the new one works.
 
 Migration `0011` finishes the move to projects. Apply it to `dev` and `production` once the project keys release is live, before its own pull request is merged; first run the "after" checks above, every count must be 0. It repeats the `0010` account fill, makes the account columns `NOT NULL`, drops the seed-project default from `project_id` (a row without a project is then an error), replaces the per-provider unique keys with the per-account ones that already exist, keys idempotency by `(project_id, scope, key)` and validates every foreign key added `NOT VALID` in `0009` and `0010`. A row the fill cannot give an account (no account of its provider in its project) makes it fail and roll back as a whole; fix that row and run it again. After it only the project keys release or newer runs: older code needs the dropped keys.
+
+Migration `0012` adds `stripe` to the providers an account may have and creates the seed project's Stripe account `5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a05` as `disabled`. It only widens a check and inserts one row (nothing when the row exists), so the code before it runs on it unchanged; apply it to `dev` and `production` before the Stripe pull request is merged. Rollback is code only. Then, in order: merge (Render deploys), set `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` on Render, create the webhook destination (Stripe above), check that a test webhook is answered 200 (the route verifies on a disabled account too), and activate the account:
+
+```sql
+UPDATE provider_accounts SET status = 'active' WHERE id = '5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a05';
+```
 
 Paddle must point at the account URLs, `POST /webhooks/paddle/<account id>` and `GET /checkout/paddle/<account id>`: the routes without an account answer 404.
 
