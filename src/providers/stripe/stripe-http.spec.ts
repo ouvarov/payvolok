@@ -233,6 +233,20 @@ describe('stripe http', () => {
         errorBodyFixture('invalid_request_error', 'parameter_invalid_empty'),
         'misconfigured',
       ],
+      [
+        400,
+        {
+          error: {
+            type: 'invalid_request_error',
+            code: null,
+            message: 'Invalid Stripe API version: 2099-01-01.bogus',
+          },
+        },
+        'misconfigured',
+      ],
+      [400, errorBodyFixture('invalid_request_error', null), 'misconfigured'],
+      [404, errorBodyFixture('invalid_request_error', null), 'rejected'],
+      [400, errorBodyFixture('api_error', null), 'rejected'],
       [402, errorBodyFixture('card_error', 'card_declined'), 'rejected'],
       [
         400,
