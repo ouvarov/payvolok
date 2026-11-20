@@ -33,7 +33,6 @@ const STRIPE_REQUEST_TIMEOUT_MS = 8000;
 const STRIPE_MAX_REQUESTS_PER_CALL = 2;
 const REQUEST_ID_HEADER = 'request-id';
 const IDEMPOTENCY_ERROR_TYPE = 'idempotency_error';
-const INVALID_REQUEST_ERROR_TYPE = 'invalid_request_error';
 const MISCONFIGURED_ERROR_CODES: ReadonlySet<string> = new Set([
   'livemode_mismatch',
   'testmode_charges_only',
@@ -50,7 +49,6 @@ const HTTP_OK_MAX = 299;
 const HTTP_CLIENT_ERROR_MIN = 400;
 const HTTP_CLIENT_ERROR_MAX = 499;
 const HTTP_SERVER_ERROR_MIN = 500;
-const HTTP_BAD_REQUEST = 400;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
 // 409: the idempotency key is in use by a request still running; 424: Stripe's own dependency failed.
@@ -172,14 +170,6 @@ const failureKindOf = (
   if (
     error.type === IDEMPOTENCY_ERROR_TYPE ||
     MISCONFIGURED_ERROR_CODES.has(error.code ?? '')
-  ) {
-    return 'misconfigured';
-  }
-  // Business refusals carry a code; a codeless one, such as a bad Stripe-Version, means our request is broken.
-  if (
-    status === HTTP_BAD_REQUEST &&
-    error.type === INVALID_REQUEST_ERROR_TYPE &&
-    !error.code
   ) {
     return 'misconfigured';
   }

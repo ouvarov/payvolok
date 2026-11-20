@@ -818,27 +818,36 @@ describe('Stripe provider', () => {
       expect(response.body).toMatchObject({ status: 'pending' });
     });
 
-    it('answers a refused refund 422 refund_rejected and stores no row', async () => {
-      muteLogs();
-      const payment = await succeededPayment();
-      stubPaidSession(payment);
-      stubRefundAnswer(() =>
-        Promise.resolve(
-          jsonResponse(
-            errorBodyFixture(
-              'invalid_request_error',
-              'charge_already_refunded',
-            ),
-            400,
-          ),
-        ),
-      );
+    it.each([
+      [
+        'a coded refusal',
+        errorBodyFixture('invalid_request_error', 'charge_already_refunded'),
+      ],
+      [
+        'a codeless refusal above the remaining amount',
+        {
+          error: {
+            type: 'invalid_request_error',
+            code: null,
+            message:
+              'Refund amount ($3.00) is greater than unrefunded amount on charge ($2.34)',
+          },
+        },
+      ],
+    ])(
+      'answers %s 422 refund_rejected and stores no row',
+      async (_case, body) => {
+        muteLogs();
+        const payment = await succeededPayment();
+        stubPaidSession(payment);
+        stubRefundAnswer(() => Promise.resolve(jsonResponse(body, 400)));
 
-      const response = await postRefund(payment.paymentId, 200).expect(422);
+        const response = await postRefund(payment.paymentId, 200).expect(422);
 
-      expect(response.body).toMatchObject({ code: 'refund_rejected' });
-      expect(await refundsOf(payment.paymentId)).toEqual([]);
-    });
+        expect(response.body).toMatchObject({ code: 'refund_rejected' });
+        expect(await refundsOf(payment.paymentId)).toEqual([]);
+      },
+    );
 
     it('answers a timed-out refund 503, stores no row and checks again within 2 minutes', async () => {
       muteLogs();

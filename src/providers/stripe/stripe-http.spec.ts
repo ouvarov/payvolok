@@ -239,14 +239,35 @@ describe('stripe http', () => {
           error: {
             type: 'invalid_request_error',
             code: null,
+            message:
+              'Refund amount ($7.35) is greater than charge amount ($7.34)',
+          },
+        },
+        'rejected',
+      ],
+      [
+        400,
+        {
+          error: {
+            type: 'invalid_request_error',
+            code: null,
+            message:
+              'Refund amount ($3.00) is greater than unrefunded amount on charge ($2.34)',
+          },
+        },
+        'rejected',
+      ],
+      [
+        400,
+        {
+          error: {
+            type: 'invalid_request_error',
+            code: null,
             message: 'Invalid Stripe API version: 2099-01-01.bogus',
           },
         },
-        'misconfigured',
+        'rejected',
       ],
-      [400, errorBodyFixture('invalid_request_error', null), 'misconfigured'],
-      [404, errorBodyFixture('invalid_request_error', null), 'rejected'],
-      [400, errorBodyFixture('api_error', null), 'rejected'],
       [402, errorBodyFixture('card_error', 'card_declined'), 'rejected'],
       [
         400,
