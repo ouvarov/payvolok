@@ -272,16 +272,20 @@ describe('stripe http', () => {
       );
     });
 
-    it('keeps neither the key nor Stripe text of a 401', () => {
-      const stripeText = `Invalid API Key provided: ${SECRET_KEY.slice(0, 12)}****${SECRET_KEY.slice(-4)}`;
+    it.each([
+      [401, 'Invalid API Key provided'],
+      [403, 'The provided key does not have the required permissions'],
+    ])('keeps neither the key nor Stripe text of a %i', (status, prefix) => {
+      const stripeText = `${prefix}: ${SECRET_KEY.slice(0, 12)}****${SECRET_KEY.slice(-4)}`;
 
       const error = errorOf(
-        401,
+        status,
         errorBodyFixture('invalid_request_error', null, stripeText),
       );
 
+      expect(error.kind).toBe('misconfigured');
       expect(error.message).toBe(
-        `stripe 401 invalid_request_error/none (request ${REQUEST_ID})`,
+        `stripe ${status} invalid_request_error/none (request ${REQUEST_ID})`,
       );
       expect(error.cause).toEqual({
         type: 'invalid_request_error',
@@ -292,7 +296,7 @@ describe('stripe http', () => {
         JSON.stringify(error.cause),
         inspect(error, { depth: null }),
       ]) {
-        expect(text).not.toContain('Invalid API Key');
+        expect(text).not.toContain(prefix);
         expect(text).not.toContain(SECRET_KEY.slice(-4));
       }
     });

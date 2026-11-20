@@ -187,12 +187,16 @@ const stripeErrorOf = (response: StripeResponse): ProviderError => {
   const { error } = errorBody.data;
   const kind = failureKindOf(response.status, error);
   const errorLabel = `${error.type}/${error.code ?? 'none'}`;
-  // Stripe's 401 text quotes part of the key that was sent.
-  if (response.status === HTTP_UNAUTHORIZED) {
-    return stripeError(`stripe 401 ${errorLabel} ${requestLabel}`, kind, {
-      type: error.type,
-      code: error.code ?? null,
-    });
+  // Stripe's 401 and 403 texts quote part of the key that was sent.
+  if (
+    response.status === HTTP_UNAUTHORIZED ||
+    response.status === HTTP_FORBIDDEN
+  ) {
+    return stripeError(
+      `stripe ${response.status} ${errorLabel} ${requestLabel}`,
+      kind,
+      { type: error.type, code: error.code ?? null },
+    );
   }
 
   return stripeError(
