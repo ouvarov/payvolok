@@ -111,6 +111,8 @@ Errors under `/api/` are JSON of one shape, with a stable `code`:
 }
 ```
 
+A browser POST from another site (`Sec-Fetch-Site: cross-site`, or an `Origin` that is neither this API nor `WEB_ORIGIN`) answers `403` with `code: "forbidden"`; requests without those headers, such as server-to-server calls, are not affected. Too many requests answer `429` with `code: "rate_limited"`.
+
 A 400 for an invalid body has `code: "validation_failed"` and `issues: [{ "field", "messages" }]`. Unknown fields are refused, not ignored.
 
 ### Create a payment
