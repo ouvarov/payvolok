@@ -12,7 +12,7 @@ const sendPage = (response: Response, page: CheckoutPage): string => {
   return page.html;
 };
 
-// Paddle's default payment link points buyers here; replaced by web/ in 4.1.
+// Paddle's default payment link points buyers here.
 @RouteAccess('public')
 @Controller('checkout/paddle')
 export class PaddleCheckoutController {
