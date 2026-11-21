@@ -2,9 +2,11 @@ import { validateEnv } from './env.schema';
 
 const VALID_DATABASE_URL = 'postgres://user:pass@localhost:5432/db';
 const VALID_PUBLIC_BASE_URL = 'https://payvolok.example.test';
+const VALID_WEB_ORIGIN = 'https://web.payvolok.example.test';
 const VALID_ENV = {
   DATABASE_URL: VALID_DATABASE_URL,
   PUBLIC_BASE_URL: VALID_PUBLIC_BASE_URL,
+  WEB_ORIGIN: VALID_WEB_ORIGIN,
 };
 
 describe('validateEnv', () => {
@@ -14,6 +16,7 @@ describe('validateEnv', () => {
       PORT: 3000,
       DATABASE_URL: VALID_DATABASE_URL,
       PUBLIC_BASE_URL: VALID_PUBLIC_BASE_URL,
+      WEB_ORIGIN: VALID_WEB_ORIGIN,
       DATABASE_POOL_MAX: 10,
       WEBHOOK_WORKER_ENABLED: true,
       WEBHOOK_POLL_INTERVAL_MS: 5000,
@@ -99,6 +102,40 @@ describe('validateEnv', () => {
         validateEnv({ ...VALID_ENV, PUBLIC_BASE_URL: value }).PUBLIC_BASE_URL,
       ).toBe(publicBaseUrl);
     });
+  });
+
+  describe('WEB_ORIGIN', () => {
+    it('is required, naming the key', () => {
+      const { WEB_ORIGIN: _webOrigin, ...envWithoutWebOrigin } = VALID_ENV;
+
+      expect(() => validateEnv(envWithoutWebOrigin)).toThrow(/WEB_ORIGIN/);
+    });
+
+    it.each([
+      ['empty', ''],
+      ['not a url', 'payvolok.vercel.app'],
+      ['another scheme', 'ftp://payvolok.example.test'],
+      ['no host', 'https://'],
+      ['a trailing slash', 'https://x.app/'],
+      ['a path', 'https://x.app/demo'],
+      ['a query', 'https://x.app?a=1'],
+      ['credentials', 'https://user:pass@x.app'],
+      ['upper case', 'https://X.app'],
+      ['the default port', 'https://x.app:443'],
+    ])('rejects %s, naming the key', (_case, value) => {
+      expect(() => validateEnv({ ...VALID_ENV, WEB_ORIGIN: value })).toThrow(
+        /WEB_ORIGIN/,
+      );
+    });
+
+    it.each(['https://app.example.test', 'http://localhost:5173'])(
+      'accepts %s as it is',
+      (value) => {
+        expect(
+          validateEnv({ ...VALID_ENV, WEB_ORIGIN: value }).WEB_ORIGIN,
+        ).toBe(value);
+      },
+    );
   });
 
   describe('FAKE_WEBHOOK_SECRET', () => {
