@@ -19,10 +19,15 @@ type GenericError = Pick<ApiErrorBody, 'code' | 'message'>;
 const GENERIC_ERROR_BY_STATUS: Readonly<Record<number, GenericError>> = {
   [HttpStatus.BAD_REQUEST]: { code: 'bad_request', message: 'Bad request' },
   [HttpStatus.UNAUTHORIZED]: { code: 'unauthorized', message: 'Unauthorized' },
+  [HttpStatus.FORBIDDEN]: { code: 'forbidden', message: 'Forbidden' },
   [HttpStatus.NOT_FOUND]: { code: 'not_found', message: 'Not found' },
   [HttpStatus.PAYLOAD_TOO_LARGE]: {
     code: 'payload_too_large',
     message: 'Payload too large',
+  },
+  [HttpStatus.TOO_MANY_REQUESTS]: {
+    code: 'rate_limited',
+    message: 'Too many requests',
   },
 };
 const FALLBACK_GENERIC_ERROR: GenericError = {

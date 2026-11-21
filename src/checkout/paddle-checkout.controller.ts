@@ -21,6 +21,10 @@ export class PaddleCheckoutController {
   @Get(':providerAccountId')
   @Header('Content-Type', 'text/html; charset=utf-8')
   @Header('Cache-Control', 'no-store')
+  // Paddle.js checks the page's domain through the referrer.
+  @Header('Referrer-Policy', 'strict-origin-when-cross-origin')
+  // 3-D Secure and PayPal open popups that must keep a handle to this page.
+  @Header('Cross-Origin-Opener-Policy', 'same-origin-allow-popups')
   async page(
     @Param('providerAccountId') providerAccountId: string,
     @Res({ passthrough: true }) response: Response,
