@@ -4,6 +4,7 @@ import {
   Controller,
   HttpException,
   HttpStatus,
+  Logger,
   Post,
   type INestApplication,
 } from '@nestjs/common';
@@ -75,6 +76,10 @@ describe('HTTP security', () => {
     await app.close();
   });
 
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   describe('security headers', () => {
     it.each([
       ['an /api/v1 route', () => request(serverOf(app)).get(PAYMENTS_PATH)],
@@ -117,6 +122,25 @@ describe('HTTP security', () => {
           .from(idempotencyKeys)
           .where(eq(idempotencyKeys.key, idempotencyKey)),
       ).toEqual([]);
+    });
+
+    it('warns once about a cross-site POST with its origin and sec-fetch-site, never its key', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+
+      await postPayment()
+        .set('Sec-Fetch-Site', 'cross-site')
+        .set('Origin', 'https://evil.test')
+        .set('Authorization', `Bearer ${TEST_API_KEY}`)
+        .send(paymentBody(randomInt(10_000, 10_000_000) * 100))
+        .expect(403);
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      const [message] = warn.mock.calls[0] as [string];
+      expect(message).toContain(`Forbidden POST ${PAYMENTS_PATH}`);
+      expect(message).toContain('origin "https://evil.test"');
+      expect(message).toContain('sec-fetch-site "cross-site"');
+      expect(message).not.toContain(TEST_API_KEY);
+      expect(message).not.toContain('cross-site order');
     });
 
     it('lets a same-origin POST reach the API key guard', async () => {

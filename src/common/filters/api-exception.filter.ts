@@ -53,6 +53,9 @@ export class ApiExceptionFilter extends BaseExceptionFilter {
     }
 
     const body = this.toApiErrorBody(exception);
+    if (body.statusCode === Number(HttpStatus.FORBIDDEN)) {
+      this.warnForbidden(exception, http.getRequest<Request>());
+    }
     const response = http.getResponse<Response>();
     if (response.headersSent) {
       response.end();
@@ -63,6 +66,19 @@ export class ApiExceptionFilter extends BaseExceptionFilter {
       response.setHeader('WWW-Authenticate', 'Bearer');
     }
     response.status(body.statusCode).json(body);
+  }
+
+  // Header values come from the client, so they are quoted to keep the log line one line.
+  private warnForbidden(exception: unknown, request: Request): void {
+    const reason = exception instanceof Error ? exception.message : 'unknown';
+    const origin = JSON.stringify(request.headers.origin ?? null);
+    const secFetchSite = JSON.stringify(
+      request.headers['sec-fetch-site'] ?? null,
+    );
+
+    this.logger.warn(
+      `Forbidden ${request.method} ${request.path}: ${reason} (origin ${origin}, sec-fetch-site ${secFetchSite})`,
+    );
   }
 
   private toApiErrorBody(exception: unknown): ApiErrorBody {
