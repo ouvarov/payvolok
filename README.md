@@ -24,7 +24,7 @@ The repository root is the API. A web frontend will live in `web/` later.
 
 ## Run locally
 
-Copy `.env.example` to `.env` first. The app refuses to start when `DATABASE_URL` is missing or is not a Postgres URL, or when `PUBLIC_BASE_URL` is missing or is not an http or https URL. `PUBLIC_BASE_URL` is where providers reach this API: payments ask them to send webhooks to `{PUBLIC_BASE_URL}/webhooks/{provider}/{providerAccountId}`.
+Copy `.env.example` to `.env` first. The app refuses to start when `DATABASE_URL` is missing or is not a Postgres URL, or when `PUBLIC_BASE_URL` is missing or is not an http or https URL, or when `WEB_ORIGIN` is missing or is not a bare http or https origin (no path, not even a trailing slash). `PUBLIC_BASE_URL` is where providers reach this API: payments ask them to send webhooks to `{PUBLIC_BASE_URL}/webhooks/{provider}/{providerAccountId}`.
 
 ### With Docker
 
@@ -274,10 +274,11 @@ node --env-file=.env -r ts-node/register/transpile-only -r tsconfig-paths/regist
 
 ## Deploy
 
-`render.yaml` is a Render Blueprint for the API only: one Docker web service, `payvolok-api`, on the free plan in Frankfurt. Render: **New > Blueprint**, pick this repository, then fill the variables marked `sync: false`:
+`render.yaml` is a Render Blueprint for the API only: one Docker web service, `payvolok-api`, on the free plan in Frankfurt. Commits that change only `web/` do not deploy it. Render: **New > Blueprint**, pick this repository, then fill the variables marked `sync: false`:
 
 - `DATABASE_URL`: the pooled Postgres address (the client does not use prepared statements, so a pooler works).
 - `PUBLIC_BASE_URL`: required to boot, so enter the expected service URL up front: `https://payvolok-api.onrender.com`. If the name is taken Render adds a suffix; then correct the value and redeploy.
+- `WEB_ORIGIN`: required to boot: the origin of the web app on Vercel, such as `https://<project>.vercel.app`, without a trailing slash. Browser POSTs carrying that `Origin` pass the cross-origin check; other cross-site browser POSTs answer `403`.
 - `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET`, `PADDLE_CLIENT_TOKEN`: as in Paddle above. `PADDLE_WEBHOOK_SECRET` may stay blank on the first deploy (blank counts as unset): Paddle webhooks answer 503 until it is set.
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`: as in Stripe above. Both may stay blank until the Stripe release is live.
 
