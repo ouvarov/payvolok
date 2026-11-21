@@ -13,6 +13,7 @@ import {
   SEED_FAKE_CREDENTIALS_REF,
   SEED_PADDLE_ACCOUNT_ID,
   SEED_PADDLE_CREDENTIALS_REF,
+  SEED_STRIPE_ACCOUNT_ID,
 } from '@/provider-accounts/provider-accounts.constants';
 
 import { MIGRATIONS_FOLDER } from './apply-migrations';
@@ -104,7 +105,7 @@ const rowsOf = async <T>(database: PGlite, query: string): Promise<T[]> =>
 const accountsOf = (database: PGlite): Promise<AccountRow[]> =>
   rowsOf<AccountRow>(
     database,
-    'select id, project_id, provider, status, credentials_ref from provider_accounts order by provider',
+    `select id, project_id, provider, status, credentials_ref from provider_accounts where id <> '${SEED_STRIPE_ACCOUNT_ID}' order by provider`,
   );
 
 const accountIdsOf = (

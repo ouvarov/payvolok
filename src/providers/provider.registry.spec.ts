@@ -3,6 +3,7 @@ import { PaddleProvider } from './paddle/paddle.provider';
 import { ProviderError } from './payment-provider.port';
 import { RedactedSecret } from './provider-credentials';
 import { ProviderRegistry } from './provider.registry';
+import { StripeProvider } from './stripe/stripe.provider';
 
 const SECRET = new RedactedSecret('s'.repeat(32));
 const FAKE_ACCOUNT = {
@@ -19,7 +20,12 @@ const RAW_BODY = Buffer.from('{"eventId":"event-1"}');
 describe('ProviderRegistry', () => {
   const fakeProvider = new FakeProvider();
   const paddleProvider = new PaddleProvider();
-  const registry = new ProviderRegistry(fakeProvider, paddleProvider);
+  const stripeProvider = new StripeProvider();
+  const registry = new ProviderRegistry(
+    fakeProvider,
+    paddleProvider,
+    stripeProvider,
+  );
 
   it('binds an account to its adapter, ids and credentials', async () => {
     const bound = registry.bind(FAKE_ACCOUNT, FAKE_CREDENTIALS);
@@ -50,6 +56,16 @@ describe('ProviderRegistry', () => {
 
     expect(bound.code).toBe('paddle');
     expect(bound.capabilities).toBe(paddleProvider.capabilities);
+  });
+
+  it('binds a Stripe account to the Stripe adapter', () => {
+    const bound = registry.bind(
+      { ...FAKE_ACCOUNT, provider: 'stripe' },
+      { provider: 'stripe', secretKey: null, webhookSecrets: [] },
+    );
+
+    expect(bound.code).toBe('stripe');
+    expect(bound.capabilities).toBe(stripeProvider.capabilities);
   });
 
   it('refuses credentials of another provider as misconfigured', () => {

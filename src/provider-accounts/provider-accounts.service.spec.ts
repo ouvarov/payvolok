@@ -6,6 +6,7 @@ import {
   type ProviderCredentials,
 } from '@/providers/provider-credentials';
 import { ProviderRegistry } from '@/providers/provider.registry';
+import { StripeProvider } from '@/providers/stripe/stripe.provider';
 
 import {
   SEED_FAKE_ACCOUNT_ID,
@@ -72,7 +73,11 @@ const serviceWith = (collaborators: Collaborators): ProviderAccountsService =>
       findByProjectAndProvider: collaborators.findByProjectAndProvider,
     } as unknown as ProviderAccountsRepository,
     { resolve: collaborators.resolve },
-    new ProviderRegistry(new FakeProvider(), new PaddleProvider()),
+    new ProviderRegistry(
+      new FakeProvider(),
+      new PaddleProvider(),
+      new StripeProvider(),
+    ),
   );
 
 describe('ProviderAccountsService', () => {

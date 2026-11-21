@@ -10,11 +10,13 @@ import {
   type FakeCredentials,
   type PaddleCredentials,
   type ProviderCredentials,
+  type StripeCredentials,
 } from '@/providers/provider-credentials';
 
 import {
   SEED_FAKE_CREDENTIALS_REF,
   SEED_PADDLE_CREDENTIALS_REF,
+  SEED_STRIPE_CREDENTIALS_REF,
 } from './provider-accounts.constants';
 import {
   ProviderCredentialsResolver,
@@ -44,6 +46,22 @@ const paddleCredentialsOf = (
   };
 };
 
+const stripeCredentialsOf = (
+  configService: ConfigService<Env, true>,
+): StripeCredentials => {
+  const webhookSecret = secretOrNull(
+    configService.get('STRIPE_WEBHOOK_SECRET', { infer: true }),
+  );
+
+  return {
+    provider: 'stripe',
+    secretKey: secretOrNull(
+      configService.get('STRIPE_SECRET_KEY', { infer: true }),
+    ),
+    webhookSecrets: webhookSecret ? [webhookSecret] : [],
+  };
+};
+
 const fakeCredentialsOf = (
   configService: ConfigService<Env, true>,
 ): FakeCredentials => {
@@ -69,6 +87,7 @@ export class EnvCredentialsResolver extends ProviderCredentialsResolver {
     super();
     this.credentialsByRef = new Map<string, ProviderCredentials>([
       [SEED_PADDLE_CREDENTIALS_REF, paddleCredentialsOf(configService)],
+      [SEED_STRIPE_CREDENTIALS_REF, stripeCredentialsOf(configService)],
       [SEED_FAKE_CREDENTIALS_REF, fakeCredentialsOf(configService)],
     ]);
   }
