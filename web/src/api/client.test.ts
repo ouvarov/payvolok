@@ -37,15 +37,33 @@ describe('requestApi', () => {
     });
   });
 
-  it('treats an answer that is not JSON as unreachable', async () => {
+  it('keeps the status of an answer that is not JSON, without a body', async () => {
     answerWith(
       new Response('<html></html>', {
+        status: 500,
         headers: { 'Content-Type': 'text/html' },
       }),
     );
 
     await expect(requestApi('/api/health')).resolves.toEqual({
-      kind: 'unreachable',
+      kind: 'response',
+      status: 500,
+      body: undefined,
+    });
+  });
+
+  it('keeps the status of a JSON answer that fails to parse, without a body', async () => {
+    answerWith(
+      new Response('{"code":', {
+        status: 429,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    await expect(requestApi('/api/demo/payments')).resolves.toEqual({
+      kind: 'response',
+      status: 429,
+      body: undefined,
     });
   });
 

@@ -28,8 +28,9 @@ describe('checkHealth', () => {
     ['an aborted attempt', () => Promise.reject(abortError())],
     ['502', () => Promise.resolve(html(502))],
     ['503', () => Promise.resolve(json(503, { status: 'unavailable' }))],
+    ['an HTML 503', () => Promise.resolve(html(503))],
     ['504', () => Promise.resolve(html(504))],
-    ['200 text/html', () => Promise.resolve(html(200))],
+    ['an HTML 200 such as the wake page', () => Promise.resolve(html(200))],
     ['200 {}', () => Promise.resolve(json(200, {}))],
     [
       '200 with a broken JSON body',
@@ -60,6 +61,14 @@ describe('checkHealth', () => {
     answerHealthWith(() =>
       Promise.resolve(json(500, { statusCode: 500, code: 'internal_error' })),
     );
+
+    await expect(checkHealth(new AbortController().signal)).resolves.toBe(
+      'error',
+    );
+  });
+
+  it('reports an HTML 500 as an error', async () => {
+    answerHealthWith(() => Promise.resolve(html(500)));
 
     await expect(checkHealth(new AbortController().signal)).resolves.toBe(
       'error',
