@@ -1,0 +1,96 @@
+@use 'sass:map';
+@use 'themes-data' as data;
+
+@mixin assert-keys($reference, $map, $label) {
+  @each $key in map.keys($reference) {
+    @if not map.has-key($map, $key) {
+      @error '#{$label} has no #{$key}';
+    }
+  }
+}
+
+@mixin theme-properties($name) {
+  $colors: map.get(data.$themes, $name);
+  $statuses: map.get(data.$status-themes, $name);
+  $status-parts: (fg, bg, solid);
+
+  @include assert-keys(map.get(data.$themes, light), $colors, 'Theme #{$name}');
+  @include assert-keys(
+    map.get(data.$status-themes, light),
+    $statuses,
+    'Status theme #{$name}'
+  );
+
+  @each $key, $value in $colors {
+    --#{$key}: #{$value};
+  }
+
+  @each $status, $parts in $statuses {
+    @each $part in $status-parts {
+      @if not map.has-key($parts, $part) {
+        @error 'Status #{$status} in #{$name} has no #{$part}';
+      }
+
+      --status-#{$status}-#{$part}: #{map.get($parts, $part)};
+    }
+  }
+}
+
+:root {
+  @include theme-properties(light);
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    @include theme-properties(dark);
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  @include text(body);
+
+  margin: 0;
+  font-family: $font-sans;
+  color: theme(ink);
+  background: theme(paper);
+}
+
+#root {
+  isolation: isolate;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+:focus-visible {
+  @include focus-ring;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* stylelint-disable declaration-no-important -- reduced motion must win over every component animation */
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+  /* stylelint-enable declaration-no-important */
+}

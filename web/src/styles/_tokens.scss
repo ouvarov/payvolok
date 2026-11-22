@@ -1,0 +1,62 @@
+$indent-xs: 4px;
+$indent-sm: 8px;
+$indent-ms: 12px;
+$indent-md: 16px;
+$indent-lg: 24px;
+$indent-xl: 32px;
+$indent-2xl: 48px;
+$indent-3xl: 64px;
+$radius-sm: 4px;
+$radius-md: 6px;
+$radius-lg: 8px;
+$radius-full: 9999px;
+$duration-fast: 150ms;
+$duration-slow: 300ms;
+$border-width: 1px;
+$focus-ring-width: 2px;
+$content-width: 640px;
+$breakpoints: (
+  sm: 480px,
+  md: 768px,
+  lg: 1024px,
+  xl: 1280px,
+);
+$z-layers: (
+  base: 0,
+  sticky: 10,
+  overlay: 100,
+);
+$font-sans: system-ui, sans-serif;
+$font-mono: ui-monospace, monospace;
+$font-weights: (
+  regular: 400,
+  medium: 500,
+  semibold: 600,
+  bold: 700,
+);
+$typography: (
+  caption: (
+    size: 12px,
+    line: 16px,
+  ),
+  small: (
+    size: 13px,
+    line: 18px,
+  ),
+  body: (
+    size: 14px,
+    line: 20px,
+  ),
+  body-lg: (
+    size: 16px,
+    line: 24px,
+  ),
+  title: (
+    size: 20px,
+    line: 28px,
+  ),
+  display: (
+    size: 28px,
+    line: 36px,
+  ),
+);
