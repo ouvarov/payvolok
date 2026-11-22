@@ -9,3 +9,4 @@ coverage
 .tmp*
 Dockerfile
 docker-compose.yml
+web

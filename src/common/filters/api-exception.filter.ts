@@ -19,10 +19,15 @@ type GenericError = Pick<ApiErrorBody, 'code' | 'message'>;
 const GENERIC_ERROR_BY_STATUS: Readonly<Record<number, GenericError>> = {
   [HttpStatus.BAD_REQUEST]: { code: 'bad_request', message: 'Bad request' },
   [HttpStatus.UNAUTHORIZED]: { code: 'unauthorized', message: 'Unauthorized' },
+  [HttpStatus.FORBIDDEN]: { code: 'forbidden', message: 'Forbidden' },
   [HttpStatus.NOT_FOUND]: { code: 'not_found', message: 'Not found' },
   [HttpStatus.PAYLOAD_TOO_LARGE]: {
     code: 'payload_too_large',
     message: 'Payload too large',
+  },
+  [HttpStatus.TOO_MANY_REQUESTS]: {
+    code: 'rate_limited',
+    message: 'Too many requests',
   },
 };
 const FALLBACK_GENERIC_ERROR: GenericError = {
@@ -48,6 +53,9 @@ export class ApiExceptionFilter extends BaseExceptionFilter {
     }
 
     const body = this.toApiErrorBody(exception);
+    if (body.statusCode === Number(HttpStatus.FORBIDDEN)) {
+      this.warnForbidden(exception, http.getRequest<Request>());
+    }
     const response = http.getResponse<Response>();
     if (response.headersSent) {
       response.end();
@@ -58,6 +66,19 @@ export class ApiExceptionFilter extends BaseExceptionFilter {
       response.setHeader('WWW-Authenticate', 'Bearer');
     }
     response.status(body.statusCode).json(body);
+  }
+
+  // Header values come from the client, so they are quoted to keep the log line one line.
+  private warnForbidden(exception: unknown, request: Request): void {
+    const reason = exception instanceof Error ? exception.message : 'unknown';
+    const origin = JSON.stringify(request.headers.origin ?? null);
+    const secFetchSite = JSON.stringify(
+      request.headers['sec-fetch-site'] ?? null,
+    );
+
+    this.logger.warn(
+      `Forbidden ${request.method} ${request.path}: ${reason} (origin ${origin}, sec-fetch-site ${secFetchSite})`,
+    );
   }
 
   private toApiErrorBody(exception: unknown): ApiErrorBody {

@@ -17,6 +17,12 @@ const envSchema = z.object({
   PUBLIC_BASE_URL: z
     .url({ protocol: /^https?$/, hostname: /.+/ })
     .transform((url) => url.replace(/\/+$/, '')),
+  // Compared verbatim with the browser's Origin header, so it must already be in that form.
+  WEB_ORIGIN: z
+    .url({ protocol: /^https?$/, hostname: /.+/ })
+    .refine((url) => URL.canParse(url) && new URL(url).origin === url, {
+      message: 'Must be an origin such as https://app.example, without a path',
+    }),
   FAKE_WEBHOOK_SECRET: z.string().min(32).optional(),
   PADDLE_API_KEY: optionalUnlessBlank(/^pdl_sdbx_apikey_\S+$/),
   PADDLE_WEBHOOK_SECRET: optionalUnlessBlank(/^pdl_ntfset_\S+$/),

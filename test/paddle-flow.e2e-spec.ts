@@ -507,6 +507,19 @@ describe('Paddle provider', () => {
         }),
       ]);
     });
+
+    it('answers 200 and stores a signed delivery without Origin or Sec-Fetch-Site', async () => {
+      const event = transactionEventFixture('event-transaction-paid');
+      event.event_id = syntheticPaddleId('evt');
+
+      const response = await deliverSigned(event).expect(200);
+
+      expect(response.request.getHeader('origin')).toBeUndefined();
+      expect(response.request.getHeader('sec-fetch-site')).toBeUndefined();
+      expect(await inboxRowsWithKey(event.event_id)).toEqual([
+        expect.objectContaining({ provider: 'paddle', signatureValid: true }),
+      ]);
+    });
   });
 
   describe('the retired routes without an account', () => {
@@ -573,6 +586,27 @@ describe('Paddle provider', () => {
         nonce,
       );
       expect(second.text).toContain(`token: "${CLIENT_TOKEN}"`);
+    });
+
+    it('keeps its own CSP and sets the referrer and opener policies Paddle.js needs', async () => {
+      const response = await request(serverOf(app))
+        .get(`/checkout/paddle/${SEED_PADDLE_ACCOUNT_ID}`)
+        .expect(200);
+
+      const contentSecurityPolicy = response.headers['content-security-policy'];
+      expect(contentSecurityPolicy).toMatch(
+        /(^|; )script-src [^;]*https:\/\/cdn\.paddle\.com/,
+      );
+      expect(contentSecurityPolicy).toMatch(
+        /(^|; )frame-src [^;]*https:\/\/\*\.paddle\.com/,
+      );
+      expect(response.headers['referrer-policy']).toBe(
+        'strict-origin-when-cross-origin',
+      );
+      expect(response.headers['cross-origin-opener-policy']).toBe(
+        'same-origin-allow-popups',
+      );
+      expect(response.headers['x-content-type-options']).toBe('nosniff');
     });
 
     it.each([

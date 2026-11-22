@@ -12,7 +12,7 @@ const sendPage = (response: Response, page: CheckoutPage): string => {
   return page.html;
 };
 
-// Paddle's default payment link points buyers here; replaced by web/ in 4.1.
+// Paddle's default payment link points buyers here.
 @RouteAccess('public')
 @Controller('checkout/paddle')
 export class PaddleCheckoutController {
@@ -21,6 +21,10 @@ export class PaddleCheckoutController {
   @Get(':providerAccountId')
   @Header('Content-Type', 'text/html; charset=utf-8')
   @Header('Cache-Control', 'no-store')
+  // Paddle.js checks the page's domain through the referrer.
+  @Header('Referrer-Policy', 'strict-origin-when-cross-origin')
+  // 3-D Secure and PayPal open popups that must keep a handle to this page.
+  @Header('Cross-Origin-Opener-Policy', 'same-origin-allow-popups')
   async page(
     @Param('providerAccountId') providerAccountId: string,
     @Res({ passthrough: true }) response: Response,

@@ -9,6 +9,7 @@ if (!e2eDatabaseUrl) {
 process.env.DATABASE_URL = e2eDatabaseUrl;
 process.env.NODE_ENV = 'test';
 process.env.PUBLIC_BASE_URL = 'https://payvolok.e2e.test';
+process.env.WEB_ORIGIN = 'https://web.payvolok.e2e.test';
 // Blank, not deleted: ConfigModule would refill a missing key from .env, and blank reads as unset.
 process.env.PADDLE_API_KEY = '';
 process.env.PADDLE_WEBHOOK_SECRET = '';
