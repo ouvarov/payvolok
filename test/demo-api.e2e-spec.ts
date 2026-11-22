@@ -462,6 +462,30 @@ describe('Demo API', () => {
       expect(otherClient.status).toBe(201);
     });
 
+    it('counts every IPv6 address of one /64 as one client, and another /64 apart', async () => {
+      lastClientNumber += 2;
+      const subnet = `2001:db8:${lastClientNumber.toString(16)}:1`;
+      const otherSubnet = `2001:db8:${lastClientNumber.toString(16)}:2`;
+      for (let host = 1; host <= CREATE_LIMIT_PER_HOUR; host += 1) {
+        await postDemo({}, newKey(), `${subnet}::${host}`).expect(400);
+      }
+
+      const limited = await postDemo(
+        demoBodyWith(),
+        newKey(),
+        `${subnet}::${CREATE_LIMIT_PER_HOUR + 1}`,
+      );
+      const otherSubnetClient = await postDemo(
+        demoBodyWith(),
+        newKey(),
+        `${otherSubnet}::1`,
+      );
+
+      expect(limited.status).toBe(429);
+      expect(limited.body).toMatchObject({ code: 'rate_limited' });
+      expect(otherSubnetClient.status).toBe(201);
+    });
+
     it(
       'answers the 121st read in a minute from one client 429 and never limits /api/v1',
       async () => {
