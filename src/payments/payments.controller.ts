@@ -35,11 +35,12 @@ export class PaymentsController {
     @IdempotencyKey() idempotencyKey: string,
     @Body() createPaymentDto: CreatePaymentDto,
   ): Promise<IdempotentResponse> {
-    return this.paymentCreationService.createPayment(
+    return this.paymentCreationService.createPayment({
       projectId,
+      origin: 'api',
       idempotencyKey,
-      createPaymentDto,
-    );
+      payment: createPaymentDto,
+    });
   }
 
   @Get(':id')

@@ -9,7 +9,10 @@ import type { ProviderAccountsService } from '@/provider-accounts/provider-accou
 import type { BoundProvider } from '@/providers/payment-provider.port';
 
 import type { CreatePaymentDto } from './dto/create-payment.dto';
-import { PaymentCreationService } from './payment-creation.service';
+import {
+  PaymentCreationService,
+  type PaymentCreationRequest,
+} from './payment-creation.service';
 import type { PaymentsService } from './payments.service';
 
 const TX = {} as DatabaseTransaction;
@@ -24,6 +27,13 @@ const DTO: CreatePaymentDto = {
   currency: 'USD',
   description: 'Order 42',
   returnUrl: 'https://shop.example/return',
+};
+
+const REQUEST: PaymentCreationRequest = {
+  projectId: PROJECT_ID,
+  origin: 'api',
+  idempotencyKey: 'key-1',
+  payment: DTO,
 };
 
 const PROJECT_FAKE_PROVIDER = {
@@ -97,7 +107,7 @@ describe('PaymentCreationService', () => {
     const collaborators = collaboratorsWith({ provider: null });
 
     const error = await errorOf(
-      serviceWith(collaborators).createPayment(PROJECT_ID, 'key-1', DTO),
+      serviceWith(collaborators).createPayment(REQUEST),
     );
 
     expect(error).toBeInstanceOf(ApiException);
@@ -118,7 +128,7 @@ describe('PaymentCreationService', () => {
     const collaborators = collaboratorsWith({ isReturnUrlAllowed: false });
 
     const error = await errorOf(
-      serviceWith(collaborators).createPayment(PROJECT_ID, 'key-1', DTO),
+      serviceWith(collaborators).createPayment(REQUEST),
     );
 
     expect((error as ApiException).body).toEqual({
@@ -138,7 +148,7 @@ describe('PaymentCreationService', () => {
     const collaborators = collaboratorsWith();
 
     await expect(
-      serviceWith(collaborators).createPayment(PROJECT_ID, 'key-1', DTO),
+      serviceWith(collaborators).createPayment(REQUEST),
     ).resolves.toBe(STORED_RESPONSE);
 
     expect(collaborators.claim).toHaveBeenCalledWith(
@@ -153,9 +163,31 @@ describe('PaymentCreationService', () => {
       projectId: PROJECT_ID,
       providerAccountId: ACCOUNT_ID,
       provider: 'fake',
+      origin: 'api',
       amountMinor: 1000,
       currency: 'USD',
     });
+  });
+
+  it('claims a demo request in the demo scope and records it with the demo origin', async () => {
+    const collaborators = collaboratorsWith();
+
+    await serviceWith(collaborators).createPayment({
+      ...REQUEST,
+      origin: 'demo',
+    });
+
+    expect(collaborators.findReplay).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'demo:create_payment', key: 'key-1' }),
+    );
+    expect(collaborators.claim).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'demo:create_payment', key: 'key-1' }),
+      expect.anything(),
+    );
+    expect(collaborators.recordRequested).toHaveBeenCalledWith(
+      TX,
+      expect.objectContaining({ origin: 'demo' }),
+    );
   });
 
   it('replays a completed key of the caller project before it checks the origin or the account', async () => {
@@ -166,7 +198,7 @@ describe('PaymentCreationService', () => {
     });
 
     await expect(
-      serviceWith(collaborators).createPayment(PROJECT_ID, 'key-1', DTO),
+      serviceWith(collaborators).createPayment(REQUEST),
     ).resolves.toBe(STORED_RESPONSE);
 
     expect(collaborators.findReplay).toHaveBeenCalledWith(

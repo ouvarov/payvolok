@@ -8,7 +8,7 @@ Pet project at an early stage. Sandbox only, no real money: it only talks to pro
 
 ## Status
 
-What exists: the payment and refund ingest core, the fake provider, the health routes, the webhook route, the webhook worker, `POST /api/v1/payments`, `GET /api/v1/payments/:id` and `POST /api/v1/payments/:paymentId/refunds`. `POST /webhooks/:provider/:providerAccountId` verifies the signature with that account's secret and stores the delivery in `webhook_events`; the worker then applies it to payments and refunds. The first real provider is Paddle, sandbox only, for one-off payments and refunds; Stripe follows in test mode only. Payment and refund reconciliation runs in every API process. API keys belong to projects, and each project sees only its own payments. More providers and subscriptions are planned.
+What exists: the payment and refund ingest core, the fake provider, the health routes, the webhook route, the webhook worker, `POST /api/v1/payments`, `GET /api/v1/payments/:id`, `POST /api/v1/payments/:paymentId/refunds` and the public demo routes `POST /api/demo/payments` and `GET /api/demo/payments/:paymentId`. `POST /webhooks/:provider/:providerAccountId` verifies the signature with that account's secret and stores the delivery in `webhook_events`; the worker then applies it to payments and refunds. The first real provider is Paddle, sandbox only, for one-off payments and refunds; Stripe follows in test mode only. Payment and refund reconciliation runs in every API process. API keys belong to projects, and each project sees only its own payments. More providers and subscriptions are planned.
 
 ## Stack
 
@@ -79,7 +79,7 @@ Git hooks (simple-git-hooks): pre-commit runs lint-staged, pre-push runs `check`
 
 ## API access
 
-Routes under `/api/v1` need `Authorization: Bearer <key>`, where the key belongs to a project: every payment, refund and idempotency key the request touches is that project's. Every route declares its access with `@RouteAccess` (`public` or `project_key`); a route that declares nothing answers 401, even with a valid key. `/health/*`, `/webhooks/*` and `/checkout/paddle/*` are public: webhooks are checked by their signature.
+Routes under `/api/v1` need `Authorization: Bearer <key>`, where the key belongs to a project: every payment, refund and idempotency key the request touches is that project's. Every route declares its access with `@RouteAccess` (`public` or `project_key`); a route that declares nothing answers 401, even with a valid key. `/health/*`, `/webhooks/*`, `/checkout/paddle/*` and `/api/demo/*` are public: webhooks are checked by their signature, a demo payment by its `demoToken` (see Demo API).
 
 Keys live in `api_keys`, one project per key, as many keys per project as needed. A key looks like `pv_test_` plus 43 random characters; the table holds only its SHA-256 and its first 12 characters (`key_prefix`), so a stored row cannot be used to call the API. A missing, malformed, unknown, revoked or expired key, or a key of an `archived` project, all get the same 401. Create a key with:
 
@@ -169,6 +169,23 @@ A refund request interrupted after its key was taken stores `503 provider_unavai
 Only requests that reached the provider are stored: a 400 or 401 leaves no trace, so a fixed request can reuse its key.
 
 `GET /api/v1/payments/:id` returns `paymentId`, `status`, `provider`, `amountMinor`, `currency`, `createdAt` and `updatedAt` from our database, or 404 `payment_not_found` for an unknown payment or another project's payment. It does not call the provider. Reading a `created` or `pending` payment that is at least 30 s old and was not checked in the last 15 s makes its next reconciliation due at once.
+
+## Demo API
+
+The open test page creates payments through `/api/demo/*`, with no API key. The server fixes everything but the provider and one of three amounts, so a visitor controls no text and no URL.
+
+`POST /api/demo/payments` with an `Idempotency-Key` header (the same rules as above) and the body `{"provider": "stripe", "amountMinor": 1000}`. `provider` is `stripe`, `paddle` or `fake` (only where a fake account exists), `amountMinor` is `500`, `1000` or `2500`; any other value or field is `400 validation_failed`. The payment is made in the seed project `payvolok-demo` with origin `demo`, in `USD`, with the description `PayVolok demo payment` and the return URL `{WEB_ORIGIN}/?checkout=returned`, so the seed project's `allowed_return_origins` must hold `WEB_ORIGIN` (see Deploy). On success it answers `201 {"paymentId", "checkout": {"type": "redirect", "url"}, "demoToken"}`; the other answers are those of `POST /api/v1/payments`. Demo keys are kept apart from `/api/v1` keys: one key string makes two different payments on the two routes.
+
+`GET /api/demo/payments/:paymentId` with `Authorization: Bearer <demoToken>` returns the same fields as `GET /api/v1/payments/:id`, with the same reconciliation nudge. A missing or wrong token, another payment's token, a payment that is not a demo one and a demo payment older than 24 h all answer the same `404 payment_not_found`.
+
+The `demoToken` is `pvd_` plus the base64url HMAC-SHA256 of the payment id under `DEMO_TOKEN_SECRET`. It is recomputed, never stored or logged, so a replayed `201` carries the same token. It stops working 24 h after the payment was created, or for every payment when the secret changes. Without `DEMO_TOKEN_SECRET` each process makes a random secret at boot, so tokens die on restart.
+
+Limits:
+
+- Per client address, in the memory of the process: 5 creates per hour and 120 reads per minute; beyond that `429 rate_limited` with `Retry-After`. `/api/v1` is not limited. The address is `req.ip`: with `TRUST_PROXY_HOPS=0` (default) the socket address, with `n` the `n`-th `X-Forwarded-For` entry from the right; entries a client writes to the left of it are ignored. The first demo request of a process logs how many `X-Forwarded-For` entries it carried, without the addresses, to set `TRUST_PROXY_HOPS` from.
+- For all visitors together, counted in Postgres: `DEMO_DAILY_PAYMENT_LIMIT` (default 50) demo payments per rolling 24 h; beyond that `429 demo_limit_reached`, with `Retry-After` set to when the oldest counted payment leaves the window. `0` refuses every demo payment. The limit is checked before the key, so even a replay is refused once it is reached, and two requests at the same moment may both pass it.
+
+Demo payments are never deleted.
 
 ## Health routes
 
@@ -284,6 +301,10 @@ node --env-file=.env -r ts-node/register/transpile-only -r tsconfig-paths/regist
 - `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET`, `PADDLE_CLIENT_TOKEN`: as in Paddle above. `PADDLE_WEBHOOK_SECRET` may stay blank on the first deploy (blank counts as unset): Paddle webhooks answer 503 until it is set.
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`: as in Stripe above. Both may stay blank until the Stripe release is live.
 
+- `DEMO_TOKEN_SECRET`: the demo token key, generate with `openssl rand -base64 48`. Blank gives each process a random one.
+- `DEMO_DAILY_PAYMENT_LIMIT`: blank for the default 50; `0` turns demo payments off.
+- `TRUST_PROXY_HOPS`: blank or `0` until the first demo request's log shows how many `X-Forwarded-For` entries arrive through Vercel. Too low only makes the per-client limit coarser; too high lets a client choose its own address.
+
 `PORT` is set by Render and read by the app; the other variables keep their defaults. `FAKE_WEBHOOK_SECRET` is left unset: each process then makes its own random secret.
 
 Migrations do not run on boot. Before a deploy that adds one (the reconciliation release needs `0008`), apply it from a machine that can reach the production database: `npm run db:migrate` with `DATABASE_URL` pointing at it. Prefer a direct connection over the pooler for this.
@@ -313,6 +334,13 @@ Migration `0012` adds `stripe` to the providers an account may have and creates 
 
 ```sql
 UPDATE provider_accounts SET status = 'active' WHERE id = '5e3d0c1a-0b7e-4c52-9a51-3f0f6c2d7a05';
+```
+
+Migration `0013` adds the demo idempotency scopes `demo:create_payment` and `demo:create_refund` to the scope check and the partial index `payments_demo_created_at_idx` the daily demo limit counts with. It only widens a check and adds an index, so the code before it runs on it unchanged; apply it to `dev` and `production` before the demo API pull request is merged. Rollback is code only. After the merge, let the demo return URL through, once per database:
+
+```sql
+UPDATE projects SET allowed_return_origins = array_append(allowed_return_origins, 'https://payvolok.vercel.app')
+WHERE slug = 'payvolok-demo' AND NOT ('https://payvolok.vercel.app' = ANY (allowed_return_origins));
 ```
 
 Paddle must point at the account URLs, `POST /webhooks/paddle/<account id>` and `GET /checkout/paddle/<account id>`: the routes without an account answer 404.

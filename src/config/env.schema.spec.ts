@@ -22,6 +22,8 @@ describe('validateEnv', () => {
       WEBHOOK_POLL_INTERVAL_MS: 5000,
       RECONCILIATION_WORKER_ENABLED: true,
       RECONCILIATION_POLL_INTERVAL_MS: 15000,
+      DEMO_DAILY_PAYMENT_LIMIT: 50,
+      TRUST_PROXY_HOPS: 0,
     });
   });
 
@@ -415,6 +417,82 @@ describe('validateEnv', () => {
         }),
       ).toThrow(/RECONCILIATION_WORKER_ENABLED/);
     });
+  });
+
+  describe('DEMO_TOKEN_SECRET', () => {
+    it.each([
+      ['unset', {}],
+      ['blank', { DEMO_TOKEN_SECRET: '' }],
+    ])('is unset when %s', (_case, demoEnv) => {
+      expect(
+        validateEnv({ ...VALID_ENV, ...demoEnv }).DEMO_TOKEN_SECRET,
+      ).toBeUndefined();
+    });
+
+    it('accepts 32 characters', () => {
+      const secret = 'd'.repeat(32);
+
+      expect(
+        validateEnv({ ...VALID_ENV, DEMO_TOKEN_SECRET: secret })
+          .DEMO_TOKEN_SECRET,
+      ).toBe(secret);
+    });
+
+    it.each(['d'.repeat(31), `${'d'.repeat(16)} ${'d'.repeat(16)}`])(
+      'rejects %j, naming the key without echoing the value',
+      (secret) => {
+        const error: unknown = (() => {
+          try {
+            return validateEnv({ ...VALID_ENV, DEMO_TOKEN_SECRET: secret });
+          } catch (caught) {
+            return caught;
+          }
+        })();
+
+        expect((error as Error).message).toContain('DEMO_TOKEN_SECRET');
+        expect((error as Error).message).not.toContain(secret);
+      },
+    );
+  });
+
+  describe('DEMO_DAILY_PAYMENT_LIMIT', () => {
+    it.each([
+      ['', 50],
+      ['0', 0],
+      ['2', 2],
+    ])('reads %j as %i', (value, limit) => {
+      expect(
+        validateEnv({ ...VALID_ENV, DEMO_DAILY_PAYMENT_LIMIT: value })
+          .DEMO_DAILY_PAYMENT_LIMIT,
+      ).toBe(limit);
+    });
+
+    it.each(['-1', '1.5', 'many'])('rejects %j, naming the key', (value) => {
+      expect(() =>
+        validateEnv({ ...VALID_ENV, DEMO_DAILY_PAYMENT_LIMIT: value }),
+      ).toThrow(/DEMO_DAILY_PAYMENT_LIMIT/);
+    });
+  });
+
+  describe('TRUST_PROXY_HOPS', () => {
+    it.each([
+      ['', 0],
+      ['0', 0],
+      ['5', 5],
+    ])('reads %j as %i', (value, hops) => {
+      expect(
+        validateEnv({ ...VALID_ENV, TRUST_PROXY_HOPS: value }).TRUST_PROXY_HOPS,
+      ).toBe(hops);
+    });
+
+    it.each(['-1', '6', '1.5', 'all'])(
+      'rejects %j, naming the key',
+      (value) => {
+        expect(() =>
+          validateEnv({ ...VALID_ENV, TRUST_PROXY_HOPS: value }),
+        ).toThrow(/TRUST_PROXY_HOPS/);
+      },
+    );
   });
 
   it('rejects an unknown NODE_ENV', () => {

@@ -30,6 +30,14 @@ type ProviderRef = {
   providerPaymentId: string;
 };
 
+type RecentPaymentCount = {
+  count: number;
+  secondsUntilOldestLeaves: number | null;
+};
+
+const createdWithin = (windowSeconds: number) =>
+  sql`${payments.createdAt} > clock_timestamp() - ${windowSeconds}::integer * interval '1 second'`;
+
 @Injectable()
 export class PaymentsRepository {
   constructor(@Inject(DRIZZLE) private readonly db: Database) {}
@@ -52,6 +60,45 @@ export class PaymentsRepository {
       );
 
     return payment ?? null;
+  }
+
+  async findDemoPayment(
+    projectId: string,
+    paymentId: string,
+    maxAgeSeconds: number,
+  ): Promise<Payment | null> {
+    const [payment] = await this.db
+      .select()
+      .from(payments)
+      .where(
+        and(
+          eq(payments.id, paymentId),
+          eq(payments.projectId, projectId),
+          sql`${payments.origin} = 'demo'`,
+          createdWithin(maxAgeSeconds),
+        ),
+      );
+
+    return payment ?? null;
+  }
+
+  // The origin is a literal so the planner can use the partial demo index.
+  async countRecentDemoPayments(
+    windowSeconds: number,
+  ): Promise<RecentPaymentCount> {
+    const [recent] = await this.db
+      .select({
+        count: sql<number>`count(*)::int`,
+        secondsUntilOldestLeaves: sql<
+          number | null
+        >`ceil(extract(epoch from min(${payments.createdAt}) + ${windowSeconds}::integer * interval '1 second' - clock_timestamp()))::int`,
+      })
+      .from(payments)
+      .where(
+        and(sql`${payments.origin} = 'demo'`, createdWithin(windowSeconds)),
+      );
+
+    return recent;
   }
 
   // Only ever brings a check forward: a stopped (NULL), already due or leased
@@ -228,3 +275,5 @@ export class PaymentsRepository {
       });
   }
 }
+
+export type { RecentPaymentCount };

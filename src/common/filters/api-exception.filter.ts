@@ -65,6 +65,12 @@ export class ApiExceptionFilter extends BaseExceptionFilter {
     if (body.statusCode === Number(HttpStatus.UNAUTHORIZED)) {
       response.setHeader('WWW-Authenticate', 'Bearer');
     }
+    if (
+      exception instanceof ApiException &&
+      exception.retryAfterSeconds !== null
+    ) {
+      response.setHeader('Retry-After', String(exception.retryAfterSeconds));
+    }
     response.status(body.statusCode).json(body);
   }
 

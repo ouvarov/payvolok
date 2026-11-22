@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { ApiException, type ApiErrorBody } from '@/common/errors/api-exception';
 import type { Env } from '@/config/env.schema';
 import type { DatabaseTransaction } from '@/database/drizzle';
+import type { IdempotencyScope } from '@/idempotency/idempotency.constants';
 import type {
   IdempotentRequest,
   StoredResponse,
@@ -29,7 +30,10 @@ import {
 
 import type { CreatePaymentDto } from './dto/create-payment.dto';
 import { CreatedPaymentResponseDto } from './dto/created-payment-response.dto';
-import { RECONCILIATION_INTERRUPTED_REASON } from './payment.constants';
+import {
+  RECONCILIATION_INTERRUPTED_REASON,
+  type PaymentOrigin,
+} from './payment.constants';
 import {
   PaymentsService,
   type ApiPaymentRef,
@@ -66,20 +70,45 @@ const failureResponseOf = (
       })
     : providerUnavailableResponseOf(paymentId);
 
-const requestOf = (
-  projectId: string,
-  idempotencyKey: string,
-  dto: CreatePaymentDto,
-): IdempotentRequest => ({
+type CreationOrigin = Extract<PaymentOrigin, 'api' | 'demo'>;
+
+type PaymentCreationRequest = {
+  projectId: string;
+  origin: CreationOrigin;
+  idempotencyKey: string;
+  payment: CreatePaymentDto;
+};
+
+type InterruptedPaymentRef = ApiPaymentRef & { origin: PaymentOrigin };
+
+const CREATE_PAYMENT_SCOPE_BY_ORIGIN: Readonly<
+  Record<CreationOrigin, IdempotencyScope>
+> = {
+  api: 'api:create_payment',
+  demo: 'demo:create_payment',
+};
+
+// Other origins never hold a creation key: the api scope finds none and the payment is still closed.
+const createPaymentScopeOf = (origin: PaymentOrigin): IdempotencyScope =>
+  origin === 'demo'
+    ? CREATE_PAYMENT_SCOPE_BY_ORIGIN.demo
+    : CREATE_PAYMENT_SCOPE_BY_ORIGIN.api;
+
+const requestOf = ({
   projectId,
-  scope: 'api:create_payment',
+  origin,
+  idempotencyKey,
+  payment,
+}: PaymentCreationRequest): IdempotentRequest => ({
+  projectId,
+  scope: CREATE_PAYMENT_SCOPE_BY_ORIGIN[origin],
   key: idempotencyKey,
   requestHash: requestHashOf([
-    dto.provider,
-    dto.amountMinor,
-    dto.currency,
-    dto.description,
-    dto.returnUrl,
+    payment.provider,
+    payment.amountMinor,
+    payment.currency,
+    payment.description,
+    payment.returnUrl,
   ]),
 });
 
@@ -99,11 +128,10 @@ export class PaymentCreationService {
   }
 
   async createPayment(
-    projectId: string,
-    idempotencyKey: string,
-    dto: CreatePaymentDto,
+    creationRequest: PaymentCreationRequest,
   ): Promise<IdempotentResponse> {
-    const request = requestOf(projectId, idempotencyKey, dto);
+    const { projectId, origin, payment: dto } = creationRequest;
+    const request = requestOf(creationRequest);
     // Before the project checks: a retry after the origins or the account changed still gets its stored answer.
     const replayed = await this.idempotencyService.findReplay(request);
     if (replayed) return replayed;
@@ -117,6 +145,7 @@ export class PaymentCreationService {
             projectId: provider.projectId,
             providerAccountId: provider.accountId,
             provider: dto.provider,
+            origin,
             amountMinor: dto.amountMinor,
             currency: dto.currency,
           })
@@ -152,11 +181,14 @@ export class PaymentCreationService {
     return response;
   }
 
-  closeInterrupted(
-    ref: ApiPaymentRef,
-  ): Promise<CloseInterruptedResult<IngestPaymentResult>> {
+  closeInterrupted({
+    origin,
+    ...ref
+  }: InterruptedPaymentRef): Promise<
+    CloseInterruptedResult<IngestPaymentResult>
+  > {
     return this.idempotencyService.closeInterrupted(
-      'api:create_payment',
+      createPaymentScopeOf(origin),
       ref.paymentId,
       async (tx) => ({
         result: await this.paymentsService.recordFailed(
@@ -273,3 +305,5 @@ export class PaymentCreationService {
     return `${this.publicBaseUrl}/webhooks/${provider.code}/${provider.accountId}`;
   }
 }
+
+export type { InterruptedPaymentRef, PaymentCreationRequest };

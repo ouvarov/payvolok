@@ -1,11 +1,11 @@
 import { z } from 'zod';
 
 // A blank KEY= line in .env means unset, not a value that fails the format check.
+const blankAsUnset = (value: unknown): unknown =>
+  value === '' ? undefined : value;
+
 const optionalUnlessBlank = (pattern: RegExp) =>
-  z.preprocess(
-    (value) => (value === '' ? undefined : value),
-    z.string().regex(pattern).optional(),
-  );
+  z.preprocess(blankAsUnset, z.string().regex(pattern).optional());
 
 const envSchema = z.object({
   NODE_ENV: z
@@ -43,6 +43,16 @@ const envSchema = z.object({
     .min(100)
     .max(3600000)
     .default(15000),
+  DEMO_TOKEN_SECRET: optionalUnlessBlank(/^\S{32,}$/),
+  // Blank is the default, not 0: 0 turns demo payments off.
+  DEMO_DAILY_PAYMENT_LIMIT: z.preprocess(
+    blankAsUnset,
+    z.coerce.number().int().min(0).default(50),
+  ),
+  TRUST_PROXY_HOPS: z.preprocess(
+    blankAsUnset,
+    z.coerce.number().int().min(0).max(5).default(0),
+  ),
 });
 
 type Env = z.infer<typeof envSchema>;

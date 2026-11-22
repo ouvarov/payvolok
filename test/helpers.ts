@@ -3,6 +3,7 @@ import type { Server } from 'node:http';
 
 import type { Abstract, INestApplication, Type } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import { sql } from 'drizzle-orm';
 import request from 'supertest';
@@ -67,6 +68,8 @@ type E2eAppOptions = {
   isReconciliationEnabled?: boolean;
   reconciliationPollIntervalMs?: number;
   fakeWebhookSecret?: string;
+  demoDailyPaymentLimit?: number;
+  trustProxyHops?: number;
   extraControllers?: Type<unknown>[];
   paddleEnv?: PaddleEnv;
   paddleProvider?: PaddleProvider;
@@ -117,13 +120,15 @@ const createE2eApp = async ({
   isReconciliationEnabled = false,
   reconciliationPollIntervalMs,
   fakeWebhookSecret,
+  demoDailyPaymentLimit,
+  trustProxyHops,
   extraControllers = [],
   paddleEnv = {},
   paddleProvider,
   stripeEnv = {},
   stripeProvider,
   classOverrides = [],
-}: E2eAppOptions = {}): Promise<INestApplication> => {
+}: E2eAppOptions = {}): Promise<NestExpressApplication> => {
   const env = validateEnv({
     ...process.env,
     DATABASE_URL: appDatabaseUrl,
@@ -139,6 +144,12 @@ const createE2eApp = async ({
     ...(fakeWebhookSecret === undefined
       ? {}
       : { FAKE_WEBHOOK_SECRET: fakeWebhookSecret }),
+    ...(demoDailyPaymentLimit === undefined
+      ? {}
+      : { DEMO_DAILY_PAYMENT_LIMIT: demoDailyPaymentLimit }),
+    ...(trustProxyHops === undefined
+      ? {}
+      : { TRUST_PROXY_HOPS: trustProxyHops }),
     ...paddleEnv,
     ...stripeEnv,
   });
@@ -158,7 +169,7 @@ const createE2eApp = async ({
     moduleBuilder.overrideProvider(StripeProvider).useValue(stripeProvider);
   }
   const moduleRef = await moduleBuilder.compile();
-  const app = moduleRef.createNestApplication();
+  const app = moduleRef.createNestApplication<NestExpressApplication>();
   configureApp(app);
   await app.init();
 

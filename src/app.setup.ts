@@ -1,5 +1,5 @@
-import type { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { raw } from 'express';
 import helmet from 'helmet';
 
@@ -7,11 +7,15 @@ import type { Env } from './config/env.schema';
 
 const WEBHOOK_BODY_LIMIT_BYTES = 256 * 1024;
 
-const configureApp = (app: INestApplication): void => {
-  const webOrigin = app
-    .get<ConfigService<Env, true>>(ConfigService)
-    .get('WEB_ORIGIN', { infer: true });
+const configureApp = (app: NestExpressApplication): void => {
+  const configService = app.get<ConfigService<Env, true>>(ConfigService);
+  const webOrigin = configService.get('WEB_ORIGIN', { infer: true });
 
+  // req.ip is then the address the last trusted proxy saw; the demo rate limit keys on it.
+  app.set(
+    'trust proxy',
+    configService.get('TRUST_PROXY_HOPS', { infer: true }),
+  );
   app.use(helmet());
   // Behind the web app's rewrite the Origin is the web app's, not this API's Host.
   app.enableCsrfProtection({ trustedOrigins: [webOrigin] });

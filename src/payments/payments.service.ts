@@ -12,11 +12,15 @@ import type { ProviderCode } from '@/providers/provider.constants';
 import { PaymentResponseDto } from './dto/payment-response.dto';
 import {
   PAYMENTS_ACCOUNT_PROVIDER_REF_UNIQUE,
+  type PaymentOrigin,
   type PaymentPurpose,
   type PaymentStatus,
 } from './payment.constants';
 import { decideTransition } from './payment-state-machine';
-import { PaymentsRepository } from './payments.repository';
+import {
+  PaymentsRepository,
+  type RecentPaymentCount,
+} from './payments.repository';
 import type { IngestablePaymentStatus } from './provider-event-status';
 
 const paymentReferenceSchema = z.uuid();
@@ -29,9 +33,17 @@ type RequestedPaymentInput = {
   projectId: string;
   providerAccountId: string;
   provider: ProviderCode;
+  origin: PaymentOrigin;
   amountMinor: number;
   currency: string;
 };
+
+const paymentNotFoundException = (): ApiException =>
+  new ApiException({
+    statusCode: HttpStatus.NOT_FOUND,
+    code: 'payment_not_found',
+    message: 'Payment not found',
+  });
 
 type ApiPaymentRef = { paymentId: string; provider: ProviderCode };
 
@@ -195,22 +207,27 @@ export class PaymentsService {
     projectId: string,
     paymentId: string,
   ): Promise<PaymentResponseDto> {
-    const payment = await this.paymentsRepository.findByIdInProject(
-      projectId,
-      paymentId,
+    return this.readResponseOf(
+      await this.paymentsRepository.findByIdInProject(projectId, paymentId),
     );
-    if (!payment) {
-      throw new ApiException({
-        statusCode: HttpStatus.NOT_FOUND,
-        code: 'payment_not_found',
-        message: 'Payment not found',
-      });
-    }
-    if (payment.status === 'created' || payment.status === 'pending') {
-      await this.requestReconciliation(payment.id);
-    }
+  }
 
-    return new PaymentResponseDto(payment);
+  async getDemoPayment(
+    projectId: string,
+    paymentId: string,
+    maxAgeSeconds: number,
+  ): Promise<PaymentResponseDto> {
+    return this.readResponseOf(
+      await this.paymentsRepository.findDemoPayment(
+        projectId,
+        paymentId,
+        maxAgeSeconds,
+      ),
+    );
+  }
+
+  countRecentDemoPayments(windowSeconds: number): Promise<RecentPaymentCount> {
+    return this.paymentsRepository.countRecentDemoPayments(windowSeconds);
   }
 
   async recordRequested(
@@ -223,7 +240,7 @@ export class PaymentsService {
       provider: input.provider,
       providerPaymentId: null,
       purpose: 'one_off',
-      origin: 'api',
+      origin: input.origin,
       status: 'created',
       amountMinor: input.amountMinor,
       currency: input.currency,
@@ -364,6 +381,17 @@ export class PaymentsService {
     }
 
     return this.findByProviderRefForUpdate(tx, lookup);
+  }
+
+  private async readResponseOf(
+    payment: Payment | null,
+  ): Promise<PaymentResponseDto> {
+    if (!payment) throw paymentNotFoundException();
+    if (payment.status === 'created' || payment.status === 'pending') {
+      await this.requestReconciliation(payment.id);
+    }
+
+    return new PaymentResponseDto(payment);
   }
 
   // Best effort: the read already succeeded, so a failed nudge only delays the next check.
@@ -616,6 +644,7 @@ export class PaymentsService {
   }
 }
 
+export { paymentNotFoundException };
 export type {
   ApiPaymentRef,
   IngestPaymentInput,

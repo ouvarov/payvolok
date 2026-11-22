@@ -29,3 +29,9 @@ services:
         sync: false
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
+      - key: DEMO_TOKEN_SECRET
+        sync: false
+      - key: DEMO_DAILY_PAYMENT_LIMIT
+        sync: false
+      - key: TRUST_PROXY_HOPS
+        sync: false

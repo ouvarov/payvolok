@@ -178,6 +178,7 @@ export class ReconciliationService {
     const closed = await this.paymentCreationService.closeInterrupted({
       paymentId: claimed.id,
       provider: claimed.provider,
+      origin: claimed.origin,
     });
     if (!closed.isClosed) return localCheckOf(claimed.status, false);
 
