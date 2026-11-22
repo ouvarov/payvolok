@@ -57,8 +57,20 @@ const envSchema = z.object({
 
 type Env = z.infer<typeof envSchema>;
 
+// Apart from envSchema, whose .pick() the scripts use: a random per-process secret
+// would make every restart in production void all live demo tokens.
+const appEnvSchema = envSchema.superRefine((env, context) => {
+  if (env.NODE_ENV === 'production' && env.DEMO_TOKEN_SECRET === undefined) {
+    context.addIssue({
+      code: 'custom',
+      path: ['DEMO_TOKEN_SECRET'],
+      message: 'Required in production',
+    });
+  }
+});
+
 const validateEnv = (config: Record<string, unknown>): Env => {
-  const result = envSchema.safeParse(config);
+  const result = appEnvSchema.safeParse(config);
 
   if (!result.success) {
     throw new Error(`Invalid environment:\n${z.prettifyError(result.error)}`);

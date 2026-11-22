@@ -178,7 +178,7 @@ The open test page creates payments through `/api/demo/*`, with no API key. The 
 
 `GET /api/demo/payments/:paymentId` with `Authorization: Bearer <demoToken>` returns the same fields as `GET /api/v1/payments/:id`, with the same reconciliation nudge. A missing or wrong token, another payment's token, a payment that is not a demo one and a demo payment older than 24 h all answer the same `404 payment_not_found`.
 
-The `demoToken` is `pvd_` plus the base64url HMAC-SHA256 of the payment id under `DEMO_TOKEN_SECRET`. It is recomputed, never stored or logged, so a replayed `201` carries the same token. It stops working 24 h after the payment was created, or for every payment when the secret changes. Without `DEMO_TOKEN_SECRET` each process makes a random secret at boot, so tokens die on restart.
+The `demoToken` is `pvd_` plus the base64url HMAC-SHA256 of the payment id under `DEMO_TOKEN_SECRET`. It is recomputed, never stored or logged, so a replayed `201` carries the same token. It stops working 24 h after the payment was created, or for every payment when the secret changes. `DEMO_TOKEN_SECRET` is required when `NODE_ENV=production`; elsewhere, without it, each process makes a random secret at boot, so tokens die on restart.
 
 Limits:
 
@@ -301,7 +301,7 @@ node --env-file=.env -r ts-node/register/transpile-only -r tsconfig-paths/regist
 - `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET`, `PADDLE_CLIENT_TOKEN`: as in Paddle above. `PADDLE_WEBHOOK_SECRET` may stay blank on the first deploy (blank counts as unset): Paddle webhooks answer 503 until it is set.
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`: as in Stripe above. Both may stay blank until the Stripe release is live.
 
-- `DEMO_TOKEN_SECRET`: the demo token key, generate with `openssl rand -base64 48`. Blank gives each process a random one.
+- `DEMO_TOKEN_SECRET`: required to boot: the demo token key, generate with `openssl rand -base64 48`. Set it before the demo API release deploys; a missing or blank value fails boot and Render keeps the old instance.
 - `DEMO_DAILY_PAYMENT_LIMIT`: blank for the default 50; `0` turns demo payments off.
 - `TRUST_PROXY_HOPS`: blank or `0` until the first demo request's log shows how many `X-Forwarded-For` entries arrive through Vercel. Too low only makes the per-client limit coarser; too high lets a client choose its own address.
 

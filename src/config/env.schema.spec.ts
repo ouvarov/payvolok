@@ -429,6 +429,39 @@ describe('validateEnv', () => {
       ).toBeUndefined();
     });
 
+    it.each([
+      ['unset', {}],
+      ['blank', { DEMO_TOKEN_SECRET: '' }],
+    ])(
+      'is required in production when %s, naming the key',
+      (_case, demoEnv) => {
+        expect(() =>
+          validateEnv({ ...VALID_ENV, NODE_ENV: 'production', ...demoEnv }),
+        ).toThrow(/DEMO_TOKEN_SECRET/);
+      },
+    );
+
+    it.each(['development', 'test'])(
+      'stays optional when NODE_ENV is %s',
+      (nodeEnv) => {
+        expect(
+          validateEnv({ ...VALID_ENV, NODE_ENV: nodeEnv }).DEMO_TOKEN_SECRET,
+        ).toBeUndefined();
+      },
+    );
+
+    it('accepts a secret in production', () => {
+      const secret = 'd'.repeat(32);
+
+      expect(
+        validateEnv({
+          ...VALID_ENV,
+          NODE_ENV: 'production',
+          DEMO_TOKEN_SECRET: secret,
+        }).DEMO_TOKEN_SECRET,
+      ).toBe(secret);
+    });
+
     it('accepts 32 characters', () => {
       const secret = 'd'.repeat(32);
 
