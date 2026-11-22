@@ -8,6 +8,7 @@ import { ApiExceptionFilter } from './common/filters/api-exception.filter';
 import { createApiValidationPipe } from './common/validation/api-validation.pipe';
 import { validateEnv } from './config/env.schema';
 import { DatabaseModule } from './database/database.module';
+import { DemoModule } from './demo/demo.module';
 import { HealthModule } from './health/health.module';
 import { PaymentsModule } from './payments/payments.module';
 import { ProjectsModule } from './projects/projects.module';
@@ -24,6 +25,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     }),
     CheckoutModule,
     DatabaseModule,
+    DemoModule,
     HealthModule,
     PaymentsModule,
     ProjectsModule,

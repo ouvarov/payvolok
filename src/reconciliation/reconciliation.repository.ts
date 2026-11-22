@@ -20,6 +20,7 @@ type ClaimedPayment = Pick<
   | 'providerPaymentId'
   | 'status'
   | 'purpose'
+  | 'origin'
   | 'createdAt'
   | 'reconcileAttempts'
 > & { reconciledAt: Date };
@@ -73,6 +74,7 @@ export class ReconciliationRepository {
         providerPaymentId: payments.providerPaymentId,
         status: payments.status,
         purpose: payments.purpose,
+        origin: payments.origin,
         createdAt: payments.createdAt,
         reconcileAttempts: payments.reconcileAttempts,
         reconciledAt: payments.reconciledAt,

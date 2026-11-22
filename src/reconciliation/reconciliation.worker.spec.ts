@@ -38,6 +38,7 @@ const claimedPaymentWith = (
   providerPaymentId: 'provider-1',
   status: 'pending',
   purpose: 'one_off',
+  origin: 'api',
   createdAt: new Date(0),
   reconcileAttempts: 1,
   reconciledAt: new Date(0),

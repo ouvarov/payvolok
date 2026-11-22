@@ -13,6 +13,7 @@ const TEST_API_KEY = `pv_test_${'e2e-seed-project-key'.padEnd(43, '0')}`;
 const SEED_RETURN_ORIGINS = [
   'https://shop.example.test',
   'https://example.test',
+  process.env.WEB_ORIGIN as string,
 ];
 
 // Global setup runs outside Jest's module mapper, so this file imports no @/ path.

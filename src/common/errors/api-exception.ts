@@ -13,10 +13,18 @@ type ApiErrorBody = {
   issues?: ApiErrorIssue[];
 };
 
+type ApiExceptionOptions = { retryAfterSeconds?: number };
+
 export class ApiException extends HttpException {
-  constructor(readonly body: ApiErrorBody) {
+  readonly retryAfterSeconds: number | null;
+
+  constructor(
+    readonly body: ApiErrorBody,
+    { retryAfterSeconds }: ApiExceptionOptions = {},
+  ) {
     super(body, body.statusCode);
+    this.retryAfterSeconds = retryAfterSeconds ?? null;
   }
 }
 
-export type { ApiErrorBody, ApiErrorIssue };
+export type { ApiErrorBody, ApiErrorIssue, ApiExceptionOptions };

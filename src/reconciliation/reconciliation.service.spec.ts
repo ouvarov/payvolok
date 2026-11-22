@@ -46,6 +46,7 @@ const claimedWith = (
   providerPaymentId: 'provider-1',
   status: 'pending',
   purpose: 'one_off',
+  origin: 'api',
   createdAt: new Date(RECONCILED_AT.getTime() - HOUR_MS),
   reconcileAttempts: 1,
   reconciledAt: RECONCILED_AT,
@@ -439,12 +440,17 @@ describe('ReconciliationService', () => {
       });
 
       const result = await service.reconcile(
-        claimedWith({ status: 'created', providerPaymentId: null }),
+        claimedWith({
+          status: 'created',
+          providerPaymentId: null,
+          origin: 'demo',
+        }),
       );
 
       expect(closeInterrupted).toHaveBeenCalledWith({
         paymentId: PAYMENT_ID,
         provider: 'fake',
+        origin: 'demo',
       });
       expect(getStatus).not.toHaveBeenCalled();
       expect(result).toEqual({ outcome: 'local', isChanged: true });

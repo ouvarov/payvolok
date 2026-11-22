@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { cpSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 import { PGlite } from '@electric-sql/pglite';
@@ -68,6 +68,13 @@ const CLIENT_END_TIMEOUT_SECONDS = 5;
 const OVERLONG_SLEEP_SECONDS = 11;
 const SLEEP_GUARD_MS = 20000;
 const SLOW_TEST_TIMEOUT_MS = 60000;
+
+const journalMigrationCount = (): number =>
+  (
+    JSON.parse(
+      readFileSync(join(MIGRATIONS_FOLDER, 'meta', '_journal.json'), 'utf8'),
+    ) as { entries: unknown[] }
+  ).entries.length;
 
 const ingestInputWith = (
   overrides: Partial<IngestPaymentInput> = {},
@@ -264,7 +271,7 @@ describe('Payments ingest', () => {
             `select tablename as name from pg_tables where schemaname = 'public' order by tablename`,
           );
 
-          expect(firstRunRows.rows).toHaveLength(12);
+          expect(firstRunRows.rows).toHaveLength(journalMigrationCount());
           expect(secondRunRows.rows).toEqual(firstRunRows.rows);
           expect(tables.rows.map(({ name }) => name)).toEqual([
             'api_keys',
@@ -291,7 +298,7 @@ describe('Payments ingest', () => {
 
         await applyMigrations(databaseUrl);
 
-        expect(rowsBefore).toHaveLength(12);
+        expect(rowsBefore).toHaveLength(journalMigrationCount());
         expect(await db.execute(migrationRowsSql)).toEqual(rowsBefore);
       },
       SLOW_TEST_TIMEOUT_MS,
@@ -1099,6 +1106,8 @@ describe('Payments ingest', () => {
 
       expect(paymentsService).toBeInstanceOf(PaymentsService);
       expect(routePaths).toEqual([
+        '/api/demo/payments',
+        '/api/demo/payments/:paymentId',
         '/api/v1/payments',
         '/api/v1/payments/:id',
         '/api/v1/payments/:paymentId/refunds',
