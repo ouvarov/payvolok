@@ -1,4 +1,9 @@
-const IDEMPOTENCY_SCOPES = ['api:create_payment', 'api:create_refund'] as const;
+const IDEMPOTENCY_SCOPES = [
+  'api:create_payment',
+  'api:create_refund',
+  'demo:create_payment',
+  'demo:create_refund',
+] as const;
 
 const IDEMPOTENCY_KEY_STATUSES = ['in_progress', 'completed'] as const;
 

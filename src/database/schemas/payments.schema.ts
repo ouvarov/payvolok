@@ -109,6 +109,9 @@ const payments = pgTable(
     index('payments_provider_provider_payment_id_idx')
       .on(table.provider, table.providerPaymentId)
       .where(sql`${table.providerPaymentId} IS NOT NULL`),
+    index('payments_demo_created_at_idx')
+      .on(table.createdAt)
+      .where(sql`${table.origin} = 'demo'`),
   ],
 );
 
