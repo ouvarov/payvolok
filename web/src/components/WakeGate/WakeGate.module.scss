@@ -1,0 +1,97 @@
+$dot-size: 8px;
+$line-width: 2px;
+$travel-duration: 2s;
+
+.gate {
+  @include flex(column, $gap: $indent-ms);
+}
+
+.panel {
+  @include flex(column, flex-start, $gap: $indent-xs);
+
+  padding: $indent-md;
+  background: theme(surface);
+  border: $border-width solid theme(line);
+  border-radius: $radius-md;
+}
+
+.title {
+  @include text(body-lg, semibold);
+}
+
+.text {
+  color: theme(muted);
+}
+
+.progress {
+  @include flex(row, center, $gap: $indent-ms);
+
+  align-self: stretch;
+  margin-top: $indent-sm;
+}
+
+.track {
+  position: relative;
+  flex: 1;
+  height: $dot-size;
+  container-type: inline-size;
+
+  &::before {
+    position: absolute;
+    inset-inline: 0;
+    top: 50%;
+    content: '';
+    border-top: $line-width dashed theme(portage);
+    translate: 0 -50%;
+  }
+}
+
+.dot {
+  position: relative;
+  display: block;
+  width: $dot-size;
+  height: $dot-size;
+  background: theme(river);
+  border-radius: $radius-full;
+  animation: travel $travel-duration ease-in-out infinite alternate;
+}
+
+.elapsed {
+  @include text(small);
+
+  font-variant-numeric: tabular-nums;
+  color: theme(muted);
+  white-space: nowrap;
+}
+
+.retry {
+  @include button-shape;
+
+  margin-top: $indent-sm;
+  color: theme(ink);
+  background: theme(surface-2);
+  border: $border-width solid theme(line-strong);
+
+  &:hover {
+    background: theme(paper);
+  }
+}
+
+.controls {
+  min-inline-size: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+
+@keyframes travel {
+  to {
+    translate: calc(100cqi - 100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot {
+    animation: none;
+  }
+}

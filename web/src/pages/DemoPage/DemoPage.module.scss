@@ -1,0 +1,31 @@
+.page {
+  @include flex(column, $gap: $indent-lg);
+
+  max-inline-size: $content-width;
+  padding: $indent-xl $indent-md;
+  margin: 0 auto;
+}
+
+.wordmark {
+  @include text(display, bold);
+}
+
+.pay {
+  color: theme(portage);
+}
+
+.intro {
+  color: theme(muted);
+}
+
+.create {
+  @include button-shape;
+
+  color: theme(on-accent);
+  background: theme(river);
+  border: 0;
+
+  &:hover:enabled {
+    background: theme(accent-hover);
+  }
+}

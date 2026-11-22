@@ -1,0 +1,79 @@
+@use 'sass:map';
+@use 'tokens' as *;
+@use 'themes-data' as data;
+@forward 'tokens';
+
+@function theme($key) {
+  @if not map.has-key(map.get(data.$themes, light), $key) {
+    @error 'Unknown theme color: #{$key}';
+  }
+
+  @return var(--#{$key});
+}
+
+@function z($layer) {
+  @if not map.has-key($z-layers, $layer) {
+    @error 'Unknown z-index layer: #{$layer}';
+  }
+
+  @return map.get($z-layers, $layer);
+}
+
+@mixin flex(
+  $direction: row,
+  $align: stretch,
+  $justify: flex-start,
+  $gap: 0,
+  $wrap: nowrap
+) {
+  display: flex;
+  flex-flow: $direction $wrap;
+  gap: $gap;
+  align-items: $align;
+  justify-content: $justify;
+}
+
+@mixin text($level, $weight: regular) {
+  $style: map.get($typography, $level);
+
+  @if not $style {
+    @error 'Unknown text level: #{$level}';
+  }
+
+  @if not map.has-key($font-weights, $weight) {
+    @error 'Unknown font weight: #{$weight}';
+  }
+
+  font-size: map.get($style, size);
+  font-weight: map.get($font-weights, $weight);
+  line-height: map.get($style, line);
+}
+
+@mixin media-up($breakpoint) {
+  @if not map.has-key($breakpoints, $breakpoint) {
+    @error 'Unknown breakpoint: #{$breakpoint}';
+  }
+
+  @media (width >= #{map.get($breakpoints, $breakpoint)}) {
+    @content;
+  }
+}
+
+@mixin focus-ring {
+  outline: $focus-ring-width solid theme(river);
+  outline-offset: $focus-ring-width;
+}
+
+@mixin button-shape {
+  @include text(body, medium);
+
+  padding: $indent-sm $indent-md;
+  cursor: pointer;
+  border-radius: $radius-md;
+  transition: background-color $duration-fast;
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+}

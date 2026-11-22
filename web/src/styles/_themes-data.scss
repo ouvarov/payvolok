@@ -1,0 +1,114 @@
+$themes: (
+  light: (
+    paper: #eef2f3,
+    surface: #fff,
+    surface-2: #f6f8f9,
+    ink: #12262e,
+    muted: #4f6670,
+    line: #c9d5d9,
+    line-strong: #748991,
+    river: #2f7d95,
+    accent-text: #256a80,
+    on-accent: #fff,
+    accent-hover: #256a80,
+    portage: #c07a12,
+    portage-soft: #f6e6c8,
+    portage-text: #8a5508,
+    danger-solid: #b42b2f,
+    on-danger: #fff,
+  ),
+  dark: (
+    paper: #0d1a1f,
+    surface: #13242b,
+    surface-2: #1a2f37,
+    ink: #e4eef0,
+    muted: #9db2b9,
+    line: #29414a,
+    line-strong: #6d868f,
+    river: #5fb3cc,
+    accent-text: #5fb3cc,
+    on-accent: #0d1a1f,
+    accent-hover: #7cc4da,
+    portage: #e9a63c,
+    portage-soft: #3a2c14,
+    portage-text: #e9a63c,
+    danger-solid: #ef6a66,
+    on-danger: #0d1a1f,
+  ),
+);
+$status-themes: (
+  light: (
+    created: (
+      fg: #46596a,
+      bg: #e6ecef,
+      solid: #748991,
+    ),
+    pending: (
+      fg: #7a4b05,
+      bg: #f6e6c8,
+      solid: #c07a12,
+    ),
+    succeeded: (
+      fg: #14663f,
+      bg: #d9f0e3,
+      solid: #1f8a57,
+    ),
+    failed: (
+      fg: #a3262a,
+      bg: #fbe3e2,
+      solid: #d0393d,
+    ),
+    refunded: (
+      fg: #4c3f9e,
+      bg: #e8e5f7,
+      solid: #6e5fc4,
+    ),
+    partially-refunded: (
+      fg: #4c3f9e,
+      bg: #f3f1fb,
+      solid: #6e5fc4,
+    ),
+    expired: (
+      fg: #4f5b63,
+      bg: #e7e9eb,
+      solid: #7a858c,
+    ),
+  ),
+  dark: (
+    created: (
+      fg: #b4c3ca,
+      bg: #22363e,
+      solid: #7f949c,
+    ),
+    pending: (
+      fg: #f2c063,
+      bg: #3a2c14,
+      solid: #e9a63c,
+    ),
+    succeeded: (
+      fg: #7bdca8,
+      bg: #12352a,
+      solid: #45b880,
+    ),
+    failed: (
+      fg: #ff9e9b,
+      bg: #44201f,
+      solid: #ef6a66,
+    ),
+    refunded: (
+      fg: #bcb2f5,
+      bg: #2b2750,
+      solid: #9385e6,
+    ),
+    partially-refunded: (
+      fg: #bcb2f5,
+      bg: #211f3a,
+      solid: #9385e6,
+    ),
+    expired: (
+      fg: #adb7bd,
+      bg: #2a3439,
+      solid: #87939a,
+    ),
+  ),
+);
