@@ -1,0 +1,15 @@
+.banner {
+  @include text(small);
+
+  padding: $indent-sm $indent-md;
+  color: theme(ink);
+  text-align: center;
+  background: theme(surface);
+  border-bottom: $border-width solid theme(portage);
+}
+
+.label {
+  @include text(small, semibold);
+
+  color: theme(portage-text);
+}
