@@ -35,8 +35,10 @@ type RecentPaymentCount = {
   secondsUntilOldestLeaves: number | null;
 };
 
+// now(), not clock_timestamp(): a volatile bound cannot be an index condition. Outside a
+// transaction now() is the statement start, so the window is still current.
 const createdWithin = (windowSeconds: number) =>
-  sql`${payments.createdAt} > clock_timestamp() - ${windowSeconds}::integer * interval '1 second'`;
+  sql`${payments.createdAt} > now() - ${windowSeconds}::integer * interval '1 second'`;
 
 @Injectable()
 export class PaymentsRepository {
@@ -91,7 +93,7 @@ export class PaymentsRepository {
         count: sql<number>`count(*)::int`,
         secondsUntilOldestLeaves: sql<
           number | null
-        >`ceil(extract(epoch from min(${payments.createdAt}) + ${windowSeconds}::integer * interval '1 second' - clock_timestamp()))::int`,
+        >`ceil(extract(epoch from min(${payments.createdAt}) + ${windowSeconds}::integer * interval '1 second' - now()))::int`,
       })
       .from(payments)
       .where(
